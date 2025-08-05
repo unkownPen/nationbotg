@@ -13,7 +13,7 @@ import json
 import random
 import re
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -147,11 +147,12 @@ class GameConfig:
 class DatabaseManager:
     def __init__(self, db_path: str = 'civilizations.db'):
         self.db_path = db_path
+        self.conn = None
         
     async def initialize(self):
         """Initialize database with required tables"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        self.conn = sqlite3.connect(self.db_path)
+        cursor = self.conn.cursor()
         
         # Civilizations table
         cursor.execute('''
@@ -229,47 +230,52 @@ class DatabaseManager:
             )
         ''')
         
-        conn.commit()
-        conn.close()
+        self.conn.commit()
+        
+    async def close(self):
+        """Close database connection"""
+        if self.conn:
+            self.conn.close()
         
     async def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get civilization data for a user"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
         result = cursor.fetchone()
         
-        conn.close()
-        
         if result:
-            data = dict(result)
+            data = dict(zip([col[0] for col in cursor.description], result))
             data['buildings'] = json.loads(data['buildings'])
             return data
         return None
         
     async def create_civilization(self, user_id: str, name: str) -> bool:
         """Create a new civilization"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         try:
+            cursor = self.conn.cursor()
             cursor.execute('''
-                INSERT INTO civilizations (user_id, name)
-                VALUES (?, ?)
-            ''', (user_id, name))
-            conn.commit()
-            conn.close()
+                INSERT INTO civilizations (user_id, name, gold, food, materials, population, happiness, hunger, soldiers, defenses)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                user_id, 
+                name,
+                GameConfig.STARTING_STATS['gold'],
+                GameConfig.STARTING_STATS['food'],
+                GameConfig.STARTING_STATS['materials'],
+                GameConfig.STARTING_STATS['population'],
+                GameConfig.STARTING_STATS['happiness'],
+                GameConfig.STARTING_STATS['hunger'],
+                GameConfig.STARTING_STATS['soldiers'],
+                GameConfig.STARTING_STATS['defenses']
+            ))
+            self.conn.commit()
             return True
         except sqlite3.IntegrityError:
-            conn.close()
             return False
             
     async def update_civilization(self, user_id: str, updates: Dict[str, Any]):
         """Update civilization data"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        cursor = self.conn.cursor()
         
         # Convert buildings dict to JSON if present
         if 'buildings' in updates:
@@ -280,46 +286,35 @@ class DatabaseManager:
         values = list(updates.values()) + [user_id]
         
         cursor.execute(f'UPDATE civilizations SET {set_clause} WHERE user_id = ?', values)
-        conn.commit()
-        conn.close()
+        self.conn.commit()
         
     async def check_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
         """Check if user is on cooldown for a command"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             SELECT expires_at FROM cooldowns 
             WHERE user_id = ? AND command = ? AND expires_at > CURRENT_TIMESTAMP
         ''', (user_id, command))
         
         result = cursor.fetchone()
-        conn.close()
-        
         if result:
             return datetime.fromisoformat(result[0])
         return None
         
     async def set_cooldown(self, user_id: str, command: str, minutes: float):
         """Set cooldown for a command"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        expires_at = datetime.now() + timedelta(minutes=minutes)
+        cursor = self.conn.cursor()
+        expires_at = datetime.utcnow() + timedelta(minutes=minutes)
         
         cursor.execute('''
             INSERT OR REPLACE INTO cooldowns (user_id, command, expires_at)
             VALUES (?, ?, ?)
-        ''', (user_id, command, expires_at))
-        
-        conn.commit()
-        conn.close()
+        ''', (user_id, command, expires_at.isoformat()))
+        self.conn.commit()
         
     async def get_alliances(self, user_id: str) -> List[str]:
         """Get list of user's allies"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             SELECT user2_id FROM alliances WHERE user1_id = ?
             UNION
@@ -327,118 +322,91 @@ class DatabaseManager:
         ''', (user_id, user_id))
         
         results = cursor.fetchall()
-        conn.close()
-        
         return [row[0] for row in results]
         
     async def create_alliance(self, user1_id: str, user2_id: str) -> bool:
         """Create alliance between two users"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
         try:
             # Ensure consistent ordering
             if user1_id > user2_id:
                 user1_id, user2_id = user2_id, user1_id
                 
+            cursor = self.conn.cursor()
             cursor.execute('''
                 INSERT INTO alliances (user1_id, user2_id)
                 VALUES (?, ?)
             ''', (user1_id, user2_id))
-            conn.commit()
-            conn.close()
+            self.conn.commit()
             return True
         except sqlite3.IntegrityError:
-            conn.close()
             return False
             
     async def break_alliance(self, user1_id: str, user2_id: str) -> bool:
         """Break alliance between two users"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             DELETE FROM alliances 
             WHERE (user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)
         ''', (user1_id, user2_id, user2_id, user1_id))
         
         affected = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        
+        self.conn.commit()
         return affected
         
     async def create_alliance_request(self, from_user_id: str, to_user_id: str) -> bool:
         """Create an alliance request"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Set expiration to 24 hours from now
-        expires_at = datetime.now() + timedelta(hours=24)
-        
         try:
+            # Set expiration to 24 hours from now
+            expires_at = datetime.utcnow() + timedelta(hours=24)
+            
+            cursor = self.conn.cursor()
             cursor.execute('''
                 INSERT INTO alliance_requests (from_user_id, to_user_id, expires_at)
                 VALUES (?, ?, ?)
-            ''', (from_user_id, to_user_id, expires_at))
-            conn.commit()
-            conn.close()
+            ''', (from_user_id, to_user_id, expires_at.isoformat()))
+            self.conn.commit()
             return True
         except sqlite3.IntegrityError:
-            conn.close()
             return False
             
     async def get_alliance_request(self, from_user_id: str, to_user_id: str) -> Optional[Dict[str, Any]]:
         """Get an active alliance request"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             SELECT * FROM alliance_requests 
             WHERE from_user_id = ? AND to_user_id = ? AND expires_at > CURRENT_TIMESTAMP
         ''', (from_user_id, to_user_id))
         
         result = cursor.fetchone()
-        conn.close()
-        
-        return dict(result) if result else None
+        if result:
+            columns = [col[0] for col in cursor.description]
+            return dict(zip(columns, result))
+        return None
         
     async def delete_alliance_request(self, from_user_id: str, to_user_id: str) -> bool:
         """Delete an alliance request"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             DELETE FROM alliance_requests 
             WHERE from_user_id = ? AND to_user_id = ?
         ''', (from_user_id, to_user_id))
         
         affected = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        
+        self.conn.commit()
         return affected
         
     async def send_message(self, sender_id: str, recipient_id: str, subject: str, content: str):
         """Send a message between players"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('''
             INSERT INTO messages (sender_id, recipient_id, subject, content)
             VALUES (?, ?, ?, ?)
         ''', (sender_id, recipient_id, subject, content))
-        
-        conn.commit()
-        conn.close()
+        self.conn.commit()
         
     async def get_messages(self, user_id: str, unread_only: bool = False) -> List[Dict[str, Any]]:
         """Get messages for a user"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         query = 'SELECT * FROM messages WHERE recipient_id = ?'
         params = [user_id]
         
@@ -449,18 +417,18 @@ class DatabaseManager:
         
         cursor.execute(query, params)
         results = cursor.fetchall()
-        conn.close()
         
-        return [dict(row) for row in results]
+        if not results:
+            return []
+        
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row)) for row in results]
         
     async def mark_message_read(self, message_id: int):
         """Mark a message as read"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.conn.cursor()
         cursor.execute('UPDATE messages SET read = TRUE WHERE id = ?', (message_id,))
-        conn.commit()
-        conn.close()
+        self.conn.commit()
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -468,14 +436,10 @@ class DatabaseManager:
 
 def get_user_from_mention(mention: str) -> Optional[str]:
     """Extract user ID from mention format"""
-    # Remove @ symbol and any extra characters
-    clean_mention = mention.strip('@<> ')
-    
-    # Try to extract numeric ID
-    match = re.search(r'(\d+)', clean_mention)
+    # Guilded mentions are in format: <@userId>
+    match = re.search(r'<@([a-zA-Z0-9]{8})>', mention)
     if match:
         return match.group(1)
-        
     return None
 
 def format_time_remaining(remaining_time: timedelta) -> str:
@@ -497,7 +461,7 @@ async def check_cooldown(db: DatabaseManager, user_id: str, command: str, cooldo
     """Check if user is on cooldown for a command"""
     cooldown_end = await db.check_cooldown(user_id, command)
     if cooldown_end:
-        remaining = cooldown_end - datetime.now()
+        remaining = cooldown_end - datetime.utcnow()
         if remaining.total_seconds() > 0:
             return remaining
     return None
@@ -657,6 +621,7 @@ class NaturalDisasterManager:
         
     async def start_disaster_system(self):
         """Start the natural disaster background task"""
+        await self.db.initialize()
         while True:
             await asyncio.sleep(self.check_interval)
             await self.check_for_disasters()
@@ -664,16 +629,13 @@ class NaturalDisasterManager:
     async def check_for_disasters(self):
         """Check if any disasters should occur"""
         # Get all active civilizations
-        conn = sqlite3.connect(self.db.db_path)
-        cursor = conn.cursor()
-        
+        cursor = self.db.conn.cursor()
         cursor.execute('''
             SELECT user_id FROM civilizations 
             WHERE last_active > datetime('now', '-7 days')
         ''')
         
         active_civs = [row[0] for row in cursor.fetchall()]
-        conn.close()
         
         for user_id in active_civs:
             if random.random() < self.disaster_chance:
@@ -827,14 +789,14 @@ class CivilizationBot(commands.Bot):
     # ========================================================================
     
     @commands.command(name='start')
-    async def start_civilization(self, ctx, *, name: str = ""):
+    async def start_civilization(self, ctx: commands.Context, *, name: str = ""):
         """Create a new civilization"""
         if not name.strip():
-            await ctx.send("❌ Please provide a name for your civilization!\nExample: `.start Roman Empire`")
+            await ctx.reply("❌ Please provide a name for your civilization!\nExample: `.start Roman Empire`")
             return
             
         if len(name) > 50:
-            await ctx.send("❌ Civilization name must be 50 characters or less!")
+            await ctx.reply("❌ Civilization name must be 50 characters or less!")
             return
             
         user_id = str(ctx.author.id)
@@ -842,7 +804,7 @@ class CivilizationBot(commands.Bot):
         # Check if user already has a civilization
         existing_civ = await self.db.get_civilization(user_id)
         if existing_civ:
-            await ctx.send(f"❌ You already have a civilization called **{existing_civ['name']}**!\nUse `.status` to view it.")
+            await ctx.reply(f"❌ You already have a civilization called **{existing_civ['name']}**!\nUse `.status` to view it.")
             return
             
         # Create civilization
@@ -876,18 +838,18 @@ class CivilizationBot(commands.Bot):
                 inline=False
             )
             
-            await ctx.send(embed=embed)
+            await ctx.reply(embed=embed)
         else:
-            await ctx.send("❌ Failed to create civilization. Please try again.")
+            await ctx.reply("❌ Failed to create civilization. Please try again.")
 
     @commands.command(name='status')
-    async def civilization_status(self, ctx):
+    async def civilization_status(self, ctx: commands.Context):
         """Display civilization status"""
         user_id = str(ctx.author.id)
         
         civ = await self.db.get_civilization(user_id)
         if not civ:
-            await ctx.send("❌ You don't have a civilization yet! Use `.start <name>` to create one.")
+            await ctx.reply("❌ You don't have a civilization yet! Use `.start <name>` to create one.")
             return
             
         embed = guilded.Embed(
@@ -949,10 +911,10 @@ class CivilizationBot(commands.Bot):
             inline=True
         )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name='help')
-    async def help_command(self, ctx):
+    async def help_command(self, ctx: commands.Context):
         """Display help information"""
         embed = guilded.Embed(
             title="🏛️ Civilization Bot Commands",
@@ -1012,27 +974,27 @@ class CivilizationBot(commands.Bot):
             inline=False
         )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     # ========================================================================
     # ECONOMY COMMANDS
     # ========================================================================
     
     @commands.command(name='gather')
-    async def gather_resources(self, ctx):
+    async def gather_resources(self, ctx: commands.Context):
         """Gather resources for your civilization"""
         user_id = str(ctx.author.id)
         
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'gather', self.config.COOLDOWNS['gather'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before gathering again!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before gathering again!")
             return
             
         # Generate random resources
@@ -1075,18 +1037,18 @@ class CivilizationBot(commands.Bot):
             inline=False
         )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name='build')
-    async def build_structure(self, ctx, building_type: str = ""):
+    async def build_structure(self, ctx: commands.Context, building_type: str = ""):
         """Construct buildings"""
         if not building_type:
-            await ctx.send("❌ Please specify a building type!\nAvailable: house, farm, barracks, wall, market, temple")
+            await ctx.reply("❌ Please specify a building type!\nAvailable: house, farm, barracks, wall, market, temple")
             return
             
         building_type = building_type.lower()
         if building_type not in self.config.BUILDINGS:
-            await ctx.send("❌ Invalid building type!\nAvailable: house, farm, barracks, wall, market, temple")
+            await ctx.reply("❌ Invalid building type!\nAvailable: house, farm, barracks, wall, market, temple")
             return
             
         user_id = str(ctx.author.id)
@@ -1094,13 +1056,13 @@ class CivilizationBot(commands.Bot):
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'build', self.config.COOLDOWNS['build'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before building again!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before building again!")
             return
             
         building_info = self.config.BUILDINGS[building_type]
@@ -1110,11 +1072,11 @@ class CivilizationBot(commands.Bot):
         gold_needed = building_info['cost']['gold']
         
         if user_civ['materials'] < materials_needed:
-            await ctx.send(f"❌ You need {materials_needed} materials to build {building_info['name']}! (You have {user_civ['materials']})")
+            await ctx.reply(f"❌ You need {materials_needed} materials to build {building_info['name']}! (You have {user_civ['materials']})")
             return
             
         if user_civ['gold'] < gold_needed:
-            await ctx.send(f"❌ You need {gold_needed} gold to build {building_info['name']}! (You have {user_civ['gold']})")
+            await ctx.reply(f"❌ You need {gold_needed} gold to build {building_info['name']}! (You have {user_civ['gold']})")
             return
             
         # Build the structure
@@ -1168,29 +1130,29 @@ class CivilizationBot(commands.Bot):
             inline=True
         )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name='train')
-    async def train_soldiers(self, ctx):
+    async def train_soldiers(self, ctx: commands.Context):
         """Train soldiers for your army"""
         user_id = str(ctx.author.id)
         
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'train', self.config.COOLDOWNS['train'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before training more soldiers!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before training more soldiers!")
             return
             
         # Check if they have enough resources and barracks
         barracks_count = user_civ['buildings'].get('barracks', 0)
         if barracks_count == 0:
-            await ctx.send("❌ You need at least one barracks to train soldiers! Use `.build barracks`")
+            await ctx.reply("❌ You need at least one barracks to train soldiers! Use `.build barracks`")
             return
             
         # Training costs
@@ -1198,11 +1160,11 @@ class CivilizationBot(commands.Bot):
         food_cost = 15
         
         if user_civ['gold'] < gold_cost:
-            await ctx.send(f"❌ You need {gold_cost} gold to train soldiers! (You have {user_civ['gold']})")
+            await ctx.reply(f"❌ You need {gold_cost} gold to train soldiers! (You have {user_civ['gold']})")
             return
             
         if user_civ['food'] < food_cost:
-            await ctx.send(f"❌ You need {food_cost} food to train soldiers! (You have {user_civ['food']})")
+            await ctx.reply(f"❌ You need {food_cost} food to train soldiers! (You have {user_civ['food']})")
             return
             
         # Calculate soldiers trained (based on barracks)
@@ -1239,57 +1201,57 @@ class CivilizationBot(commands.Bot):
             inline=False
         )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     # ========================================================================
     # COMBAT COMMANDS
     # ========================================================================
     
     @commands.command(name='attack')
-    async def attack_player(self, ctx, target_mention: str = ""):
+    async def attack_player(self, ctx: commands.Context, target_mention: str = ""):
         """Attack another player's civilization"""
         if not target_mention.strip():
-            await ctx.send("❌ Please mention a player to attack!\nExample: `.attack @player`")
+            await ctx.reply("❌ Please mention a player to attack!\nExample: `.attack @player`")
             return
             
         user_id = str(ctx.author.id)
         target_id = get_user_from_mention(target_mention)
         
         if not target_id:
-            await ctx.send("❌ Invalid user mention! Please use @username format.")
+            await ctx.reply("❌ Invalid user mention! Please use @username format.")
             return
             
         if target_id == user_id:
-            await ctx.send("❌ You cannot attack yourself!")
+            await ctx.reply("❌ You cannot attack yourself!")
             return
             
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check if target has civilization
         target_civ = await self.db.get_civilization(target_id)
         if not target_civ:
-            await ctx.send("❌ Target player doesn't have a civilization!")
+            await ctx.reply("❌ Target player doesn't have a civilization!")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'attack', self.config.COOLDOWNS['attack'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before attacking again!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before attacking again!")
             return
             
         # Check if they are allies
         allies = await self.db.get_alliances(user_id)
         if target_id in allies:
-            await ctx.send("❌ You cannot attack your ally! That would betray your alliance.")
+            await ctx.reply("❌ You cannot attack your ally! That would betray your alliance.")
             return
             
         # Check if attacker has soldiers
         if user_civ['soldiers'] <= 0:
-            await ctx.send("❌ You need soldiers to attack! Train some first with `.train`")
+            await ctx.reply("❌ You need soldiers to attack! Train some first with `.train`")
             return
             
         # Calculate combat result
@@ -1387,52 +1349,52 @@ class CivilizationBot(commands.Bot):
         except:
             pass
             
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     # ========================================================================
     # ALLIANCE COMMANDS
     # ========================================================================
     
     @commands.command(name='ally')
-    async def form_alliance(self, ctx, target_mention: str = ""):
+    async def form_alliance(self, ctx: commands.Context, target_mention: str = ""):
         """Form an alliance with another player"""
         if not target_mention.strip():
-            await ctx.send("❌ Please mention a player to ally with!\nExample: `.ally @player`")
+            await ctx.reply("❌ Please mention a player to ally with!\nExample: `.ally @player`")
             return
             
         user_id = str(ctx.author.id)
         target_id = get_user_from_mention(target_mention)
         
         if not target_id:
-            await ctx.send("❌ Invalid user mention! Please use @username format.")
+            await ctx.reply("❌ Invalid user mention! Please use @username format.")
             return
             
         if target_id == user_id:
-            await ctx.send("❌ You cannot ally with yourself!")
+            await ctx.reply("❌ You cannot ally with yourself!")
             return
             
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check if target has civilization
         target_civ = await self.db.get_civilization(target_id)
         if not target_civ:
-            await ctx.send("❌ Target player doesn't have a civilization!")
+            await ctx.reply("❌ Target player doesn't have a civilization!")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'ally', self.config.COOLDOWNS['ally'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before forming another alliance!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before forming another alliance!")
             return
             
         # Check if already allies
         user_allies = await self.db.get_alliances(user_id)
         if target_id in user_allies:
-            await ctx.send(f"❌ You are already allied with **{target_civ['name']}**!")
+            await ctx.reply(f"❌ You are already allied with **{target_civ['name']}**!")
             return
             
         # Check if there's a pending request FROM the target TO the user (for accepting)
@@ -1463,26 +1425,26 @@ class CivilizationBot(commands.Bot):
                 except:
                     pass
                     
-                await ctx.send(embed=embed)
+                await ctx.reply(embed=embed)
                 return
             else:
-                await ctx.send("❌ Failed to create alliance. Please try again.")
+                await ctx.reply("❌ Failed to create alliance. Please try again.")
                 return
         
         # Check if user already sent a request to target
         existing_outbound = await self.db.get_alliance_request(user_id, target_id)
         if existing_outbound:
-            await ctx.send(f"❌ You already sent an alliance request to **{target_civ['name']}**! Wait for their response.")
+            await ctx.reply(f"❌ You already sent an alliance request to **{target_civ['name']}**! Wait for their response.")
             return
             
         # Check alliance limits
         if len(user_allies) >= self.config.BALANCE['max_alliances']:
-            await ctx.send(f"❌ You can only have {self.config.BALANCE['max_alliances']} alliances at once!")
+            await ctx.reply(f"❌ You can only have {self.config.BALANCE['max_alliances']} alliances at once!")
             return
             
         target_allies = await self.db.get_alliances(target_id)
         if len(target_allies) >= self.config.BALANCE['max_alliances']:
-            await ctx.send(f"❌ **{target_civ['name']}** already has the maximum number of alliances!")
+            await ctx.reply(f"❌ **{target_civ['name']}** already has the maximum number of alliances!")
             return
             
         # Send alliance request
@@ -1509,50 +1471,50 @@ class CivilizationBot(commands.Bot):
             except:
                 pass
                 
-            await ctx.send(embed=embed)
+            await ctx.reply(embed=embed)
         else:
-            await ctx.send("❌ Failed to send alliance request. You may have already sent one.")
+            await ctx.reply("❌ Failed to send alliance request. You may have already sent one.")
 
     @commands.command(name='break')
-    async def break_alliance(self, ctx, target_mention: str = ""):
+    async def break_alliance(self, ctx: commands.Context, target_mention: str = ""):
         """Break an alliance with another player"""
         if not target_mention.strip():
-            await ctx.send("❌ Please mention a player to break alliance with!\nExample: `.break @player`")
+            await ctx.reply("❌ Please mention a player to break alliance with!\nExample: `.break @player`")
             return
             
         user_id = str(ctx.author.id)
         target_id = get_user_from_mention(target_mention)
         
         if not target_id:
-            await ctx.send("❌ Invalid user mention! Please use @username format.")
+            await ctx.reply("❌ Invalid user mention! Please use @username format.")
             return
             
         if target_id == user_id:
-            await ctx.send("❌ You cannot break alliance with yourself!")
+            await ctx.reply("❌ You cannot break alliance with yourself!")
             return
             
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check if target has civilization
         target_civ = await self.db.get_civilization(target_id)
         if not target_civ:
-            await ctx.send("❌ Target player doesn't have a civilization!")
+            await ctx.reply("❌ Target player doesn't have a civilization!")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'break', self.config.COOLDOWNS['break'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before breaking another alliance!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before breaking another alliance!")
             return
             
         # Check if they are actually allies
         allies = await self.db.get_alliances(user_id)
         if target_id not in allies:
-            await ctx.send(f"❌ You are not allied with **{target_civ['name']}**!")
+            await ctx.reply(f"❌ You are not allied with **{target_civ['name']}**!")
             return
             
         # Break the alliance
@@ -1579,48 +1541,48 @@ class CivilizationBot(commands.Bot):
             except:
                 pass
                 
-            await ctx.send(embed=embed)
+            await ctx.reply(embed=embed)
         else:
-            await ctx.send("❌ Failed to break alliance. Please try again.")
+            await ctx.reply("❌ Failed to break alliance. Please try again.")
 
     # ========================================================================
     # ESPIONAGE COMMANDS
     # ========================================================================
     
     @commands.command(name='spy')
-    async def spy_on_player(self, ctx, target_mention: str = ""):
+    async def spy_on_player(self, ctx: commands.Context, target_mention: str = ""):
         """Gather intelligence on another civilization"""
         if not target_mention.strip():
-            await ctx.send("❌ Please mention a player to spy on!\nExample: `.spy @player`")
+            await ctx.reply("❌ Please mention a player to spy on!\nExample: `.spy @player`")
             return
             
         user_id = str(ctx.author.id)
         target_id = get_user_from_mention(target_mention)
         
         if not target_id:
-            await ctx.send("❌ Invalid user mention! Please use @username format.")
+            await ctx.reply("❌ Invalid user mention! Please use @username format.")
             return
             
         if target_id == user_id:
-            await ctx.send("❌ You cannot spy on yourself!")
+            await ctx.reply("❌ You cannot spy on yourself!")
             return
             
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check if target has civilization
         target_civ = await self.db.get_civilization(target_id)
         if not target_civ:
-            await ctx.send("❌ Target player doesn't have a civilization!")
+            await ctx.reply("❌ Target player doesn't have a civilization!")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'spy', self.config.COOLDOWNS['spy'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before spying again!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before spying again!")
             return
             
         # Calculate spy result
@@ -1706,46 +1668,46 @@ class CivilizationBot(commands.Bot):
                 inline=False
             )
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     # ========================================================================
     # COMMUNICATION COMMANDS
     # ========================================================================
     
     @commands.command(name='send')
-    async def send_message(self, ctx, target_mention: str = "", *, message: str = ""):
+    async def send_message(self, ctx: commands.Context, target_mention: str = "", *, message: str = ""):
         """Send a message to another player"""
         if not target_mention.strip() or not message.strip():
-            await ctx.send("❌ Please specify a recipient and message!\nExample: `.send @player Hello there!`")
+            await ctx.reply("❌ Please specify a recipient and message!\nExample: `.send @player Hello there!`")
             return
             
         user_id = str(ctx.author.id)
         target_id = get_user_from_mention(target_mention)
         
         if not target_id:
-            await ctx.send("❌ Invalid user mention! Please use @username format.")
+            await ctx.reply("❌ Invalid user mention! Please use @username format.")
             return
             
         if target_id == user_id:
-            await ctx.send("❌ You cannot send a message to yourself!")
+            await ctx.reply("❌ You cannot send a message to yourself!")
             return
             
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check if target has civilization
         target_civ = await self.db.get_civilization(target_id)
         if not target_civ:
-            await ctx.send("❌ Target player doesn't have a civilization!")
+            await ctx.reply("❌ Target player doesn't have a civilization!")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'send', self.config.COOLDOWNS['send'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before sending another message!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before sending another message!")
             return
             
         # Send the message
@@ -1761,23 +1723,23 @@ class CivilizationBot(commands.Bot):
         embed.add_field(name="Recipient", value=target_civ['name'], inline=True)
         embed.add_field(name="Message", value=message[:100] + "..." if len(message) > 100 else message, inline=False)
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
     @commands.command(name='mail')
-    async def check_mail(self, ctx, action: str = ""):
+    async def check_mail(self, ctx: commands.Context, action: str = ""):
         """Check inbox and read messages"""
         user_id = str(ctx.author.id)
         
         # Check if user has civilization
         user_civ = await self.db.get_civilization(user_id)
         if not user_civ:
-            await ctx.send("❌ You need to create a civilization first! Use `.start <name>`")
+            await ctx.reply("❌ You need to create a civilization first! Use `.start <name>`")
             return
             
         # Check cooldown
         cooldown_remaining = await check_cooldown(self.db, user_id, 'mail', self.config.COOLDOWNS['mail'])
         if cooldown_remaining:
-            await ctx.send(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before checking mail again!")
+            await ctx.reply(f"⏰ You must wait {format_time_remaining(cooldown_remaining)} before checking mail again!")
             return
             
         await self.db.set_cooldown(user_id, 'mail', self.config.COOLDOWNS['mail'])
@@ -1830,7 +1792,7 @@ class CivilizationBot(commands.Bot):
         
         embed.set_footer(text="Use .mail to read messages")
         
-        await ctx.send(embed=embed)
+        await ctx.reply(embed=embed)
 
 # ============================================================================
 # BOT INITIALIZATION
@@ -1841,9 +1803,9 @@ bot = CivilizationBot()
 
 async def main():
     # Get bot token from environment
-    token = os.getenv('GUILDED_BOT_TOKEN', 'gapi_7Cw2q+PT3I0/5zaC7ehL7IPu4j1DqrD9xCbAGL+PYhCqL9a4aGEJHbhqTwzudCZGpTARIwe0Q6QLRf1ShT6o4g==')
+    token = os.getenv('GUILDED_BOT_TOKEN')
     
-    if not token or token == 'your_bot_token_here':
+    if not token:
         logger.error('Please set GUILDED_BOT_TOKEN environment variable')
         return
         
@@ -1851,6 +1813,8 @@ async def main():
         await bot.start(token)
     except Exception as e:
         logger.error(f'Failed to start bot: {e}')
+    finally:
+        await bot.db.close()
 
 if __name__ == '__main__':
     asyncio.run(main())
