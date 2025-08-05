@@ -262,7 +262,7 @@ async def on_ready():
 
 @bot.event
 async def on_command_error(ctx, error):
-    """Handle command errors"""
+    """Handle command errors with specific messages"""
     if isinstance(error, commands.CommandOnCooldown):
         cooldown_time = format_cooldown_time(int(error.retry_after))
         await ctx.send(f"⏱️ Command on cooldown! Try again in {cooldown_time}")
@@ -271,8 +271,9 @@ async def on_command_error(ctx, error):
     elif isinstance(error, commands.CommandNotFound):
         await ctx.send("❌ Unknown command! Use `.help` for available commands.")
     else:
-        print(f"Unhandled error: {error}")
-        await ctx.send("❌ An error occurred while processing your command.")
+        error_message = str(error)
+        print(f"Unhandled error: {error_message}")
+        await ctx.send(f"❌ An error occurred: {error_message}")
 
 # =============================================================================
 # BASIC COMMANDS
@@ -558,7 +559,7 @@ async def build(ctx, *, item=None):
     gold_cost = building_data["gold"]
     food_cost = building_data.get("food", 0)
     
-    # Check if player has enough resources
+    # Check if player has<|reserved_17|> resources
     if player.resources["gold"] < gold_cost or player.resources["food"] < food_cost:
         embed = create_embed("❌ Insufficient Resources", 
                            f"Need {gold_cost} gold and {food_cost} food to build {building_name.replace('_', ' ')}")
@@ -1323,47 +1324,28 @@ async def ally(ctx, target: guilded.Member = None):
     # Check alliance limits (max 5 alliances)
     if len(player.alliances) >= 5:
         embed = create_embed("❌ Alliance Limit", 
-                           "You can only have 5 alliances at once!\nUse `.break @user` to end an alliance first.", 
+                           "You can only have up to 5 alliances!", 
                            0xff0000)
         await ctx.send(embed=embed)
         return
     
-    # Cost to form alliance
-    alliance_cost = 150
-    if player.resources["gold"] < alliance_cost:
-        embed = create_embed("❌ Insufficient Gold", 
-                           f"You need {alliance_cost} gold to form an alliance!")
-        embed.add_field(name="Your Gold", value=f"💰 {player.resources['gold']}")
-        await ctx.send(embed=embed)
-        return
-    
-    # Form the alliance (mutual)
-    player.resources["gold"] -= alliance_cost
+    # Form alliance
     player.alliances.add(str(target.id))
     target_player.alliances.add(str(ctx.author.id))
     
-    # Both sides gain happiness
-    happiness_gain = random.randint(75, 125)
-    player.resources["happiness"] += happiness_gain
-    target_player.resources["happiness"] += happiness_gain
-    
     embed = create_embed("🤝 Alliance Formed!", 
                        f"{player.name} and {target_player.name} are now allies!")
-    embed.add_field(name="💰 Diplomatic Cost", value=f"-{alliance_cost} gold", inline=True)
-    embed.add_field(name="😊 Happiness Boost", value=f"+{happiness_gain} (both sides)", inline=True)
-    embed.add_field(name="🛡️ Protection", value="Cannot attack each other", inline=True)
+    await ctx.send(embed=embed)
     
-    # Notify the target player
+    # Notify target
     try:
         await target.send(f"🤝 {player.name} has formed an alliance with your civilization {target_player.name}!")
     except:
         pass  # User might have DMs disabled
-    
-    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def break_alliance(ctx, target: guilded.Member = None):
+async def break_(ctx, target: guilded.Member = None):
     """Break an alliance with another player (2 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
@@ -1376,56 +1358,48 @@ async def break_alliance(ctx, target: guilded.Member = None):
     
     if not target:
         embed = create_embed("❌ No Target", 
-                           "You must specify whose alliance to break!\nExample: `.break @username`", 
+                           "You must specify who to break alliance with!\nExample: `.break @username`", 
                            0xff0000)
         await ctx.send(embed=embed)
         return
     
     if str(target.id) == str(ctx.author.id):
-        embed = create_embed("❌ Invalid Target", 
-                           "You cannot break alliance with yourself!", 
+        embed = create_embed("❌ Self Break", 
+                           "You cannot break an alliance with yourself!", 
                            0xff0000)
         await ctx.send(embed=embed)
         return
     
     target_player = get_player(str(target.id))
     
-    # Check if alliance exists
-    if str(target.id) not in player.alliances:
-        embed = create_embed("❌ No Alliance", 
-                           f"You are not allied with {target.name}!", 
+    if target_player.name is None:
+        embed = create_embed("❌ Invalid Target", 
+                           "Target player hasn't started their civilization yet!", 
                            0xff0000)
         await ctx.send(embed=embed)
         return
     
-    # Break the alliance (mutual)
-    player.alliances.discard(str(target.id))
-    target_player.alliances.discard(str(ctx.author.id))
+    # Check if allied
+    if str(target.id) not in player.alliances:
+        embed = create_embed("❌ Not Allied", 
+                           f"You are not allied with {target_player.name}!", 
+                           0xff0000)
+        await ctx.send(embed=embed)
+        return
     
-    # Both sides lose happiness
-    happiness_loss = random.randint(100, 200)
-    player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
-    target_player.resources["happiness"] = max(0, target_player.resources["happiness"] - happiness_loss)
+    # Break alliance
+    player.alliances.remove(str(target.id))
+    target_player.alliances.remove(str(ctx.author.id))
     
     embed = create_embed("💔 Alliance Broken!", 
                        f"{player.name} has ended their alliance with {target_player.name}!")
-    embed.add_field(name="😔 Diplomatic Fallout", value=f"-{happiness_loss} happiness (both sides)", inline=True)
-    embed.add_field(name="⚔️ Combat Enabled", value="You can now attack each other", inline=True)
+    await ctx.send(embed=embed)
     
-    # Notify the target player
+    # Notify target
     try:
         await target.send(f"💔 {player.name} has broken their alliance with your civilization {target_player.name}!")
     except:
         pass  # User might have DMs disabled
-    
-    await ctx.send(embed=embed)
-
-# Add alias for break command
-@bot.command(name="break")
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def break_command(ctx, target: guilded.Member = None):
-    """Alias for break_alliance command"""
-    await break_alliance(ctx, target)
 
 # =============================================================================
 # COMMUNICATION COMMANDS
@@ -1433,7 +1407,7 @@ async def break_command(ctx, target: guilded.Member = None):
 
 @bot.command()
 async def send(ctx, target: guilded.Member = None, *, message=None):
-    """Send a diplomatic message to another nation"""
+    """Send a diplomatic message to another player"""
     player = get_player(str(ctx.author.id))
     
     if player.name is None:
@@ -1444,40 +1418,54 @@ async def send(ctx, target: guilded.Member = None, *, message=None):
         return
     
     if not target or not message:
-        embed = create_embed("📧 Send Message", 
-                           "Send diplomatic messages to other nations!\n"
-                           "**Usage:** `.send @player Your message here`")
+        embed = create_embed("❌ Usage Error", 
+                           "Usage: `.send @user <message>`", 
+                           0xff0000)
+        await ctx.send(embed=embed)
+        return
+    
+    if str(target.id) == str(ctx.author.id):
+        embed = create_embed("❌ Self Message", 
+                           "You cannot send a message to yourself!", 
+                           0xff0000)
         await ctx.send(embed=embed)
         return
     
     target_player = get_player(str(target.id))
+    
     if target_player.name is None:
-        return await ctx.send("❌ Target hasn't started their civilization!")
+        embed = create_embed("❌ Invalid Target", 
+                           "Target player hasn't started their civilization yet!", 
+                           0xff0000)
+        await ctx.send(embed=embed)
+        return
     
     # Create message
-    mail = {
+    msg_data = {
         "from": player.name,
-        "from_id": str(ctx.author.id),
-        "subject": f"Message from {player.name}",
+        "subject": message[:50],
         "content": message,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "timestamp": datetime.utcnow().isoformat()
     }
     
-    target_player.mailbox.append(mail)
-    player.sent_mail.append(mail)
+    # Add to mailboxes
+    target_player.mailbox.append(msg_data)
+    player.sent_mail.append(msg_data)
     
-    embed = create_embed("📧 Message Sent!", f"Sent to **{target_player.name}**: {message[:100]}...")
+    embed = create_embed("📧 Message Sent!", 
+                       f"Message delivered to {target_player.name}!")
+    embed.add_field(name="Subject", value=message[:50], inline=False)
     await ctx.send(embed=embed)
     
-    # Notify target
+    # Notify target via DM
     try:
-        await target.send(f"📧 New message from **{player.name}** in Guilded: {message[:50]}...")
+        await target.send(f"📧 New message from {player.name}:\nSubject: {message[:50]}")
     except:
-        pass
+        pass  # User might have DMs disabled
 
 @bot.command()
 async def mail(ctx):
-    """Check your diplomatic messages"""
+    """Check your mailbox for messages"""
     player = get_player(str(ctx.author.id))
     
     if player.name is None:
@@ -1488,261 +1476,54 @@ async def mail(ctx):
         return
     
     if not player.mailbox:
-        return await ctx.send("📭 Your inbox is empty!")
+        embed = create_embed("📭 Mailbox Empty", 
+                           "You have no new messages.")
+        await ctx.send(embed=embed)
+        return
     
-    embed = create_embed("📧 Diplomatic Mail", f"You have {len(player.mailbox)} messages:")
+    embed = create_embed("📬 Your Mailbox", 
+                       f"You have {len(player.mailbox)} unread messages:")
     
-    for i, mail in enumerate(player.mailbox[-5:], 1):
-        embed.add_field(
-            name=f"#{i} From: {mail['from']} ({mail['timestamp']})",
-            value=mail['content'][:100] + ("..." if len(mail['content']) > 100 else ""),
-            inline=False
-        )
+    for i, msg in enumerate(player.mailbox[:5], 1):
+        embed.add_field(name=f"Message {i}: From {msg['from']}", 
+                       value=f"Subject: {msg['subject']}\nReceived: {msg['timestamp']}", 
+                       inline=False)
+    
+    if len(player.mailbox) > 5:
+        embed.add_field(name="More Messages", 
+                       value=f"{len(player.mailbox) - 5} additional messages not shown.", 
+                       inline=False)
     
     await ctx.send(embed=embed)
 
 # =============================================================================
-# FLASK WEB SERVER
+# FLASK KEEP-ALIVE SERVER
 # =============================================================================
 
-# Initialize Flask app for keep-alive
 app = Flask(__name__)
 
-# HTML template for the web interface
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WarBot - Advanced Civilization Management</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .main-container {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-            margin: 2rem auto;
-            max-width: 1200px;
-        }
-        .header-section {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-            color: white;
-            border-radius: 15px 15px 0 0;
-            padding: 2rem;
-            text-align: center;
-        }
-        .status-badge {
-            background: #2ecc71;
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-weight: bold;
-        }
-        .command-card {
-            background: white;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-            border-left: 4px solid #3498db;
-        }
-        .command-title {
-            color: #2c3e50;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-        }
-        .command-description {
-            color: #7f8c8d;
-            margin-bottom: 1rem;
-        }
-        .command-example {
-            background: #f8f9ff;
-            padding: 0.5rem 1rem;
-            border-radius: 5px;
-            font-family: 'Courier New', monospace;
-            border-left: 3px solid #3498db;
-        }
-        .feature-icon {
-            font-size: 2rem;
-            color: #3498db;
-            margin-bottom: 1rem;
-        }
-        .disaster-alert {
-            background: linear-gradient(45deg, #ff6b6b, #ffa500);
-            color: white;
-            padding: 1rem;
-            border-radius: 10px;
-            margin: 1rem 0;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="container-fluid">
-        <div class="main-container">
-            <div class="header-section">
-                <div class="row align-items-center">
-                    <div class="col-md-8">
-                        <h1><i class="fas fa-crown"></i> WarBot</h1>
-                        <p class="lead mb-0">Advanced Civilization Management with Espionage</p>
-                    </div>
-                    <div class="col-md-4 text-end">
-                        <div class="status-badge">
-                            <i class="fas fa-circle pulse"></i> Online & Ready
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="container p-4">
-                <div class="disaster-alert">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>NEW FEATURES:</strong> Espionage System, Natural Disasters, Diplomatic Messaging & GIF Animations!
-                </div>
-
-                <div class="row">
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-rocket feature-icon"></i></h3>
-                        <h4>Core Features</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-check text-success"></i> Complete civilization management</li>
-                            <li><i class="fas fa-check text-success"></i> Resource gathering & economy</li>
-                            <li><i class="fas fa-check text-success"></i> Strategic combat & military units</li>
-                            <li><i class="fas fa-check text-success"></i> Alliance system & diplomacy</li>
-                        </ul>
-                    </div>
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-user-secret feature-icon"></i></h3>
-                        <h4>Espionage System</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-eye text-info"></i> Spy on enemy nations</li>
-                            <li><i class="fas fa-bomb text-danger"></i> Sabotage military units</li>
-                            <li><i class="fas fa-laptop-code text-warning"></i> Hack enemy systems</li>
-                            <li><i class="fas fa-graduation-cap text-primary"></i> Train elite soldiers</li>
-                        </ul>
-                    </div>
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-cloud-rain feature-icon"></i></h3>
-                        <h4>Dynamic Events</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-bolt text-warning"></i> Natural disasters (3% daily)</li>
-                            <li><i class="fas fa-envelope text-primary"></i> Diplomatic messaging</li>
-                            <li><i class="fas fa-moon text-info"></i> Day/night cycle bonuses</li>
-                            <li><i class="fas fa-heart text-danger"></i> Hunger & happiness systems</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <hr class="my-4">
-
-                <h3 class="text-center mb-4"><i class="fas fa-terminal"></i> Complete Command List</h3>
-                
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-flag"></i> Basic & Economy</div>
-                            <div class="command-example">
-                                .start Roman Empire<br>
-                                .gather | .build house<br>
-                                .buy soldiers 10 | .farm<br>
-                                .cheer | .feed | .gamble 100
-                            </div>
-                        </div>
-
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-sword"></i> Combat & Training</div>
-                            <div class="command-example">
-                                .attack @enemy<br>
-                                .civil_war<br>
-                                .train (with GIF)
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-md-6">
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-user-secret"></i> Espionage</div>
-                            <div class="command-example">
-                                .spy @enemy<br>
-                                .sabotage @enemy<br>
-                                .hack @enemy
-                            </div>
-                        </div>
-
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-handshake"></i> Diplomacy</div>
-                            <div class="command-example">
-                                .ally @friend | .break @friend<br>
-                                .send @player Hello!<br>
-                                .mail (check inbox)
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <hr class="my-4">
-
-                <div class="text-center">
-                    <h4><i class="fas fa-info-circle"></i> Getting Started</h4>
-                    <p class="lead">Join a Guilded server with WarBot and type <code>.start YourCivilizationName</code> to begin!</p>
-                    <p class="text-muted">All cooldowns optimized for balanced gameplay. Natural disasters occur randomly affecting all players!</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
-"""
-
 @app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/health')
-def health():
-    return {"status": "healthy", "bot_ready": bot.is_ready() if hasattr(bot, 'is_ready') else False}
+def home():
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head><title>WarBot</title></head>
+    <body>
+        <h1>WarBot is Running!</h1>
+        <p>Your Guilded bot is alive and kicking!</p>
+    </body>
+    </html>
+    """)
 
 def run_flask():
-    """Run Flask server in a separate thread"""
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=8080)
 
-def run_bot():
-    """Run the Guilded bot"""
-    token = os.getenv('GUILDED_BOT_TOKEN', 'your_bot_token_here')
-    if token == 'your_bot_token_here':
-        print("WARNING: Using default bot token. Set GUILDED_BOT_TOKEN environment variable.")
-    bot.run(token)
+# Start Flask in a separate thread
+threading.Thread(target=run_flask, daemon=True).start()
 
 # =============================================================================
-# MAIN EXECUTION
+# RUN THE BOT
 # =============================================================================
 
-if __name__ == '__main__':
-    print("WarBot - Complete Civilization Management System")
-    print("=" * 50)
-    print("✅ Enhanced Features:")
-    print("  • Espionage System (.spy, .sabotage, .hack)")
-    print("  • Natural Disasters (3% daily occurrence)")
-    print("  • Diplomatic Messaging (.send, .mail)")
-    print("  • Soldier Training with GIFs")
-    print("  • Attack GIFs")
-    print("=" * 50)
-    
-    # Start Flask server in background thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print("Flask server started on port 5000")
-    
-    # Start the bot (this will block)
-    print("Starting Guilded bot...")
-    run_bot()
+if __name__ == "__main__":
+    bot.run(os.getenv("TOKEN"))
