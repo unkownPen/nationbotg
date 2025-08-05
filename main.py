@@ -326,7 +326,7 @@ async def help(ctx, command_name=None):
             embed = create_embed("❌ Command Not Found", f"Command '{command_name}' does not exist.")
     else:
         # Show all commands
-        embed = create_embed("🏰 WarBot Commands", "Use .help // working - Manage your civilization!")
+        embed = create_embed("🏰 NationBot Commands", "Use .help // working - Manage your civilization!")
         
         basic_commands = [
             "`.start <name>` - Initialize your civilization with a name",
@@ -801,7 +801,7 @@ async def gamble(ctx, amount=None):
     else:  # 5% chance - win 5x
         winnings = bet_amount * 5
         player.resources["gold"] += winnings
-        embed = create_embed("🎰 JACKPOT!", 
+        embed = create_embed("🎰 YOU HIT THE JACKPOT!", 
                            f"You won {winnings} gold! (5x return)", 
                            0xffd700)
     
@@ -1184,7 +1184,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WarBot - Civilization Management</title>
+    <title>NationBot - Civilization Management</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
