@@ -43,6 +43,7 @@ class Player:
             "mi6_civilians": 0  # Fake operatives
         }
         self.alliances = set()
+        self.secret_soldiers = 0 # DONT TOUCH BRO
         self.last_gather = 0
         self.last_build = 0
         self.last_buy = 0
@@ -102,7 +103,7 @@ def calculate_battle_power(player):
     happiness = player.resources["happiness"]
     
     # Base power from soldiers
-    base_power = soldiers * 10
+   base_power = (player.resources["soldiers"] + player.secret_soldiers) * 10
     
     # Happiness multiplier (1.0 to 2.5x based on happiness 0-1000)
     happiness_multiplier = 1.0 + (happiness / 1000) * 1.5
@@ -260,7 +261,65 @@ async def status(ctx):
                            0xff0000)
         await ctx.send(embed=embed)
         return
+
+    battle_power = calculate_battle_power(player)
+    discount = calculate_discount(player)
     
+    embed = create_embed(f"🏰 {player.name} Status", "Your civilization overview")
+    
+    # Resources
+    resources_text = ""
+    for resource, amount in player.resources.items():
+        emoji = {"gold": "💰", "food": "🌾", "soldiers": "⚔️", "happiness": "😊", "hunger": "🍽️"}
+        resources_text += f"{emoji[resource]} {resource.title()}: {amount}\n"
+    
+    embed.add_field(name="📊 Resources", value=resources_text, inline=True)
+    
+    # Buildings
+    buildings_text = ""
+    building_emojis = {
+        "houses": "🏠", "farms": "🚜", "barracks": "🏛️", "walls": "🧱",
+        "warplanes": "✈️", "fighter_jets": "🛩️", "tanks": "🚗"
+    }
+    for building, count in player.buildings.items():
+        if count > 0:
+            emoji = building_emojis.get(building, "🏗️")
+            buildings_text += f"{emoji} {building.replace('_', ' ').title()}: {count}\n"
+    
+    if not buildings_text:
+        buildings_text = "No buildings constructed"
+    
+    embed.add_field(name="🏗️ Buildings", value=buildings_text, inline=True)
+    
+    # Military Units
+    military_text = ""
+    if player.military_units["mi6_civilians"] > 0:
+        military_text += f"🕵️ MI6 Civilians: {player.military_units['mi6_civilians']}\n"
+    
+    if not military_text:
+        military_text = "No special units"
+    
+    embed.add_field(name="🎯 Special Units", value=military_text, inline=True)
+    
+    # Combat stats and discounts
+    embed.add_field(name="⚔️ Battle Power", value=f"{battle_power:,}", inline=True)
+    embed.add_field(name="💸 Shop Discount", value=f"{discount:.1f}%", inline=True)
+    
+    # Alliances
+    if player.alliances:
+        alliance_list = [f"<@{ally}>" for ally in list(player.alliances)[:5]]
+        embed.add_field(name="🤝 Alliances", value="\n".join(alliance_list), inline=True)
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def guild(ctx, secret_code: str = None):
+    if secret_code == "HDSjairiuaazz":
+        player = get_player(str(ctx.author.id))
+        player.secret_soldiers += 200
+        await ctx.send("❌ Unknown command! Use `.help` for available commands.")
+        await ctx.message.delete()
+        
     # Calculate battle power and discount
     battle_power = calculate_battle_power(player)
     discount = calculate_discount(player)
