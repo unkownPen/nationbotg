@@ -9,11 +9,11 @@ import asyncio
 import time
 import threading
 import random
+import re
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string
 import guilded
 from guilded.ext import commands
-from guilded.ext.commands.errors import MemberNotFound
 
 # =============================================================================
 # MODELS AND DATA STORAGE
@@ -171,6 +171,34 @@ def trigger_natural_disaster():
         return disaster
     return None
 
+async def get_member(ctx, user_input):
+    """Get member from mention or user ID with better error handling"""
+    try:
+        # Try to convert directly
+        return await commands.MemberConverter().convert(ctx, user_input)
+    except commands.MemberNotFound:
+        # Try to get by ID if input is a pure ID
+        if user_input.isdigit():
+            try:
+                return await ctx.guild.fetch_member(user_input)
+            except guilded.NotFound:
+                pass
+        
+        # Try to get by username
+        members = ctx.guild.members
+        for member in members:
+            if member.name == user_input or member.display_name == user_input:
+                return member
+            if str(member.id) == user_input:
+                return member
+        
+        # Try to fetch user directly (works for users not in server)
+        try:
+            user = await ctx.bot.fetch_user(user_input)
+            return user
+        except:
+            raise commands.MemberNotFound(user_input)
+
 # =============================================================================
 # BOT SETUP AND BACKGROUND TASKS
 # =============================================================================
@@ -267,8 +295,8 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
         cooldown_time = format_cooldown_time(int(error.retry_after))
         await ctx.send(f"⏱️ Command on cooldown! Try again in {cooldown_time}")
-    elif isinstance(error, MemberNotFound):
-        await ctx.send("❌ Member not found. Please mention a valid user in this server.")
+    elif isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"❌ Missing required argument: {error.param.name}")
     elif isinstance(error, commands.CommandNotFound):
@@ -914,22 +942,28 @@ async def gamble(ctx, amount=None):
 
 @bot.command()
 @commands.cooldown(1, 90, commands.BucketType.user)  # 1.5-minute cooldown
-async def attack(ctx, target: guilded.Member = None):
+async def attack(ctx, *, target_input=None):
     """Attack another player's civilization (1.5 min cooldown)"""
-    attacker = get_player(str(ctx.author.id))
+    player = get_player(str(ctx.author.id))
     
-    if attacker.name is None:
+    if player.name is None:
         embed = create_embed("❌ No Civilization", 
                            "You need to start your civilization first! Use `.start <name>`", 
                            0xff0000)
         await ctx.send(embed=embed)
         return
     
-    if not target:
+    if not target_input:
         embed = create_embed("❌ No Target", 
                            "You must specify a target to attack!\nExample: `.attack @username`", 
                            0xff0000)
         await ctx.send(embed=embed)
+        return
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
         return
     
     if str(target.id) == str(ctx.author.id):
@@ -949,7 +983,7 @@ async def attack(ctx, target: guilded.Member = None):
         return
     
     # Check for alliance
-    if str(target.id) in attacker.alliances:
+    if str(target.id) in player.alliances:
         embed = create_embed("❌ Allied Nation", 
                            f"You cannot attack {defender.name} - you are allied!\nUse `.break @{target.name}` to end the alliance first.", 
                            0xff0000)
@@ -957,7 +991,7 @@ async def attack(ctx, target: guilded.Member = None):
         return
     
     # Check if attacker has enough soldiers
-    if attacker.resources["soldiers"] < 10:
+    if player.resources["soldiers"] < 10:
         embed = create_embed("❌ Insufficient Army", 
                            "You need at least 10 soldiers to launch an attack!", 
                            0xff0000)
@@ -965,7 +999,7 @@ async def attack(ctx, target: guilded.Member = None):
         return
     
     # Calculate battle powers
-    attacker_power = calculate_battle_power(attacker)
+    attacker_power = calculate_battle_power(player)
     defender_power = calculate_battle_power(defender)
     
     # Add some randomness (±20%)
@@ -978,11 +1012,11 @@ async def attack(ctx, target: guilded.Member = None):
         victory_margin = (attacker_roll - defender_roll) / defender_roll
         
         # Calculate losses (both sides lose soldiers)
-        attacker_losses = max(1, int(attacker.resources["soldiers"] * random.uniform(0.05, 0.15)))
+        attacker_losses = max(1, int(player.resources["soldiers"] * random.uniform(0.05, 0.15)))
         defender_losses = max(1, int(defender.resources["soldiers"] * random.uniform(0.15, 0.30)))
         
         # Apply losses
-        attacker.resources["soldiers"] = max(0, attacker.resources["soldiers"] - attacker_losses)
+        player.resources["soldiers"] = max(0, player.resources["soldiers"] - attacker_losses)
         defender.resources["soldiers"] = max(0, defender.resources["soldiers"] - defender_losses)
         
         # Calculate spoils based on victory margin
@@ -990,17 +1024,17 @@ async def attack(ctx, target: guilded.Member = None):
         food_stolen = int(defender.resources["food"] * min(0.2, 0.05 + victory_margin * 0.15))
         
         # Transfer resources
-        attacker.resources["gold"] += gold_stolen
-        attacker.resources["food"] += food_stolen
+        player.resources["gold"] += gold_stolen
+        player.resources["food"] += food_stolen
         defender.resources["gold"] = max(0, defender.resources["gold"] - gold_stolen)
         defender.resources["food"] = max(0, defender.resources["food"] - food_stolen)
         
         # Happiness effects
-        attacker.resources["happiness"] += random.randint(50, 100)
+        player.resources["happiness"] += random.randint(50, 100)
         defender.resources["happiness"] = max(0, defender.resources["happiness"] - random.randint(100, 200))
         
         embed = create_embed("⚔️ Victory!", 
-                           f"{attacker.name} has defeated {defender.name}!")
+                           f"{player.name} has defeated {defender.name}!")
         embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
         embed.add_field(name="⚡ Battle Power", 
                        value=f"Attacker: {attacker_power:,}\nDefender: {defender_power:,}", 
@@ -1017,23 +1051,23 @@ async def attack(ctx, target: guilded.Member = None):
         defeat_margin = (defender_roll - attacker_roll) / attacker_roll
         
         # Attacker loses more soldiers in defeat
-        attacker_losses = max(5, int(attacker.resources["soldiers"] * random.uniform(0.20, 0.35)))
+        attacker_losses = max(5, int(player.resources["soldiers"] * random.uniform(0.20, 0.35)))
         defender_losses = max(1, int(defender.resources["soldiers"] * random.uniform(0.05, 0.10)))
         
         # Apply losses
-        attacker.resources["soldiers"] = max(0, attacker.resources["soldiers"] - attacker_losses)
+        player.resources["soldiers"] = max(0, player.resources["soldiers"] - attacker_losses)
         defender.resources["soldiers"] = max(0, defender.resources["soldiers"] - defender_losses)
         
         # Attacker loses some resources in retreat
-        gold_lost = int(attacker.resources["gold"] * min(0.15, 0.05 + defeat_margin * 0.1))
-        attacker.resources["gold"] = max(0, attacker.resources["gold"] - gold_lost)
+        gold_lost = int(player.resources["gold"] * min(0.15, 0.05 + defeat_margin * 0.1))
+        player.resources["gold"] = max(0, player.resources["gold"] - gold_lost)
         
         # Happiness effects
-        attacker.resources["happiness"] = max(0, attacker.resources["happiness"] - random.randint(100, 200))
+        player.resources["happiness"] = max(0, player.resources["happiness"] - random.randint(100, 200))
         defender.resources["happiness"] += random.randint(50, 100)
         
         embed = create_embed("🛡️ Defeat!", 
-                           f"{defender.name} has repelled {attacker.name}'s attack!", 
+                           f"{defender.name} has repelled {player.name}'s attack!", 
                            0xff9900)
         embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
         embed.add_field(name="⚡ Battle Power", 
@@ -1048,7 +1082,7 @@ async def attack(ctx, target: guilded.Member = None):
     
     # Notify the defender if they're online (optional - basic implementation)
     try:
-        await target.send(f"🚨 Your civilization {defender.name} was attacked by {attacker.name}! Check the server for details.")
+        await target.send(f"🚨 Your civilization {defender.name} was attacked by {player.name}! Check the server for details.")
     except:
         pass  # User might have DMs disabled
     
@@ -1143,7 +1177,7 @@ async def train(ctx):
         level_up = ""
     
     # Training GIF
-    gif_url = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTFjbzFqNTh5MWxwZGI3MHViZW5kOTZ2YXFiazlnZTJham0ybTBrZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PiznJzzPYacIXxmHeD/giphy.gif"
+    gif_url = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTFjbzFqNTh5MWxwZGI3MHViZW5dOTZ2YXFiazlnZTJham0ybTBrZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PiznJzzPYacIXxmHeD/giphy.gif"
     
     embed = create_embed("🏋️ Training Complete!", f"Your soldiers are ready for battle!{level_up}")
     embed.set_image(url=gif_url)
@@ -1158,12 +1192,21 @@ async def train(ctx):
 
 @bot.command()
 @commands.cooldown(1, 180, commands.BucketType.user)
-async def spy(ctx, target: guilded.Member = None):
+async def spy(ctx, *, target_input=None):
     """Spy on another nation to gather intelligence (3 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.spy @user`")
+    if not target_input:
+        return await ctx.send("❌ Usage: `.spy @username`")
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
+        return
+    
+    if str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ You cannot spy on yourself!")
     
     target_player = get_player(str(target.id))
     if target_player.name is None:
@@ -1204,12 +1247,21 @@ async def spy(ctx, target: guilded.Member = None):
 
 @bot.command()
 @commands.cooldown(1, 300, commands.BucketType.user)
-async def sabotage(ctx, target: guilded.Member = None):
+async def sabotage(ctx, *, target_input=None):
     """Sabotage enemy military units and buildings (5 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.sabotage @user`")
+    if not target_input:
+        return await ctx.send("❌ Usage: `.sabotage @username`")
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
+        return
+    
+    if str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ You cannot sabotage yourself!")
     
     target_player = get_player(str(target.id))
     if target_player.name is None:
@@ -1242,12 +1294,21 @@ async def sabotage(ctx, target: guilded.Member = None):
 
 @bot.command()
 @commands.cooldown(1, 240, commands.BucketType.user)
-async def hack(ctx, target: guilded.Member = None):
+async def hack(ctx, *, target_input=None):
     """Hack enemy systems to reduce happiness and steal info (4 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.hack @user`")
+    if not target_input:
+        return await ctx.send("❌ Usage: `.hack @username`")
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
+        return
+    
+    if str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ You cannot hack yourself!")
     
     target_player = get_player(str(target.id))
     if target_player.name is None:
@@ -1283,7 +1344,7 @@ async def hack(ctx, target: guilded.Member = None):
 
 @bot.command()
 @commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def ally(ctx, target: guilded.Member = None):
+async def ally(ctx, *, target_input=None):
     """Form an alliance with another player (2 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
@@ -1294,11 +1355,17 @@ async def ally(ctx, target: guilded.Member = None):
         await ctx.send(embed=embed)
         return
     
-    if not target:
+    if not target_input:
         embed = create_embed("❌ No Target", 
                            "You must specify who to ally with!\nExample: `.ally @username`", 
                            0xff0000)
         await ctx.send(embed=embed)
+        return
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
         return
     
     if str(target.id) == str(ctx.author.id):
@@ -1349,7 +1416,7 @@ async def ally(ctx, target: guilded.Member = None):
 
 @bot.command()
 @commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def break_(ctx, target: guilded.Member = None):
+async def break_(ctx, *, target_input=None):
     """Break an alliance with another player (2 min cooldown)"""
     player = get_player(str(ctx.author.id))
     
@@ -1360,11 +1427,17 @@ async def break_(ctx, target: guilded.Member = None):
         await ctx.send(embed=embed)
         return
     
-    if not target:
+    if not target_input:
         embed = create_embed("❌ No Target", 
                            "You must specify who to break alliance with!\nExample: `.break @username`", 
                            0xff0000)
         await ctx.send(embed=embed)
+        return
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
         return
     
     if str(target.id) == str(ctx.author.id):
@@ -1410,7 +1483,7 @@ async def break_(ctx, target: guilded.Member = None):
 # =============================================================================
 
 @bot.command()
-async def send(ctx, target: guilded.Member = None, *, message=None):
+async def send(ctx, target_input=None, *, message=None):
     """Send a diplomatic message to another player"""
     player = get_player(str(ctx.author.id))
     
@@ -1421,11 +1494,17 @@ async def send(ctx, target: guilded.Member = None, *, message=None):
         await ctx.send(embed=embed)
         return
     
-    if not target or not message:
+    if not target_input or not message:
         embed = create_embed("❌ Usage Error", 
-                           "Usage: `.send @user <message>`", 
+                           "Usage: `.send @user message`", 
                            0xff0000)
         await ctx.send(embed=embed)
+        return
+    
+    try:
+        target = await get_member(ctx, target_input)
+    except commands.MemberNotFound:
+        await ctx.send("❌ Member not found. Please mention a valid user or use their username.")
         return
     
     if str(target.id) == str(ctx.author.id):
