@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 WarBot - Complete Guilded Civilization Management Bot
-All-in-one file containing the entire bot functionality
+Enhanced with Espionage, Natural Disasters, Messaging & GIFs
 """
 
 import os
@@ -19,10 +19,12 @@ from guilded.ext import commands
 # =============================================================================
 
 class Player:
-    """Player data model"""
+    """Enhanced player data model with espionage and messaging"""
     def __init__(self, user_id):
         self.user_id = user_id
         self.name = None  # Civilization name
+        
+        # Resources
         self.resources = {
             "gold": 1000,
             "food": 500,
@@ -30,6 +32,8 @@ class Player:
             "happiness": 500,
             "hunger": 1000
         }
+        
+        # Buildings
         self.buildings = {
             "houses": 0,
             "farms": 0,
@@ -39,9 +43,23 @@ class Player:
             "fighter_jets": 0,
             "tanks": 0
         }
+        
+        # Military & Espionage
         self.military_units = {
             "mi6_civilians": 0  # Fake operatives
         }
+        self.espionage = {
+            "spy_level": 1,
+            "spy_attempts": 0,
+            "max_spies": 3,
+            "spy_success_rate": 0.6
+        }
+        
+        # Communications
+        self.mailbox = []  # Received messages
+        self.sent_mail = []  # Sent messages
+        
+        # Alliances & Cooldowns
         self.alliances = set()
         self.last_gather = 0
         self.last_build = 0
@@ -56,6 +74,10 @@ class Player:
         self.last_break = 0
         self.last_passive = time.time()
         self.last_hunger_penalty = time.time()
+        self.last_train = 0
+        self.last_spy = 0
+        self.last_sabotage = 0
+        self.last_hack = 0
         self.cheer_cost = 100
         self.cheer_count = 0
         self.feed_cost = 50
@@ -113,7 +135,10 @@ def calculate_battle_power(player):
     tank_bonus = player.buildings["tanks"] * 300
     mi6_bonus = player.military_units["mi6_civilians"] * 150
     
-    total_power = (base_power * happiness_multiplier) + warplane_bonus + jet_bonus + tank_bonus + mi6_bonus
+    # Espionage bonus
+    spy_bonus = player.espionage["spy_level"] * 50
+    
+    total_power = (base_power * happiness_multiplier) + warplane_bonus + jet_bonus + tank_bonus + mi6_bonus + spy_bonus
     return int(total_power)
 
 def calculate_discount(player):
@@ -122,6 +147,28 @@ def calculate_discount(player):
     building_discount = sum(player.buildings.values()) * 5  # 5% per building
     total_discount = min(happiness_discount + building_discount, 90)  # Max 90% discount
     return total_discount
+
+def calculate_spy_success(attacker, defender):
+    """Calculate spy success based on levels and randomness"""
+    base_chance = attacker.espionage["spy_success_rate"]
+    level_diff = attacker.espionage["spy_level"] - defender.espionage["spy_level"]
+    bonus = min(level_diff * 0.1, 0.3)
+    return min(0.9, base_chance + bonus + random.uniform(-0.2, 0.2))
+
+def trigger_natural_disaster():
+    """Randomly trigger disasters affecting all players"""
+    disasters = [
+        {"name": "Earthquake", "gold_loss": 0.15, "food_loss": 0.2, "soldier_loss": 0.05},
+        {"name": "Drought", "gold_loss": 0.1, "food_loss": 0.3, "soldier_loss": 0.02},
+        {"name": "Plague", "gold_loss": 0.2, "food_loss": 0.1, "soldier_loss": 0.25},
+        {"name": "Tornado", "gold_loss": 0.12, "food_loss": 0.15, "soldier_loss": 0.08},
+        {"name": "Flood", "gold_loss": 0.18, "food_loss": 0.25, "soldier_loss": 0.03}
+    ]
+    
+    if random.random() < 0.03:  # 3% chance per cycle
+        disaster = random.choice(disasters)
+        return disaster
+    return None
 
 # =============================================================================
 # BOT SETUP AND BACKGROUND TASKS
@@ -132,7 +179,7 @@ bot = commands.Bot(command_prefix='.', help_command=None)
 
 # Background task for passive effects
 async def passive_effects():
-    """Background task to handle passive resource changes"""
+    """Background task to handle passive resource changes and disasters"""
     await bot.wait_until_ready()
     while True:
         now = time.time()
@@ -163,6 +210,10 @@ async def passive_effects():
                         player.resources["soldiers"] = max(0, player.resources["soldiers"] - 2)
                         player.last_hunger_penalty = now
                 
+                # Reset spy attempts daily
+                if now - player.last_passive > 86400:  # 24 hours
+                    player.espionage["spy_attempts"] = 0
+                
                 # Reset costs after 4 days (345,600 seconds)
                 if now - player.last_passive > 345600:
                     player.cheer_cost = 100
@@ -172,7 +223,28 @@ async def passive_effects():
             except Exception as e:
                 print(f"Error processing passive effects for player {player_id}: {e}")
         
-        await asyncio.sleep(10)  # Check every 10 seconds
+        # Check for natural disasters
+        disaster = trigger_natural_disaster()
+        if disaster:
+            print(f"🌪️ Natural disaster triggered: {disaster['name']}")
+            
+            for player_id, player in list(players.items()):
+                gold_loss = int(player.resources["gold"] * disaster["gold_loss"])
+                food_loss = int(player.resources["food"] * disaster["food_loss"])
+                soldier_loss = int(player.resources["soldiers"] * disaster["soldier_loss"])
+                
+                player.resources["gold"] = max(0, player.resources["gold"] - gold_loss)
+                player.resources["food"] = max(0, player.resources["food"] - food_loss)
+                player.resources["soldiers"] = max(0, player.resources["soldiers"] - soldier_loss)
+                
+                # Send disaster notification
+                try:
+                    user = await bot.fetch_user(player_id)
+                    await user.send(f"🚨 **{disaster['name']}** struck your nation!\n💰 -{gold_loss} gold\n🌾 -{food_loss} food\n⚔️ -{soldier_loss} soldiers")
+                except:
+                    pass
+        
+        await asyncio.sleep(30)  # Check every 30 seconds
 
 # Async setup hook
 @bot.event
@@ -186,8 +258,6 @@ async def on_ready():
     """Event fired when bot is ready"""
     print(f'Logged in as {bot.user.name} ({bot.user.id})')
     print('------')
-    # Note: Guilded API doesn't support custom status like Discord
-    # Bot will show as online by default
     print("Bot is ready!")
 
 @bot.event
@@ -301,6 +371,17 @@ async def status(ctx):
     
     embed.add_field(name="🎯 Special Units", value=military_text, inline=True)
     
+    # Espionage
+    embed.add_field(name="🕵️ Espionage", 
+                   value=f"Spy Level: {player.espionage['spy_level']}\n"
+                         f"Spy Attempts: {player.espionage['spy_attempts']}/{player.espionage['max_spies']}", 
+                   inline=True)
+    
+    # Communications
+    embed.add_field(name="📧 Messages", 
+                   value=f"Inbox: {len(player.mailbox)} unread\nSent: {len(player.sent_mail)}", 
+                   inline=True)
+    
     # Combat stats and discounts
     embed.add_field(name="⚔️ Battle Power", value=f"{battle_power:,}", inline=True)
     embed.add_field(name="💸 Shop Discount", value=f"{discount:.1f}%", inline=True)
@@ -326,7 +407,7 @@ async def help(ctx, command_name=None):
             embed = create_embed("❌ Command Not Found", f"Command '{command_name}' does not exist.")
     else:
         # Show all commands
-        embed = create_embed("🏰 NationBot Commands", "Use .help // working - Manage your civilization!")
+        embed = create_embed("🏰 WarBot Commands", "Complete civilization management system!")
         
         basic_commands = [
             "`.start <name>` - Initialize your civilization with a name",
@@ -346,7 +427,14 @@ async def help(ctx, command_name=None):
         
         combat_commands = [
             "`.attack <@user>` - Attack another player (1.5 min cooldown)",
-            "`.civil_war` - Internal conflict for resources (2.5 min cooldown)"
+            "`.civil_war` - Internal conflict for resources (2.5 min cooldown)",
+            "`.train` - Train soldiers & improve spies (2.5 min cooldown)"
+        ]
+        
+        espionage_commands = [
+            "`.spy @user` - Gather intelligence (3 min cooldown)",
+            "`.sabotage @user` - Damage enemy military (5 min cooldown)",
+            "`.hack @user` - Steal happiness & gold (4 min cooldown)"
         ]
         
         alliance_commands = [
@@ -354,10 +442,17 @@ async def help(ctx, command_name=None):
             "`.break <@user>` - Break alliance (2 min cooldown)"
         ]
         
+        communication_commands = [
+            "`.send @user message` - Send diplomatic message",
+            "`.mail` - Check your messages"
+        ]
+        
         embed.add_field(name="🏛️ Basic Commands", value="\n".join(basic_commands), inline=False)
         embed.add_field(name="💰 Economy Commands", value="\n".join(economy_commands), inline=False)
         embed.add_field(name="⚔️ Combat Commands", value="\n".join(combat_commands), inline=False)
+        embed.add_field(name="🕵️ Espionage Commands", value="\n".join(espionage_commands), inline=False)
         embed.add_field(name="🤝 Alliance Commands", value="\n".join(alliance_commands), inline=False)
+        embed.add_field(name="📧 Communication Commands", value="\n".join(communication_commands), inline=False)
         
     await ctx.send(embed=embed)
 
@@ -901,6 +996,7 @@ async def attack(ctx, target: guilded.Member = None):
         
         embed = create_embed("⚔️ Victory!", 
                            f"{attacker.name} has defeated {defender.name}!")
+        embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
         embed.add_field(name="⚡ Battle Power", 
                        value=f"Attacker: {attacker_power:,}\nDefender: {defender_power:,}", 
                        inline=True)
@@ -934,6 +1030,7 @@ async def attack(ctx, target: guilded.Member = None):
         embed = create_embed("🛡️ Defeat!", 
                            f"{defender.name} has repelled {attacker.name}'s attack!", 
                            0xff9900)
+        embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
         embed.add_field(name="⚡ Battle Power", 
                        value=f"Attacker: {attacker_power:,}\nDefender: {defender_power:,}", 
                        inline=True)
@@ -1012,6 +1109,166 @@ async def civil_war(ctx):
         embed.add_field(name="🌾 Supplies Destroyed", value=f"-{food_lost} food", inline=True)
         embed.add_field(name="💀 Heavy Casualties", value=f"-{soldiers_lost} soldiers", inline=True)
         embed.add_field(name="😭 Mass Exodus", value=f"-{happiness_lost} happiness", inline=True)
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 150, commands.BucketType.user)  # 2.5-minute cooldown
+async def train(ctx):
+    """Train your soldiers to improve combat effectiveness"""
+    player = get_player(str(ctx.author.id))
+    
+    if player.name is None:
+        return await ctx.send("❌ Start your civilization first! `.start <name>`")
+    
+    cost = 200
+    if player.resources["gold"] < cost:
+        return await ctx.send(f"❌ Need {cost} gold to train soldiers!")
+    
+    # Training logic
+    player.resources["gold"] -= cost
+    soldiers_trained = random.randint(15, 30)
+    player.resources["soldiers"] += soldiers_trained
+    
+    # Increase spy level chance
+    if random.random() < 0.3:
+        player.espionage["spy_level"] += 1
+        level_up = f"\n🎓 Spy level increased to {player.espionage['spy_level']}!"
+    else:
+        level_up = ""
+    
+    # Training GIF
+    gif_url = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTFjbzFqNTh5MWxwZGI3MHViZW5kOTZ2YXFiazlnZTJham0ybTBrZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PiznJzzPYacIXxmHeD/giphy.gif"
+    
+    embed = create_embed("🏋️ Training Complete!", f"Your soldiers are ready for battle!{level_up}")
+    embed.set_image(url=gif_url)
+    embed.add_field(name="💰 Training Cost", value=f"-{cost} gold", inline=True)
+    embed.add_field(name="⚔️ New Soldiers", value=f"+{soldiers_trained}", inline=True)
+    
+    await ctx.send(embed=embed)
+
+# =============================================================================
+# ESPIONAGE COMMANDS
+# =============================================================================
+
+@bot.command()
+@commands.cooldown(1, 180, commands.BucketType.user)
+async def spy(ctx, target: guilded.Member = None):
+    """Spy on another nation to gather intelligence (3 min cooldown)"""
+    player = get_player(str(ctx.author.id))
+    
+    if not target or str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ Usage: `.spy @user`")
+    
+    target_player = get_player(str(target.id))
+    if target_player.name is None:
+        return await ctx.send("❌ Target hasn't started their civilization!")
+    
+    if player.espionage["spy_attempts"] >= player.espionage["max_spies"]:
+        return await ctx.send("❌ Max spy attempts reached! Wait 24h or upgrade spies.")
+    
+    success_rate = calculate_spy_success(player, target_player)
+    player.espionage["spy_attempts"] += 1
+    
+    if random.random() < success_rate:
+        # Successful spy
+        intel = {
+            "battle_power": calculate_battle_power(target_player),
+            "resources": dict(target_player.resources),
+            "buildings": dict(target_player.buildings),
+            "alliances": list(target_player.alliances)
+        }
+        
+        embed = create_embed("🕵️ Spy Mission Success!", f"Intel on **{target_player.name}**:")
+        embed.add_field(name="⚔️ Battle Power", value=intel["battle_power"], inline=True)
+        embed.add_field(name="💰 Gold", value=intel["resources"]["gold"], inline=True)
+        embed.add_field(name="🤝 Alliances", value=len(intel["alliances"]), inline=True)
+        
+        # Small chance to discover mail
+        if random.random() < 0.3 and target_player.mailbox:
+            mail = random.choice(target_player.mailbox)
+            embed.add_field(name="📧 Intercepted Mail", value=f"From: {mail['from']}\nSubject: {mail['subject'][:50]}...", inline=False)
+        
+    else:
+        # Failed spy - lose happiness
+        happiness_loss = random.randint(50, 100)
+        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
+        embed = create_embed("🕵️ Spy Mission Failed!", f"Your spy was caught! -{happiness_loss} happiness")
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 300, commands.BucketType.user)
+async def sabotage(ctx, target: guilded.Member = None):
+    """Sabotage enemy military units and buildings (5 min cooldown)"""
+    player = get_player(str(ctx.author.id))
+    
+    if not target or str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ Usage: `.sabotage @user`")
+    
+    target_player = get_player(str(target.id))
+    if target_player.name is None:
+        return await ctx.send("❌ Target hasn't started their civilization!")
+    
+    success_rate = calculate_spy_success(player, target_player) * 0.7
+    
+    if random.random() < success_rate:
+        # Successful sabotage
+        soldiers_destroyed = max(1, int(target_player.resources["soldiers"] * 0.1))
+        buildings_damaged = 0
+        
+        for building in target_player.buildings:
+            if target_player.buildings[building] > 0:
+                target_player.buildings[building] -= 1
+                buildings_damaged += 1
+        
+        target_player.resources["soldiers"] = max(0, target_player.resources["soldiers"] - soldiers_destroyed)
+        
+        embed = create_embed("💣 Sabotage Success!", f"Damaged **{target_player.name}**!")
+        embed.add_field(name="💀 Soldiers Killed", value=soldiers_destroyed, inline=True)
+        embed.add_field(name="🏗️ Buildings Damaged", value=buildings_damaged, inline=True)
+    else:
+        # Failed sabotage
+        happiness_loss = random.randint(75, 150)
+        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
+        embed = create_embed("💣 Sabotage Failed!", f"Your saboteurs were discovered! -{happiness_loss} happiness")
+    
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.cooldown(1, 240, commands.BucketType.user)
+async def hack(ctx, target: guilded.Member = None):
+    """Hack enemy systems to reduce happiness and steal info (4 min cooldown)"""
+    player = get_player(str(ctx.author.id))
+    
+    if not target or str(target.id) == str(ctx.author.id):
+        return await ctx.send("❌ Usage: `.hack @user`")
+    
+    target_player = get_player(str(target.id))
+    if target_player.name is None:
+        return await ctx.send("❌ Target hasn't started their civilization!")
+    
+    success_rate = calculate_spy_success(player, target_player) * 0.8
+    
+    if random.random() < success_rate:
+        # Successful hack
+        happiness_stolen = random.randint(100, 250)
+        gold_stolen = int(target_player.resources["gold"] * 0.05)
+        
+        target_player.resources["happiness"] = max(0, target_player.resources["happiness"] - happiness_stolen)
+        target_player.resources["gold"] = max(0, target_player.resources["gold"] - gold_stolen)
+        
+        player.resources["happiness"] += int(happiness_stolen * 0.5)
+        player.resources["gold"] += gold_stolen
+        
+        embed = create_embed("💻 Hack Success!", f"Breached **{target_player.name}**!")
+        embed.add_field(name="😈 Happiness Stolen", value=f"+{int(happiness_stolen*0.5)} for you, -{happiness_stolen} for them", inline=True)
+        embed.add_field(name="💰 Gold Stolen", value=gold_stolen, inline=True)
+    else:
+        # Failed hack
+        happiness_loss = random.randint(100, 200)
+        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
+        embed = create_embed("💻 Hack Failed!", f"Your hackers were traced! -{happiness_loss} happiness")
     
     await ctx.send(embed=embed)
 
@@ -1171,6 +1428,80 @@ async def break_command(ctx, target: guilded.Member = None):
     await break_alliance(ctx, target)
 
 # =============================================================================
+# COMMUNICATION COMMANDS
+# =============================================================================
+
+@bot.command()
+async def send(ctx, target: guilded.Member = None, *, message=None):
+    """Send a diplomatic message to another nation"""
+    player = get_player(str(ctx.author.id))
+    
+    if player.name is None:
+        embed = create_embed("❌ No Civilization", 
+                           "You need to start your civilization first! Use `.start <name>`", 
+                           0xff0000)
+        await ctx.send(embed=embed)
+        return
+    
+    if not target or not message:
+        embed = create_embed("📧 Send Message", 
+                           "Send diplomatic messages to other nations!\n"
+                           "**Usage:** `.send @player Your message here`")
+        await ctx.send(embed=embed)
+        return
+    
+    target_player = get_player(str(target.id))
+    if target_player.name is None:
+        return await ctx.send("❌ Target hasn't started their civilization!")
+    
+    # Create message
+    mail = {
+        "from": player.name,
+        "from_id": str(ctx.author.id),
+        "subject": f"Message from {player.name}",
+        "content": message,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    
+    target_player.mailbox.append(mail)
+    player.sent_mail.append(mail)
+    
+    embed = create_embed("📧 Message Sent!", f"Sent to **{target_player.name}**: {message[:100]}...")
+    await ctx.send(embed=embed)
+    
+    # Notify target
+    try:
+        await target.send(f"📧 New message from **{player.name}** in Guilded: {message[:50]}...")
+    except:
+        pass
+
+@bot.command()
+async def mail(ctx):
+    """Check your diplomatic messages"""
+    player = get_player(str(ctx.author.id))
+    
+    if player.name is None:
+        embed = create_embed("❌ No Civilization", 
+                           "You need to start your civilization first! Use `.start <name>`", 
+                           0xff0000)
+        await ctx.send(embed=embed)
+        return
+    
+    if not player.mailbox:
+        return await ctx.send("📭 Your inbox is empty!")
+    
+    embed = create_embed("📧 Diplomatic Mail", f"You have {len(player.mailbox)} messages:")
+    
+    for i, mail in enumerate(player.mailbox[-5:], 1):
+        embed.add_field(
+            name=f"#{i} From: {mail['from']} ({mail['timestamp']})",
+            value=mail['content'][:100] + ("..." if len(mail['content']) > 100 else ""),
+            inline=False
+        )
+    
+    await ctx.send(embed=embed)
+
+# =============================================================================
 # FLASK WEB SERVER
 # =============================================================================
 
@@ -1184,7 +1515,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NationBot - Civilization Management</title>
+    <title>WarBot - Advanced Civilization Management</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -1244,6 +1575,14 @@ HTML_TEMPLATE = """
             color: #3498db;
             margin-bottom: 1rem;
         }
+        .disaster-alert {
+            background: linear-gradient(45deg, #ff6b6b, #ffa500);
+            color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -1253,7 +1592,7 @@ HTML_TEMPLATE = """
                 <div class="row align-items-center">
                     <div class="col-md-8">
                         <h1><i class="fas fa-crown"></i> WarBot</h1>
-                        <p class="lead mb-0">Advanced Civilization Management for Guilded</p>
+                        <p class="lead mb-0">Advanced Civilization Management with Espionage</p>
                     </div>
                     <div class="col-md-4 text-end">
                         <div class="status-badge">
@@ -1264,77 +1603,86 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="container p-4">
+                <div class="disaster-alert">
+                    <i class="fas fa-exclamation-triangle"></i> 
+                    <strong>NEW FEATURES:</strong> Espionage System, Natural Disasters, Diplomatic Messaging & GIF Animations!
+                </div>
+
                 <div class="row">
-                    <div class="col-lg-6">
+                    <div class="col-lg-4">
                         <h3><i class="fas fa-rocket feature-icon"></i></h3>
                         <h4>Core Features</h4>
                         <ul class="list-unstyled">
-                            <li><i class="fas fa-check text-success"></i> Complete civilization management system</li>
-                            <li><i class="fas fa-check text-success"></i> Resource gathering & economic gameplay</li>
+                            <li><i class="fas fa-check text-success"></i> Complete civilization management</li>
+                            <li><i class="fas fa-check text-success"></i> Resource gathering & economy</li>
                             <li><i class="fas fa-check text-success"></i> Strategic combat & military units</li>
                             <li><i class="fas fa-check text-success"></i> Alliance system & diplomacy</li>
-                            <li><i class="fas fa-check text-success"></i> Building construction & upgrades</li>
-                            <li><i class="fas fa-check text-success"></i> Time-based mechanics & cooldowns</li>
                         </ul>
                     </div>
-                    <div class="col-lg-6">
-                        <h3><i class="fas fa-cogs feature-icon"></i></h3>
-                        <h4>Game Mechanics</h4>
+                    <div class="col-lg-4">
+                        <h3><i class="fas fa-user-secret feature-icon"></i></h3>
+                        <h4>Espionage System</h4>
                         <ul class="list-unstyled">
-                            <li><i class="fas fa-coins text-warning"></i> 5 core resources (Gold, Food, Soldiers, Happiness, Hunger)</li>
-                            <li><i class="fas fa-building text-info"></i> 7 building types with unique benefits</li>
-                            <li><i class="fas fa-sword text-danger"></i> Dynamic combat system with battle power calculation</li>
-                            <li><i class="fas fa-percentage text-success"></i> Discount system based on happiness & buildings</li>
-                            <li><i class="fas fa-moon text-primary"></i> Day/night cycles affecting gameplay (UAE timezone)</li>
-                            <li><i class="fas fa-heart text-danger"></i> Passive effects & resource decay systems</li>
+                            <li><i class="fas fa-eye text-info"></i> Spy on enemy nations</li>
+                            <li><i class="fas fa-bomb text-danger"></i> Sabotage military units</li>
+                            <li><i class="fas fa-laptop-code text-warning"></i> Hack enemy systems</li>
+                            <li><i class="fas fa-graduation-cap text-primary"></i> Train elite soldiers</li>
+                        </ul>
+                    </div>
+                    <div class="col-lg-4">
+                        <h3><i class="fas fa-cloud-rain feature-icon"></i></h3>
+                        <h4>Dynamic Events</h4>
+                        <ul class="list-unstyled">
+                            <li><i class="fas fa-bolt text-warning"></i> Natural disasters (3% daily)</li>
+                            <li><i class="fas fa-envelope text-primary"></i> Diplomatic messaging</li>
+                            <li><i class="fas fa-moon text-info"></i> Day/night cycle bonuses</li>
+                            <li><i class="fas fa-heart text-danger"></i> Hunger & happiness systems</li>
                         </ul>
                     </div>
                 </div>
 
                 <hr class="my-4">
 
-                <h3 class="text-center mb-4"><i class="fas fa-terminal"></i> Command Categories</h3>
+                <h3 class="text-center mb-4"><i class="fas fa-terminal"></i> Complete Command List</h3>
                 
                 <div class="row">
                     <div class="col-md-6">
                         <div class="command-card">
-                            <div class="command-title"><i class="fas fa-flag"></i> Basic Commands</div>
-                            <div class="command-description">Start and manage your civilization</div>
+                            <div class="command-title"><i class="fas fa-flag"></i> Basic & Economy</div>
                             <div class="command-example">
                                 .start Roman Empire<br>
-                                .status<br>
-                                .help
+                                .gather | .build house<br>
+                                .buy soldiers 10 | .farm<br>
+                                .cheer | .feed | .gamble 100
                             </div>
                         </div>
 
                         <div class="command-card">
-                            <div class="command-title"><i class="fas fa-coins"></i> Economy Commands</div>
-                            <div class="command-description">Resource management and economic activities</div>
+                            <div class="command-title"><i class="fas fa-sword"></i> Combat & Training</div>
                             <div class="command-example">
-                                .gather (1 min cooldown)<br>
-                                .build house (2 min cooldown)<br>
-                                .buy soldiers 10 (1.5 min cooldown)<br>
-                                .farm (2 min cooldown)
+                                .attack @enemy<br>
+                                .civil_war<br>
+                                .train (with GIF)
                             </div>
                         </div>
                     </div>
 
                     <div class="col-md-6">
                         <div class="command-card">
-                            <div class="command-title"><i class="fas fa-sword"></i> Combat Commands</div>
-                            <div class="command-description">Warfare and military operations</div>
+                            <div class="command-title"><i class="fas fa-user-secret"></i> Espionage</div>
                             <div class="command-example">
-                                .attack @player (1.5 min cooldown)<br>
-                                .civil_war (2.5 min cooldown)
+                                .spy @enemy<br>
+                                .sabotage @enemy<br>
+                                .hack @enemy
                             </div>
                         </div>
 
                         <div class="command-card">
-                            <div class="command-title"><i class="fas fa-handshake"></i> Alliance Commands</div>
-                            <div class="command-description">Diplomatic relations and alliances</div>
+                            <div class="command-title"><i class="fas fa-handshake"></i> Diplomacy</div>
                             <div class="command-example">
-                                .ally @player (2 min cooldown)<br>
-                                .break @player (2 min cooldown)
+                                .ally @friend | .break @friend<br>
+                                .send @player Hello!<br>
+                                .mail (check inbox)
                             </div>
                         </div>
                     </div>
@@ -1344,8 +1692,8 @@ HTML_TEMPLATE = """
 
                 <div class="text-center">
                     <h4><i class="fas fa-info-circle"></i> Getting Started</h4>
-                    <p class="lead">Join a Guilded server with WarBot and type <code>.start YourCivilizationName</code> to begin your journey!</p>
-                    <p class="text-muted">All cooldowns have been optimized for better gameplay flow. Use <code>.help</code> in-game for detailed command information.</p>
+                    <p class="lead">Join a Guilded server with WarBot and type <code>.start YourCivilizationName</code> to begin!</p>
+                    <p class="text-muted">All cooldowns optimized for balanced gameplay. Natural disasters occur randomly affecting all players!</p>
                 </div>
             </div>
         </div>
@@ -1381,6 +1729,13 @@ def run_bot():
 
 if __name__ == '__main__':
     print("WarBot - Complete Civilization Management System")
+    print("=" * 50)
+    print("✅ Enhanced Features:")
+    print("  • Espionage System (.spy, .sabotage, .hack)")
+    print("  • Natural Disasters (3% daily occurrence)")
+    print("  • Diplomatic Messaging (.send, .mail)")
+    print("  • Soldier Training with GIFs")
+    print("  • Attack GIFs")
     print("=" * 50)
     
     # Start Flask server in background thread
