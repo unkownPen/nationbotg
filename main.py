@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template_string
 import guilded
 from guilded.ext import commands
+from guilded.ext.commands.errors import MemberNotFound
 
 # =============================================================================
 # MODELS AND DATA STORAGE
@@ -266,8 +267,10 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
         cooldown_time = format_cooldown_time(int(error.retry_after))
         await ctx.send(f"⏱️ Command on cooldown! Try again in {cooldown_time}")
+    elif isinstance(error, MemberNotFound):
+        await ctx.send("❌ Member not found. Please mention a valid user in this server.")
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Missing required argument: {error.param}")
+        await ctx.send(f"❌ Missing required argument: {error.param.name}")
     elif isinstance(error, commands.CommandNotFound):
         await ctx.send("❌ Unknown command! Use `.help` for available commands.")
     else:
@@ -559,7 +562,7 @@ async def build(ctx, *, item=None):
     gold_cost = building_data["gold"]
     food_cost = building_data.get("food", 0)
     
-    # Check if player has<|reserved_17|> resources
+    # Check if player has resources
     if player.resources["gold"] < gold_cost or player.resources["food"] < food_cost:
         embed = create_embed("❌ Insufficient Resources", 
                            f"Need {gold_cost} gold and {food_cost} food to build {building_name.replace('_', ' ')}")
@@ -744,6 +747,7 @@ async def farm(ctx):
     
     embed = create_embed("🚜 Successful Harvest!", 
                        f"Your farming efforts paid off!{bonus_text}")
+    embed.set_image(url="https://media3.giphy.com/media/Qw0pdmT5p6hLjM5NKk/giphy.gif")
     embed.add_field(name="🌾 Food Gained", value=f"+{food_gained}", inline=True)
     if bonus_gold > 0:
         embed.add_field(name="💰 Gold Bonus", value=f"+{bonus_gold}", inline=True)
