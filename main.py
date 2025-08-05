@@ -13,11 +13,31 @@ import json
 import random
 import re
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
+from aiohttp import web
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# WEB SERVER FOR RENDER COMPATIBILITY
+# ============================================================================
+
+async def health_check(request):
+    """Simple health check endpoint for Render"""
+    return web.Response(text="Bot is running")
+
+async def start_web_server():
+    """Start a simple web server for health checks"""
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Health check server running on port {port}")
 
 # ============================================================================
 # CONFIGURATION
@@ -1808,6 +1828,9 @@ async def main():
     if not token:
         logger.error('Please set GUILDED_BOT_TOKEN environment variable')
         return
+        
+    # Start the web server for Render compatibility
+    asyncio.create_task(start_web_server())
         
     try:
         await bot.start(token)
