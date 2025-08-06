@@ -1,1748 +1,2244 @@
 #!/usr/bin/env python3
 """
 WarBot - Complete Guilded Civilization Management Bot
-Enhanced with Espionage, Natural Disasters, Messaging & GIFs
+A comprehensive bot featuring civilization building, combat, espionage, technology, and political systems.
 """
 
 import os
-import asyncio
-import time
-import threading
+import json
 import random
+import asyncio
+import threading
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string
+from typing import Optional, Tuple, Dict, Any
+
+# Framework imports
 import guilded
-from guilded.ext import commands
+from flask import Flask, render_template_string
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import and_, or_
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # =============================================================================
-# MODELS AND DATA STORAGE
+# DATABASE CONFIGURATION
 # =============================================================================
 
-class Player:
-    """Enhanced player data model with espionage and messaging"""
-    def __init__(self, user_id):
-        self.user_id = user_id
-        self.name = None  # Civilization name
-        
-        # Resources
-        self.resources = {
-            "gold": 1000,
-            "food": 500,
-            "soldiers": 100,
-            "happiness": 500,
-            "hunger": 1000
-        }
-        
-        # Buildings
-        self.buildings = {
-            "houses": 0,
-            "farms": 0,
-            "barracks": 0,
-            "walls": 0,
-            "warplanes": 0,
-            "fighter_jets": 0,
-            "tanks": 0
-        }
-        
-        # Military & Espionage
-        self.military_units = {
-            "mi6_civilians": 0  # Fake operatives
-        }
-        self.espionage = {
-            "spy_level": 1,
-            "spy_attempts": 0,
-            "max_spies": 3,
-            "spy_success_rate": 0.6
-        }
-        
-        # Communications
-        self.mailbox = []  # Received messages
-        self.sent_mail = []  # Sent messages
-        
-        # Alliances & Cooldowns
-        self.alliances = set()
-        self.last_gather = 0
-        self.last_build = 0
-        self.last_buy = 0
-        self.last_farm = 0
-        self.last_attack = 0
-        self.last_cheer = 0
-        self.last_feed = 0
-        self.last_gamble = 0
-        self.last_civil_war = 0
-        self.last_ally = 0
-        self.last_break = 0
-        self.last_passive = time.time()
-        self.last_hunger_penalty = time.time()
-        self.last_train = 0
-        self.last_spy = 0
-        self.last_sabotage = 0
-        self.last_hack = 0
-        self.cheer_cost = 100
-        self.cheer_count = 0
-        self.feed_cost = 50
+class Base(DeclarativeBase):
+    pass
 
-# Global player storage
-players = {}
+db = SQLAlchemy(model_class=Base)
 
-def get_player(user_id):
-    """Get or create player"""
-    if user_id not in players:
-        players[user_id] = Player(user_id)
-    return players[user_id]
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Game Configuration
+COOLDOWNS = {
+    'gather': 60,      # 1 minute
+    'build': 120,      # 2 minutes
+    'buy': 90,         # 1.5 minutes
+    'farm': 120,       # 2 minutes
+    'cheer': 90,       # 1.5 minutes
+    'feed': 120,       # 2 minutes
+    'gamble': 180,     # 3 minutes
+    'attack': 90,      # 1.5 minutes
+    'civil_war': 150,  # 2.5 minutes
+    'train': 150,      # 2.5 minutes
+    'spy': 180,        # 3 minutes
+    'sabotage': 300,   # 5 minutes
+    'hack': 240,       # 4 minutes
+    'ally': 120,       # 2 minutes
+    'break': 120,      # 2 minutes
+    'nuke': 600,       # 10 minutes
+    'backstab': 300,   # 5 minutes
+    'stealthbattle': 180, # 3 minutes
+    'invent': 300,     # 5 minutes
+    'provide': 60,     # 1 minute
+    'puppet': 900,     # 15 minutes
+    'revolt': 300      # 5 minutes
+}
+
+# Shop Items
+SHOP_ITEMS = {
+    'nuke': {'price': 10000, 'type': 'weapon'},
+    'anti_nuke_shield': {'price': 8000, 'type': 'defense'},
+    'knife': {'price': 500, 'type': 'weapon'}
+}
+
+# Buildings
+BUILDINGS = {
+    'house': {'wood': 20, 'stone': 10, 'gold': 100},
+    'farm': {'wood': 30, 'stone': 5, 'gold': 150},
+    'barracks': {'wood': 50, 'stone': 30, 'gold': 300},
+    'wall': {'wood': 10, 'stone': 40, 'gold': 200},
+    'market': {'wood': 40, 'stone': 20, 'gold': 400}
+}
+
+# GIF URLs for visual responses
+GIFS = {
+    'success': 'https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif',
+    'fail': 'https://media.giphy.com/media/d2lcHJTG5Tscg/giphy.gif',
+    'attack': 'https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif',
+    'gather': 'https://media.giphy.com/media/3o6Zt481isNVuQI1l6/giphy.gif',
+    'build': 'https://media.giphy.com/media/3o7abA4a0QCXtSxGN2/giphy.gif',
+    'spy': 'https://media.giphy.com/media/l0HlNyrvLKBMxjFzG/giphy.gif',
+    'civil_war': 'https://media.giphy.com/media/26BRpLTzQJiPyLnuo/giphy.gif',
+    'nuke': 'https://media.giphy.com/media/HhTXt43pk1I1W/giphy.gif',
+    'disaster': 'https://media.giphy.com/media/l0MYJnJQ4EiYhOeWs/giphy.gif'
+}
+
+# =============================================================================
+# DATABASE MODELS
+# =============================================================================
+
+class Player(db.Model):
+    __tablename__ = 'players'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(50), unique=True, nullable=False)
+    username = db.Column(db.String(100), nullable=False)
+    civilization_name = db.Column(db.String(100), nullable=False)
+    
+    # Resources
+    gold = db.Column(db.Integer, default=1000)
+    wood = db.Column(db.Integer, default=100)
+    stone = db.Column(db.Integer, default=50)
+    food = db.Column(db.Integer, default=100)
+    
+    # Population
+    population = db.Column(db.Integer, default=100)
+    happiness = db.Column(db.Integer, default=50)
+    hunger = db.Column(db.Integer, default=50)
+    
+    # Military
+    soldiers = db.Column(db.Integer, default=10)
+    spies = db.Column(db.Integer, default=2)
+    
+    # Special Items
+    nukes = db.Column(db.Integer, default=0)
+    anti_nuke_shields = db.Column(db.Integer, default=0)
+    knives = db.Column(db.Integer, default=0)
+    tech_level = db.Column(db.Integer, default=0)
+    
+    # Political Status
+    is_puppet = db.Column(db.Boolean, default=False)
+    puppet_master_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=True)
+    civil_war_strikes = db.Column(db.Integer, default=0)
+    
+    # Building data stored as JSON
+    buildings = db.Column(db.Text, default='{}')
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    alliances = db.relationship('Alliance', 
+                               foreign_keys='Alliance.player1_id',
+                               back_populates='player1')
+    cooldowns = db.relationship('Cooldown', back_populates='player')
+    messages = db.relationship('Message', 
+                              foreign_keys='Message.recipient_id',
+                              back_populates='recipient')
+    puppet_master = db.relationship('Player', foreign_keys=[puppet_master_id], remote_side=[id])
+    puppet_states = db.relationship('Player', foreign_keys=[puppet_master_id])
+
+    def get_buildings(self):
+        try:
+            return json.loads(self.buildings) if self.buildings else {}
+        except:
+            return {}
+    
+    def set_buildings(self, building_dict):
+        self.buildings = json.dumps(building_dict)
+    
+    def set_cooldown(self, command, seconds):
+        existing = Cooldown.query.filter_by(player_id=self.id, command=command).first()
+        if existing:
+            existing.expires_at = datetime.utcnow() + timedelta(seconds=seconds)
+        else:
+            cooldown = Cooldown(player_id=self.id, command=command, 
+                              expires_at=datetime.utcnow() + timedelta(seconds=seconds))
+            db.session.add(cooldown)
+
+class Alliance(db.Model):
+    __tablename__ = 'alliances'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    player1_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    player2_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    player1 = db.relationship('Player', foreign_keys=[player1_id], back_populates='alliances')
+    player2 = db.relationship('Player', foreign_keys=[player2_id])
+
+class Cooldown(db.Model):
+    __tablename__ = 'cooldowns'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    player_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    command = db.Column(db.String(50), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    
+    player = db.relationship('Player', back_populates='cooldowns')
+
+class Message(db.Model):
+    __tablename__ = 'messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    recipient_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    sender = db.relationship('Player', foreign_keys=[sender_id])
+    recipient = db.relationship('Player', foreign_keys=[recipient_id], back_populates='messages')
+
+class Event(db.Model):
+    __tablename__ = 'events'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    player_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=False)
+    target_player_id = db.Column(db.Integer, db.ForeignKey('players.id'), nullable=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    player = db.relationship('Player', foreign_keys=[player_id])
+    target_player = db.relationship('Player', foreign_keys=[target_player_id])
+
+# =============================================================================
+# GAME MECHANICS ENGINE
+# =============================================================================
+
+class GameMechanics:
+    @staticmethod
+    def calculate_attack_damage(attacker, defender, is_stealth=False):
+        """Calculate damage dealt in an attack"""
+        attacker_power = attacker.soldiers * random.uniform(0.8, 1.2)
+        defender_power = defender.soldiers * random.uniform(0.7, 1.0)
+        
+        # Tech level provides combat bonuses
+        tech_bonus = attacker.tech_level * 0.05  # 5% bonus per tech level
+        attacker_power *= (1 + tech_bonus)
+        
+        # Defender tech provides defensive bonus
+        defender_tech_bonus = defender.tech_level * 0.03  # 3% defensive bonus per tech level
+        defender_power *= (1 + defender_tech_bonus)
+        
+        # Check for walls (defense buildings)
+        defender_buildings = defender.get_buildings()
+        defense_bonus = defender_buildings.get('wall', 0) * 0.1
+        defender_power *= (1 + defense_bonus)
+        
+        # Stealth attacks get surprise bonus
+        if is_stealth:
+            attacker_power *= 1.3  # 30% stealth bonus
+            defender_power *= 0.8   # Defender caught off guard
+        
+        victory = attacker_power > defender_power
+        
+        if victory:
+            # Calculate stolen resources
+            gold_stolen = min(int(defender.gold * 0.15), defender.gold)
+            food_stolen = min(int(defender.food * 0.1), defender.food)
+            
+            # Apply damage
+            attacker.soldiers = max(0, attacker.soldiers - random.randint(1, 3))
+            defender.soldiers = max(0, defender.soldiers - random.randint(3, 8))
+            defender.happiness = max(0, defender.happiness - random.randint(10, 20))
+            
+            # Transfer resources
+            attacker.gold += gold_stolen
+            attacker.food += food_stolen
+            defender.gold -= gold_stolen
+            defender.food -= food_stolen
+            
+            return True, gold_stolen, food_stolen
+        else:
+            # Attacker loses
+            attacker.soldiers = max(0, attacker.soldiers - random.randint(2, 6))
+            attacker.happiness = max(0, attacker.happiness - random.randint(5, 15))
+            defender.soldiers = max(0, defender.soldiers - random.randint(1, 3))
+            
+            return False, 0, 0
+    
+    @staticmethod
+    def execute_spy_mission(spy_player, target_player):
+        """Execute a spy mission"""
+        success_chance = 60 + (spy_player.spies * 5) - (target_player.spies * 3)
+        success = random.randint(1, 100) <= success_chance
+        
+        if success:
+            # Successful spying
+            intelligence = {
+                'gold': target_player.gold,
+                'soldiers': target_player.soldiers,
+                'happiness': target_player.happiness,
+                'buildings': len(target_player.get_buildings())
+            }
+            return True, intelligence
+        else:
+            # Caught spying
+            spy_player.spies = max(0, spy_player.spies - 1)
+            return False, None
+    
+    @staticmethod
+    def execute_civil_war(player):
+        """Execute a civil war"""
+        soldier_loss = random.randint(2, 5)
+        player.soldiers = max(0, player.soldiers - soldier_loss)
+        
+        # 50% chance of gaining resources during civil war
+        victory = random.random() < 0.5
+        if victory:
+            player.gold += random.randint(100, 300)
+            player.food += random.randint(20, 50)
+        
+        return victory, soldier_loss
 
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def is_night_in_uae():
-    """Check if it's night time in UAE (UTC+4)"""
-    try:
-        uae_time = datetime.utcnow() + timedelta(hours=4)
-        hour = uae_time.hour
-        return hour >= 22 or hour <= 6  # 10 PM to 6 AM
-    except:
-        return False
+def get_or_create_player(user_id: str, username: str) -> Optional[Player]:
+    """Get existing player or return None"""
+    return Player.query.filter_by(user_id=str(user_id)).first()
 
-def format_cooldown_time(seconds):
-    """Format cooldown time as MM:SS"""
-    if seconds <= 0:
-        return "0:00"
-    
-    minutes = int(seconds // 60)
-    remaining_seconds = int(seconds % 60)
-    return f"{minutes}:{remaining_seconds:02d}"
-
-def create_embed(title, description, color=0x00ff00):
-    """Create a standardized embed"""
-    embed = guilded.Embed(title=title, description=description, color=color)
-    return embed
-
-def calculate_battle_power(player):
-    """Calculate total battle power"""
-    soldiers = player.resources["soldiers"]
-    happiness = player.resources["happiness"]
-    
-    # Base power from soldiers
-    base_power = soldiers * 10
-    
-    # Happiness multiplier (1.0 to 2.5x based on happiness 0-1000)
-    happiness_multiplier = 1.0 + (happiness / 1000) * 1.5
-    
-    # Military unit bonuses
-    warplane_bonus = player.buildings["warplanes"] * 500
-    jet_bonus = player.buildings["fighter_jets"] * 750
-    tank_bonus = player.buildings["tanks"] * 300
-    mi6_bonus = player.military_units["mi6_civilians"] * 150
-    
-    # Espionage bonus
-    spy_bonus = player.espionage["spy_level"] * 50
-    
-    total_power = (base_power * happiness_multiplier) + warplane_bonus + jet_bonus + tank_bonus + mi6_bonus + spy_bonus
-    return int(total_power)
-
-def calculate_discount(player):
-    """Calculate total discount percentage"""
-    happiness_discount = min(player.resources["happiness"] * 0.01, 100)  # 1% per happiness point
-    building_discount = sum(player.buildings.values()) * 5  # 5% per building
-    total_discount = min(happiness_discount + building_discount, 90)  # Max 90% discount
-    return total_discount
-
-def calculate_spy_success(attacker, defender):
-    """Calculate spy success based on levels and randomness"""
-    base_chance = attacker.espionage["spy_success_rate"]
-    level_diff = attacker.espionage["spy_level"] - defender.espionage["spy_level"]
-    bonus = min(level_diff * 0.1, 0.3)
-    return min(0.9, base_chance + bonus + random.uniform(-0.2, 0.2))
-
-def trigger_natural_disaster():
-    """Randomly trigger disasters affecting all players"""
-    disasters = [
-        {"name": "Earthquake", "gold_loss": 0.15, "food_loss": 0.2, "soldier_loss": 0.05},
-        {"name": "Drought", "gold_loss": 0.1, "food_loss": 0.3, "soldier_loss": 0.02},
-        {"name": "Plague", "gold_loss": 0.2, "food_loss": 0.1, "soldier_loss": 0.25},
-        {"name": "Tornado", "gold_loss": 0.12, "food_loss": 0.15, "soldier_loss": 0.08},
-        {"name": "Flood", "gold_loss": 0.18, "food_loss": 0.25, "soldier_loss": 0.03}
-    ]
-    
-    if random.random() < 0.03:  # 3% chance per cycle
-        disaster = random.choice(disasters)
-        return disaster
-    return None
-
-# =============================================================================
-# BOT SETUP AND BACKGROUND TASKS
-# =============================================================================
-
-# Bot setup
-bot = commands.Bot(command_prefix='.', help_command=None)
-
-# Background task for passive effects
-async def passive_effects():
-    """Background task to handle passive resource changes and disasters"""
-    await bot.wait_until_ready()
-    while True:
-        now = time.time()
-        
-        # Process all players
-        for player_id, player in list(players.items()):
-            try:
-                # Passive gold drain every 10 minutes
-                if now - player.last_passive > 600:
-                    player.resources["gold"] = max(0, player.resources["gold"] - 50)
-                    player.last_passive = now
-                
-                # Hunger depletion (only during non-night hours)
-                if not is_night_in_uae():
-                    if now - player.last_passive > 600:  # Every 10 minutes
-                        player.resources["hunger"] = max(0, player.resources["hunger"] - 1)
-                
-                # Apply hunger penalties
-                hunger = player.resources["hunger"]
-                if hunger < 250:  # Under 25%
-                    if now - player.last_hunger_penalty > 60:  # Every minute
-                        player.resources["happiness"] = max(0, player.resources["happiness"] - 15)
-                        player.resources["soldiers"] = max(0, player.resources["soldiers"] - 4)
-                        player.last_hunger_penalty = now
-                elif hunger < 500:  # Under 50%
-                    if now - player.last_hunger_penalty > 120:  # Every 2 minutes
-                        player.resources["happiness"] = max(0, player.resources["happiness"] - 10)
-                        player.resources["soldiers"] = max(0, player.resources["soldiers"] - 2)
-                        player.last_hunger_penalty = now
-                
-                # Reset spy attempts daily
-                if now - player.last_passive > 86400:  # 24 hours
-                    player.espionage["spy_attempts"] = 0
-                
-                # Reset costs after 4 days (345,600 seconds)
-                if now - player.last_passive > 345600:
-                    player.cheer_cost = 100
-                    player.cheer_count = 0
-                    player.feed_cost = 50
-                    
-            except Exception as e:
-                print(f"Error processing passive effects for player {player_id}: {e}")
-        
-        # Check for natural disasters
-        disaster = trigger_natural_disaster()
-        if disaster:
-            print(f"🌪️ Natural disaster triggered: {disaster['name']}")
-            
-            for player_id, player in list(players.items()):
-                gold_loss = int(player.resources["gold"] * disaster["gold_loss"])
-                food_loss = int(player.resources["food"] * disaster["food_loss"])
-                soldier_loss = int(player.resources["soldiers"] * disaster["soldier_loss"])
-                
-                player.resources["gold"] = max(0, player.resources["gold"] - gold_loss)
-                player.resources["food"] = max(0, player.resources["food"] - food_loss)
-                player.resources["soldiers"] = max(0, player.resources["soldiers"] - soldier_loss)
-                
-                # Send disaster notification
-                try:
-                    user = await bot.fetch_user(player_id)
-                    await user.send(f"🚨 **{disaster['name']}** struck your nation!\n💰 -{gold_loss} gold\n🌾 -{food_loss} food\n⚔️ -{soldier_loss} soldiers")
-                except:
-                    pass
-        
-        await asyncio.sleep(30)  # Check every 30 seconds
-
-# Async setup hook
-@bot.event
-async def setup_hook():
-    """Setup background tasks"""
-    bot.loop.create_task(passive_effects())
-
-# Bot events
-@bot.event
-async def on_ready():
-    """Event fired when bot is ready"""
-    print(f'Logged in as {bot.user.name} ({bot.user.id})')
-    print('------')
-    print("Bot is ready!")
-
-@bot.event
-async def on_command_error(ctx, error):
-    """Handle command errors"""
-    if isinstance(error, commands.CommandOnCooldown):
-        cooldown_time = format_cooldown_time(int(error.retry_after))
-        await ctx.send(f"⏱️ Command on cooldown! Try again in {cooldown_time}")
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Missing required argument: {error.param}")
-    elif isinstance(error, commands.CommandNotFound):
-        await ctx.send("❌ Unknown command! Use `.help` for available commands.")
-    else:
-        print(f"Unhandled error: {error}")
-        await ctx.send("❌ An error occurred while processing your command.")
-
-# =============================================================================
-# BASIC COMMANDS
-# =============================================================================
-
-@bot.command()
-async def start(ctx, *, civilization_name=None):
-    """Initialize your civilization with a name (one-time command)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is not None:
-        embed = create_embed("🏰 Civilization Already Exists", 
-                           f"Your civilization '{player.name}' is already established!\nUse `.status` to check your progress.", 
-                           0xff9900)
-        await ctx.send(embed=embed)
-        return
-    
-    if not civilization_name:
-        embed = create_embed("❌ Missing Civilization Name", 
-                           "Please provide a name for your civilization!\nExample: `.start Roman Empire`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if len(civilization_name) > 50:
-        embed = create_embed("❌ Name Too Long", 
-                           "Civilization name must be 50 characters or less!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Set civilization name
-    player.name = civilization_name
-    
-    embed = create_embed("🎉 Civilization Founded!", 
-                       f"Welcome to **{civilization_name}**!\n\n" +
-                       "🏆 **Starting Resources:**\n" +
-                       f"💰 Gold: {player.resources['gold']}\n" +
-                       f"🌾 Food: {player.resources['food']}\n" +
-                       f"⚔️ Soldiers: {player.resources['soldiers']}\n" +
-                       f"😊 Happiness: {player.resources['happiness']}\n" +
-                       f"🍽️ Hunger: {player.resources['hunger']}\n\n" +
-                       "Use `.help` to see available commands!")
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def status(ctx):
-    """Check your civilization status"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You haven't started your civilization yet!\nUse `.start <name>` to begin.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Calculate battle power and discount
-    battle_power = calculate_battle_power(player)
-    discount = calculate_discount(player)
-    
-    embed = create_embed(f"🏰 {player.name} Status", "Your civilization overview")
-    
-    # Resources
-    resources_text = ""
-    for resource, amount in player.resources.items():
-        emoji = {"gold": "💰", "food": "🌾", "soldiers": "⚔️", "happiness": "😊", "hunger": "🍽️"}
-        resources_text += f"{emoji[resource]} {resource.title()}: {amount}\n"
-    
-    embed.add_field(name="📊 Resources", value=resources_text, inline=True)
-    
-    # Buildings
-    buildings_text = ""
-    building_emojis = {
-        "houses": "🏠", "farms": "🚜", "barracks": "🏛️", "walls": "🧱",
-        "warplanes": "✈️", "fighter_jets": "🛩️", "tanks": "🚗"
-    }
-    for building, count in player.buildings.items():
-        if count > 0:
-            emoji = building_emojis.get(building, "🏗️")
-            buildings_text += f"{emoji} {building.replace('_', ' ').title()}: {count}\n"
-    
-    if not buildings_text:
-        buildings_text = "No buildings constructed"
-    
-    embed.add_field(name="🏗️ Buildings", value=buildings_text, inline=True)
-    
-    # Military Units
-    military_text = ""
-    if player.military_units["mi6_civilians"] > 0:
-        military_text += f"🕵️ MI6 Civilians: {player.military_units['mi6_civilians']}\n"
-    
-    if not military_text:
-        military_text = "No special units"
-    
-    embed.add_field(name="🎯 Special Units", value=military_text, inline=True)
-    
-    # Espionage
-    embed.add_field(name="🕵️ Espionage", 
-                   value=f"Spy Level: {player.espionage['spy_level']}\n"
-                         f"Spy Attempts: {player.espionage['spy_attempts']}/{player.espionage['max_spies']}", 
-                   inline=True)
-    
-    # Communications
-    embed.add_field(name="📧 Messages", 
-                   value=f"Inbox: {len(player.mailbox)} unread\nSent: {len(player.sent_mail)}", 
-                   inline=True)
-    
-    # Combat stats and discounts
-    embed.add_field(name="⚔️ Battle Power", value=f"{battle_power:,}", inline=True)
-    embed.add_field(name="💸 Shop Discount", value=f"{discount:.1f}%", inline=True)
-    
-    # Alliances
-    if player.alliances:
-        alliance_list = [f"<@{ally}>" for ally in list(player.alliances)[:5]]
-        embed.add_field(name="🤝 Alliances", value="\n".join(alliance_list), inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def help(ctx, command_name=None):
-    """Show all commands or detailed help for a specific command"""
-    if command_name:
-        # Show specific command help
-        command = bot.get_command(command_name)
-        if command:
-            embed = create_embed(f"📋 Command: .{command.name}", command.help or "No description available.")
-            if command.aliases:
-                embed.add_field(name="Aliases", value=", ".join(command.aliases), inline=False)
-        else:
-            embed = create_embed("❌ Command Not Found", f"Command '{command_name}' does not exist.")
-    else:
-        # Show all commands
-        embed = create_embed("🏰 WarBot Commands", "Complete civilization management system!")
-        
-        basic_commands = [
-            "`.start <name>` - Initialize your civilization with a name",
-            "`.status` - Check your civilization status",
-            "`.help [command]` - Show this help or get command details"
-        ]
-        
-        economy_commands = [
-            "`.gather` - Collect resources (1 min cooldown)",
-            "`.build <item>` - Construct buildings (2 min cooldown)",
-            "`.buy <item> [amount]` - Purchase resources/units (1.5 min cooldown)",
-            "`.farm` - Farm food with chance for money (2 min cooldown)",
-            "`.cheer` - Boost happiness (1.5 min cooldown)",
-            "`.feed` - Restore hunger levels (2 min cooldown)",
-            "`.gamble <amount>` - Risk gold for rewards (3 min cooldown)"
-        ]
-        
-        combat_commands = [
-            "`.attack <@user>` - Attack another player (1.5 min cooldown)",
-            "`.civil_war` - Internal conflict for resources (2.5 min cooldown)",
-            "`.train` - Train soldiers & improve spies (2.5 min cooldown)"
-        ]
-        
-        espionage_commands = [
-            "`.spy @user` - Gather intelligence (3 min cooldown)",
-            "`.sabotage @user` - Damage enemy military (5 min cooldown)",
-            "`.hack @user` - Steal happiness & gold (4 min cooldown)"
-        ]
-        
-        alliance_commands = [
-            "`.ally <@user>` - Form alliance (2 min cooldown)",
-            "`.break <@user>` - Break alliance (2 min cooldown)"
-        ]
-        
-        communication_commands = [
-            "`.send @user message` - Send diplomatic message",
-            "`.mail` - Check your messages"
-        ]
-        
-        embed.add_field(name="🏛️ Basic Commands", value="\n".join(basic_commands), inline=False)
-        embed.add_field(name="💰 Economy Commands", value="\n".join(economy_commands), inline=False)
-        embed.add_field(name="⚔️ Combat Commands", value="\n".join(combat_commands), inline=False)
-        embed.add_field(name="🕵️ Espionage Commands", value="\n".join(espionage_commands), inline=False)
-        embed.add_field(name="🤝 Alliance Commands", value="\n".join(alliance_commands), inline=False)
-        embed.add_field(name="📧 Communication Commands", value="\n".join(communication_commands), inline=False)
-        
-    await ctx.send(embed=embed)
-
-# =============================================================================
-# ECONOMY COMMANDS
-# =============================================================================
-
-@bot.command()
-@commands.cooldown(1, 60, commands.BucketType.user)  # 1-minute cooldown
-async def gather(ctx):
-    """Collect resources (1 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Base amounts
-    base_gold = random.randint(80, 150)
-    base_food = random.randint(60, 120)
-    base_soldiers = random.randint(5, 15)
-    
-    # Night bonus in UAE
-    multiplier = 1.5 if is_night_in_uae() else 1.0
-    bonus_text = " (🌙 Night bonus!)" if is_night_in_uae() else ""
-    
-    # Apply multiplier
-    gold_gained = int(base_gold * multiplier)
-    food_gained = int(base_food * multiplier) 
-    soldiers_gained = int(base_soldiers * multiplier)
-    
-    # Add to resources
-    player.resources["gold"] += gold_gained
-    player.resources["food"] += food_gained
-    player.resources["soldiers"] += soldiers_gained
-    
-    embed = create_embed("⛏️ Resources Gathered!", f"Your workers have been busy!{bonus_text}")
-    embed.add_field(name="💰 Gold", value=f"+{gold_gained}", inline=True)
-    embed.add_field(name="🌾 Food", value=f"+{food_gained}", inline=True)
-    embed.add_field(name="⚔️ Soldiers", value=f"+{soldiers_gained}", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def build(ctx, *, item=None):
-    """Build structures to improve your civilization (2 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not item:
-        embed = create_embed("🏗️ Available Buildings", "Choose what to build:")
-        
-        basic_buildings = [
-            "**house** - Cost: 200 gold, 100 food (+50 happiness)",
-            "**farm** - Cost: 150 gold (+food production)",
-            "**barracks** - Cost: 300 gold, 200 food (+soldier training)",
-            "**walls** - Cost: 400 gold, 150 food (+defense)"
-        ]
-        
-        military_buildings = [
-            "**warplane** - Cost: 1000 gold, 500 food (massive attack bonus)",
-            "**fighter_jet** - Cost: 1500 gold, 750 food (superior air power)",
-            "**tank** - Cost: 800 gold, 400 food (ground dominance)"
-        ]
-        
-        embed.add_field(name="🏘️ Basic Buildings", value="\n".join(basic_buildings), inline=False)
-        embed.add_field(name="🚁 Military Vehicles", value="\n".join(military_buildings), inline=False)
-        embed.add_field(name="Usage", value="Example: `.build house`", inline=False)
-        
-        await ctx.send(embed=embed)
-        return
-    
-    # Building costs and requirements
-    buildings = {
-        "house": {"gold": 200, "food": 100, "happiness": 50},
-        "farm": {"gold": 150, "food": 0, "effect": "food_production"},
-        "barracks": {"gold": 300, "food": 200, "effect": "soldier_training"},
-        "walls": {"gold": 400, "food": 150, "effect": "defense"},
-        "warplane": {"gold": 1000, "food": 500, "effect": "air_superiority"},
-        "fighter_jet": {"gold": 1500, "food": 750, "effect": "elite_air_power"},
-        "tank": {"gold": 800, "food": 400, "effect": "ground_control"}
-    }
-    
-    building_name = item.lower().replace(" ", "_")
-    if building_name not in buildings:
-        embed = create_embed("❌ Unknown Building", 
-                           f"'{item}' is not a valid building. Use `.build` to see options.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    building_data = buildings[building_name]
-    gold_cost = building_data["gold"]
-    food_cost = building_data.get("food", 0)
-    
-    # Check if player has enough resources
-    if player.resources["gold"] < gold_cost or player.resources["food"] < food_cost:
-        embed = create_embed("❌ Insufficient Resources", 
-                           f"Need {gold_cost} gold and {food_cost} food to build {building_name.replace('_', ' ')}")
-        embed.add_field(name="Your Resources", 
-                       value=f"💰 {player.resources['gold']} gold\n🌾 {player.resources['food']} food")
-        await ctx.send(embed=embed)
-        return
-    
-    # Deduct costs
-    player.resources["gold"] -= gold_cost
-    player.resources["food"] -= food_cost
-    
-    # Add building
-    player.buildings[building_name] += 1
-    
-    # Apply effects
-    effect_text = ""
-    if "happiness" in building_data:
-        player.resources["happiness"] += building_data["happiness"]
-        effect_text = f"\n+{building_data['happiness']} happiness!"
-    
-    building_emojis = {
-        "house": "🏠", "farm": "🚜", "barracks": "🏛️", "walls": "🧱",
-        "warplane": "✈️", "fighter_jet": "🛩️", "tank": "🚗"
-    }
-    
-    emoji = building_emojis.get(building_name, "🏗️")
-    embed = create_embed("🏗️ Construction Complete!", 
-                       f"{emoji} {building_name.replace('_', ' ').title()} has been built!{effect_text}")
-    embed.add_field(name="Costs", value=f"💰 -{gold_cost} gold\n🌾 -{food_cost} food", inline=True)
-    embed.add_field(name="Total Built", value=f"{player.buildings[building_name]}", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 90, commands.BucketType.user)  # 1.5-minute cooldown
-async def buy(ctx, item=None, amount=1):
-    """Purchase resources and military units from the shop (1.5 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not item:
-        # Show shop with current discount
-        discount = calculate_discount(player)
-        
-        embed = create_embed("🛒 Civilization Shop", f"Your discount: {discount:.1f}%")
-        
-        # Base prices (before discount)
-        base_prices = {
-            "soldiers": {"price": 50, "currency": "gold", "description": "Expand your army"},
-            "food": {"price": 30, "currency": "gold", "description": "Feed your people"},
-            "mi6_civilians": {"price": 200, "currency": "gold", "description": "Fake operatives (combat bonus)"}
-        }
-        
-        shop_items = []
-        for item_name, data in base_prices.items():
-            discounted_price = int(data["price"] * (1 - discount/100))
-            shop_items.append(f"**{item_name}** - {discounted_price} {data['currency']} ({data['description']})")
-        
-        embed.add_field(name="📦 Available Items", value="\n".join(shop_items), inline=False)
-        embed.add_field(name="💡 Discount Info", 
-                       value=f"• Happiness: {min(player.resources['happiness'] * 0.01, 100):.1f}%\n" +
-                             f"• Buildings: {sum(player.buildings.values()) * 5}%", 
-                       inline=False)
-        embed.add_field(name="Usage", value="Example: `.buy soldiers 10`", inline=False)
-        
-        await ctx.send(embed=embed)
-        return
-    
-    # Validate amount
-    try:
-        amount = max(1, int(amount))
-    except (ValueError, TypeError):
-        amount = 1
-    
-    # Shop items with base prices
-    shop_items = {
-        "soldiers": {"price": 50, "currency": "gold", "resource": "soldiers"},
-        "food": {"price": 30, "currency": "gold", "resource": "food"},
-        "mi6_civilians": {"price": 200, "currency": "gold", "military_unit": "mi6_civilians"}
-    }
-    
-    item_name = item.lower()
-    if item_name not in shop_items:
-        embed = create_embed("❌ Item Not Found", 
-                           f"'{item}' is not available in the shop. Use `.buy` to see options.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    item_data = shop_items[item_name]
-    
-    # Calculate discounted price
-    discount = calculate_discount(player)
-    base_price = item_data["price"]
-    discounted_price = int(base_price * (1 - discount/100))
-    total_cost = discounted_price * amount
-    
-    currency = item_data["currency"]
-    
-    # Check if player has enough currency
-    if player.resources[currency] < total_cost:
-        embed = create_embed("❌ Insufficient Funds", 
-                           f"Need {total_cost} {currency} to buy {amount} {item_name.replace('_', ' ')}")
-        embed.add_field(name="Your Resources", value=f"💰 {player.resources[currency]} {currency}")
-        await ctx.send(embed=embed)
-        return
-    
-    # Process purchase
-    player.resources[currency] -= total_cost
-    
-    if "resource" in item_data:
-        player.resources[item_data["resource"]] += amount
-        target_display = f"{item_data['resource']}"
-    elif "military_unit" in item_data:
-        player.military_units[item_data["military_unit"]] += amount
-        target_display = f"{item_data['military_unit'].replace('_', ' ')}"
-    
-    embed = create_embed("🛍️ Purchase Complete!", 
-                       f"Successfully bought {amount} {item_name.replace('_', ' ')}!")
-    embed.add_field(name="Cost", value=f"💰 -{total_cost} {currency}", inline=True)
-    embed.add_field(name="Discount Applied", value=f"{discount:.1f}%", inline=True)
-    embed.add_field(name="Items Received", value=f"+{amount} {target_display}", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def farm(ctx):
-    """Farm food and sometimes earn money (2 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Base farming amounts
-    base_food = random.randint(100, 200)
-    
-    # 25% chance of failure with humorous messages
-    if random.random() < 0.25:
-        failure_messages = [
-            "🐛 Your crops were eaten by locusts!",
-            "🌧️ A sudden flood washed away your fields!",
-            "🔥 Drought scorched your farmland!",
-            "🦅 Birds stole all your seeds!",
-            "🧙 A wizard cursed your soil!",
-            "💸 You bought fake seeds from a scammer!",
-            "🍄 Your crops grew moldy and inedible!"
-        ]
-        
-        failure_msg = random.choice(failure_messages)
-        # Small consolation prize
-        consolation_gold = random.randint(10, 30)
-        player.resources["gold"] += consolation_gold
-        
-        embed = create_embed("🚜 Farming Failed!", failure_msg, 0xff9900)
-        embed.add_field(name="Consolation Prize", value=f"💰 +{consolation_gold} gold (insurance payout)", inline=False)
-        await ctx.send(embed=embed)
-        return
-    
-    # Successful farming
-    food_gained = base_food
-    player.resources["food"] += food_gained
-    
-    # 30% chance for bonus money from selling extra crops
-    bonus_gold = 0
-    bonus_text = ""
-    if random.random() < 0.3:
-        bonus_gold = random.randint(50, 120)
-        player.resources["gold"] += bonus_gold
-        bonus_text = f"\n💰 Bonus: +{bonus_gold} gold from selling surplus crops!"
-    
-    embed = create_embed("🚜 Successful Harvest!", 
-                       f"Your farming efforts paid off!{bonus_text}")
-    embed.add_field(name="🌾 Food Gained", value=f"+{food_gained}", inline=True)
-    if bonus_gold > 0:
-        embed.add_field(name="💰 Gold Bonus", value=f"+{bonus_gold}", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 90, commands.BucketType.user)  # 1.5-minute cooldown  
-async def cheer(ctx):
-    """Boost your civilization's happiness (1.5 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check if player has enough gold
-    if player.resources["gold"] < player.cheer_cost:
-        embed = create_embed("❌ Insufficient Gold", 
-                           f"Need {player.cheer_cost} gold to organize celebration!")
-        embed.add_field(name="Your Gold", value=f"💰 {player.resources['gold']}")
-        await ctx.send(embed=embed)
-        return
-    
-    # Deduct cost and increase happiness
-    player.resources["gold"] -= player.cheer_cost
-    happiness_gain = random.randint(80, 150)
-    player.resources["happiness"] += happiness_gain
-    
-    # Increase cost for next cheer and increment counter
-    player.cheer_count += 1
-    player.cheer_cost += 50  # Increases by 50 each use
-    
-    embed = create_embed("🎉 Celebration Organized!", 
-                       "Your people are cheering with joy!")
-    embed.add_field(name="😊 Happiness Gained", value=f"+{happiness_gain}", inline=True)
-    embed.add_field(name="💰 Cost Paid", value=f"-{player.cheer_cost - 50} gold", inline=True)
-    embed.add_field(name="Next Cost", value=f"{player.cheer_cost} gold", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def feed(ctx):
-    """Restore your people's hunger levels (2 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check if player has enough food
-    if player.resources["food"] < player.feed_cost:
-        embed = create_embed("❌ Insufficient Food", 
-                           f"Need {player.feed_cost} food to feed your people!")
-        embed.add_field(name="Your Food", value=f"🌾 {player.resources['food']}")
-        await ctx.send(embed=embed)
-        return
-    
-    # Deduct cost and restore hunger
-    player.resources["food"] -= player.feed_cost
-    hunger_restored = random.randint(200, 350)
-    player.resources["hunger"] = min(1000, player.resources["hunger"] + hunger_restored)
-    
-    # Increase cost for next feeding
-    player.feed_cost += 25  # Increases by 25 each use
-    
-    embed = create_embed("🍽️ People Fed!", 
-                       "Your citizens have been well-fed!")
-    embed.add_field(name="🍽️ Hunger Restored", value=f"+{hunger_restored}", inline=True)
-    embed.add_field(name="🌾 Food Used", value=f"-{player.feed_cost - 25}", inline=True)
-    embed.add_field(name="Next Cost", value=f"{player.feed_cost} food", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 180, commands.BucketType.user)  # 3-minute cooldown
-async def gamble(ctx, amount=None):
-    """Risk gold for potential rewards (3 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not amount:
-        embed = create_embed("🎰 Gambling Rules", 
-                           "Risk your gold for potential rewards!")
-        embed.add_field(name="How to Play", value="`.gamble <amount>` - Bet gold for rewards", inline=False)
-        embed.add_field(name="Possible Outcomes", 
-                       value="🎯 50% chance: Win 1.5x your bet\n💰 25% chance: Win 2x your bet\n💎 15% chance: Win 3x your bet\n👑 10% chance: Win 5x your bet", 
-                       inline=False)
-        embed.add_field(name="Example", value="`.gamble 100` - Risk 100 gold", inline=False)
-        await ctx.send(embed=embed)
-        return
-    
-    try:
-        bet_amount = int(amount)
-        if bet_amount <= 0:
-            raise ValueError("Amount must be positive")
-    except ValueError:
-        embed = create_embed("❌ Invalid Amount", 
-                           "Please enter a valid positive number!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if player.resources["gold"] < bet_amount:
-        embed = create_embed("❌ Insufficient Gold", 
-                           f"You only have {player.resources['gold']} gold!")
-        await ctx.send(embed=embed)
-        return
-    
-    # Deduct bet amount
-    player.resources["gold"] -= bet_amount
-    
-    # Determine outcome (60% chance of winning something)
-    roll = random.random()
-    
-    if roll < 0.4:  # 40% chance - lose everything
-        embed = create_embed("🎰 Bad Luck!", 
-                           f"You lost {bet_amount} gold! Better luck next time.", 
-                           0xff0000)
-    elif roll < 0.65:  # 25% chance - win 1.5x
-        winnings = int(bet_amount * 1.5)
-        player.resources["gold"] += winnings
-        embed = create_embed("🎰 Small Win!", 
-                           f"You won {winnings} gold! (1.5x return)", 
-                           0x00ff00)
-    elif roll < 0.85:  # 20% chance - win 2x
-        winnings = bet_amount * 2
-        player.resources["gold"] += winnings
-        embed = create_embed("🎰 Good Win!", 
-                           f"You won {winnings} gold! (2x return)", 
-                           0x00ff00)
-    elif roll < 0.95:  # 10% chance - win 3x
-        winnings = bet_amount * 3
-        player.resources["gold"] += winnings
-        embed = create_embed("🎰 Great Win!", 
-                           f"You won {winnings} gold! (3x return)", 
-                           0x00ff00)
-    else:  # 5% chance - win 5x
-        winnings = bet_amount * 5
-        player.resources["gold"] += winnings
-        embed = create_embed("🎰 YOU HIT THE JACKPOT!", 
-                           f"You won {winnings} gold! (5x return)", 
-                           0xffd700)
-    
-    embed.add_field(name="Current Gold", value=f"💰 {player.resources['gold']}", inline=True)
-    await ctx.send(embed=embed)
-
-# =============================================================================
-# COMBAT COMMANDS
-# =============================================================================
-
-@bot.command()
-@commands.cooldown(1, 90, commands.BucketType.user)  # 1.5-minute cooldown
-async def attack(ctx, target: guilded.Member = None):
-    """Attack another player's civilization (1.5 min cooldown)"""
-    attacker = get_player(str(ctx.author.id))
-    
-    if attacker.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not target:
-        embed = create_embed("❌ No Target", 
-                           "You must specify a target to attack!\nExample: `.attack @username`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if str(target.id) == str(ctx.author.id):
-        embed = create_embed("❌ Self Attack", 
-                           "You cannot attack yourself! Use `.civil_war` for internal conflict.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    defender = get_player(str(target.id))
-    
-    if defender.name is None:
-        embed = create_embed("❌ Invalid Target", 
-                           "Target player hasn't started their civilization yet!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check for alliance
-    if str(target.id) in attacker.alliances:
-        embed = create_embed("❌ Allied Nation", 
-                           f"You cannot attack {defender.name} - you are allied!\nUse `.break @{target.name}` to end the alliance first.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check if attacker has enough soldiers
-    if attacker.resources["soldiers"] < 10:
-        embed = create_embed("❌ Insufficient Army", 
-                           "You need at least 10 soldiers to launch an attack!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Calculate battle powers
-    attacker_power = calculate_battle_power(attacker)
-    defender_power = calculate_battle_power(defender)
-    
-    # Add some randomness (±20%)
-    attacker_roll = attacker_power * random.uniform(0.8, 1.2)
-    defender_roll = defender_power * random.uniform(0.8, 1.2)
-    
-    # Determine winner
-    if attacker_roll > defender_roll:
-        # Attacker wins
-        victory_margin = (attacker_roll - defender_roll) / defender_roll
-        
-        # Calculate losses (both sides lose soldiers)
-        attacker_losses = max(1, int(attacker.resources["soldiers"] * random.uniform(0.05, 0.15)))
-        defender_losses = max(1, int(defender.resources["soldiers"] * random.uniform(0.15, 0.30)))
-        
-        # Apply losses
-        attacker.resources["soldiers"] = max(0, attacker.resources["soldiers"] - attacker_losses)
-        defender.resources["soldiers"] = max(0, defender.resources["soldiers"] - defender_losses)
-        
-        # Calculate spoils based on victory margin
-        gold_stolen = int(defender.resources["gold"] * min(0.3, 0.1 + victory_margin * 0.2))
-        food_stolen = int(defender.resources["food"] * min(0.2, 0.05 + victory_margin * 0.15))
-        
-        # Transfer resources
-        attacker.resources["gold"] += gold_stolen
-        attacker.resources["food"] += food_stolen
-        defender.resources["gold"] = max(0, defender.resources["gold"] - gold_stolen)
-        defender.resources["food"] = max(0, defender.resources["food"] - food_stolen)
-        
-        # Happiness effects
-        attacker.resources["happiness"] += random.randint(50, 100)
-        defender.resources["happiness"] = max(0, defender.resources["happiness"] - random.randint(100, 200))
-        
-        embed = create_embed("⚔️ Victory!", 
-                           f"{attacker.name} has defeated {defender.name}!")
-        embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
-        embed.add_field(name="⚡ Battle Power", 
-                       value=f"Attacker: {attacker_power:,}\nDefender: {defender_power:,}", 
-                       inline=True)
-        embed.add_field(name="💰 Spoils of War", 
-                       value=f"💰 {gold_stolen} gold\n🌾 {food_stolen} food", 
-                       inline=True)
-        embed.add_field(name="💀 Casualties", 
-                       value=f"Attacker: -{attacker_losses}\nDefender: -{defender_losses}", 
-                       inline=True)
-        
-    else:
-        # Defender wins
-        defeat_margin = (defender_roll - attacker_roll) / attacker_roll
-        
-        # Attacker loses more soldiers in defeat
-        attacker_losses = max(5, int(attacker.resources["soldiers"] * random.uniform(0.20, 0.35)))
-        defender_losses = max(1, int(defender.resources["soldiers"] * random.uniform(0.05, 0.10)))
-        
-        # Apply losses
-        attacker.resources["soldiers"] = max(0, attacker.resources["soldiers"] - attacker_losses)
-        defender.resources["soldiers"] = max(0, defender.resources["soldiers"] - defender_losses)
-        
-        # Attacker loses some resources in retreat
-        gold_lost = int(attacker.resources["gold"] * min(0.15, 0.05 + defeat_margin * 0.1))
-        attacker.resources["gold"] = max(0, attacker.resources["gold"] - gold_lost)
-        
-        # Happiness effects
-        attacker.resources["happiness"] = max(0, attacker.resources["happiness"] - random.randint(100, 200))
-        defender.resources["happiness"] += random.randint(50, 100)
-        
-        embed = create_embed("🛡️ Defeat!", 
-                           f"{defender.name} has repelled {attacker.name}'s attack!", 
-                           0xff9900)
-        embed.set_image(url="https://media1.tenor.com/m/6BvNeDJWv4MAAAAd/gou-gougang.gif")
-        embed.add_field(name="⚡ Battle Power", 
-                       value=f"Attacker: {attacker_power:,}\nDefender: {defender_power:,}", 
-                       inline=True)
-        embed.add_field(name="💸 Losses", 
-                       value=f"💰 -{gold_lost} gold (retreat cost)", 
-                       inline=True)
-        embed.add_field(name="💀 Casualties", 
-                       value=f"Attacker: -{attacker_losses}\nDefender: -{defender_losses}", 
-                       inline=True)
-    
-    # Notify the defender if they're online (optional - basic implementation)
-    try:
-        await target.send(f"🚨 Your civilization {defender.name} was attacked by {attacker.name}! Check the server for details.")
-    except:
-        pass  # User might have DMs disabled
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 150, commands.BucketType.user)  # 2.5-minute cooldown
-async def civil_war(ctx):
-    """Trigger internal conflict in your civilization (2.5 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization",
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check minimum requirements
-    if player.resources["soldiers"] < 20:
-        embed = create_embed("❌ Army Too Small", 
-                           "You need at least 20 soldiers to have a civil war!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Determine outcome (60% chance of positive outcome)
-    if random.random() < 0.6:
-        # Positive outcome - military coup succeeds, gain resources
-        gold_gained = random.randint(200, 500)
-        food_gained = random.randint(100, 300)
-        soldiers_lost = int(player.resources["soldiers"] * random.uniform(0.1, 0.2))
-        happiness_lost = random.randint(50, 150)
-        
-        player.resources["gold"] += gold_gained
-        player.resources["food"] += food_gained
-        player.resources["soldiers"] = max(0, player.resources["soldiers"] - soldiers_lost)
-        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_lost)
-        
-        embed = create_embed("⚔️ Successful Coup!", 
-                           "Your military has overthrown corrupt officials!")
-        embed.add_field(name="💰 Treasury Seized", value=f"+{gold_gained} gold", inline=True)
-        embed.add_field(name="🌾 Supplies Captured", value=f"+{food_gained} food", inline=True)
-        embed.add_field(name="💀 Military Losses", value=f"-{soldiers_lost} soldiers", inline=True)
-        embed.add_field(name="😔 Civil Unrest", value=f"-{happiness_lost} happiness", inline=True)
-        
-    else:
-        # Negative outcome - civil war causes chaos
-        gold_lost = int(player.resources["gold"] * random.uniform(0.15, 0.30))
-        food_lost = int(player.resources["food"] * random.uniform(0.10, 0.25))
-        soldiers_lost = int(player.resources["soldiers"] * random.uniform(0.25, 0.40))
-        happiness_lost = random.randint(150, 300)
-        
-        player.resources["gold"] = max(0, player.resources["gold"] - gold_lost)
-        player.resources["food"] = max(0, player.resources["food"] - food_lost)
-        player.resources["soldiers"] = max(0, player.resources["soldiers"] - soldiers_lost)
-        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_lost)
-        
-        embed = create_embed("💥 Civil War Chaos!", 
-                           "Internal conflict has torn your civilization apart!", 
-                           0xff0000)
-        embed.add_field(name="💸 Treasury Lost", value=f"-{gold_lost} gold", inline=True)
-        embed.add_field(name="🌾 Supplies Destroyed", value=f"-{food_lost} food", inline=True)
-        embed.add_field(name="💀 Heavy Casualties", value=f"-{soldiers_lost} soldiers", inline=True)
-        embed.add_field(name="😭 Mass Exodus", value=f"-{happiness_lost} happiness", inline=True)
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 150, commands.BucketType.user)  # 2.5-minute cooldown
-async def train(ctx):
-    """Train your soldiers to improve combat effectiveness"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        return await ctx.send("❌ Start your civilization first! `.start <name>`")
-    
-    cost = 200
-    if player.resources["gold"] < cost:
-        return await ctx.send(f"❌ Need {cost} gold to train soldiers!")
-    
-    # Training logic
-    player.resources["gold"] -= cost
-    soldiers_trained = random.randint(15, 30)
-    player.resources["soldiers"] += soldiers_trained
-    
-    # Increase spy level chance
-    if random.random() < 0.3:
-        player.espionage["spy_level"] += 1
-        level_up = f"\n🎓 Spy level increased to {player.espionage['spy_level']}!"
-    else:
-        level_up = ""
-    
-    # Training GIF
-    gif_url = "https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTFjbzFqNTh5MWxwZGI3MHViZW5kOTZ2YXFiazlnZTJham0ybTBrZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PiznJzzPYacIXxmHeD/giphy.gif"
-    
-    embed = create_embed("🏋️ Training Complete!", f"Your soldiers are ready for battle!{level_up}")
-    embed.set_image(url=gif_url)
-    embed.add_field(name="💰 Training Cost", value=f"-{cost} gold", inline=True)
-    embed.add_field(name="⚔️ New Soldiers", value=f"+{soldiers_trained}", inline=True)
-    
-    await ctx.send(embed=embed)
-
-# =============================================================================
-# ESPIONAGE COMMANDS
-# =============================================================================
-
-@bot.command()
-@commands.cooldown(1, 180, commands.BucketType.user)
-async def spy(ctx, target: guilded.Member = None):
-    """Spy on another nation to gather intelligence (3 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.spy @user`")
-    
-    target_player = get_player(str(target.id))
-    if target_player.name is None:
-        return await ctx.send("❌ Target hasn't started their civilization!")
-    
-    if player.espionage["spy_attempts"] >= player.espionage["max_spies"]:
-        return await ctx.send("❌ Max spy attempts reached! Wait 24h or upgrade spies.")
-    
-    success_rate = calculate_spy_success(player, target_player)
-    player.espionage["spy_attempts"] += 1
-    
-    if random.random() < success_rate:
-        # Successful spy
-        intel = {
-            "battle_power": calculate_battle_power(target_player),
-            "resources": dict(target_player.resources),
-            "buildings": dict(target_player.buildings),
-            "alliances": list(target_player.alliances)
-        }
-        
-        embed = create_embed("🕵️ Spy Mission Success!", f"Intel on **{target_player.name}**:")
-        embed.add_field(name="⚔️ Battle Power", value=intel["battle_power"], inline=True)
-        embed.add_field(name="💰 Gold", value=intel["resources"]["gold"], inline=True)
-        embed.add_field(name="🤝 Alliances", value=len(intel["alliances"]), inline=True)
-        
-        # Small chance to discover mail
-        if random.random() < 0.3 and target_player.mailbox:
-            mail = random.choice(target_player.mailbox)
-            embed.add_field(name="📧 Intercepted Mail", value=f"From: {mail['from']}\nSubject: {mail['subject'][:50]}...", inline=False)
-        
-    else:
-        # Failed spy - lose happiness
-        happiness_loss = random.randint(50, 100)
-        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
-        embed = create_embed("🕵️ Spy Mission Failed!", f"Your spy was caught! -{happiness_loss} happiness")
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 300, commands.BucketType.user)
-async def sabotage(ctx, target: guilded.Member = None):
-    """Sabotage enemy military units and buildings (5 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.sabotage @user`")
-    
-    target_player = get_player(str(target.id))
-    if target_player.name is None:
-        return await ctx.send("❌ Target hasn't started their civilization!")
-    
-    success_rate = calculate_spy_success(player, target_player) * 0.7
-    
-    if random.random() < success_rate:
-        # Successful sabotage
-        soldiers_destroyed = max(1, int(target_player.resources["soldiers"] * 0.1))
-        buildings_damaged = 0
-        
-        for building in target_player.buildings:
-            if target_player.buildings[building] > 0:
-                target_player.buildings[building] -= 1
-                buildings_damaged += 1
-        
-        target_player.resources["soldiers"] = max(0, target_player.resources["soldiers"] - soldiers_destroyed)
-        
-        embed = create_embed("💣 Sabotage Success!", f"Damaged **{target_player.name}**!")
-        embed.add_field(name="💀 Soldiers Killed", value=soldiers_destroyed, inline=True)
-        embed.add_field(name="🏗️ Buildings Damaged", value=buildings_damaged, inline=True)
-    else:
-        # Failed sabotage
-        happiness_loss = random.randint(75, 150)
-        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
-        embed = create_embed("💣 Sabotage Failed!", f"Your saboteurs were discovered! -{happiness_loss} happiness")
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 240, commands.BucketType.user)
-async def hack(ctx, target: guilded.Member = None):
-    """Hack enemy systems to reduce happiness and steal info (4 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if not target or str(target.id) == str(ctx.author.id):
-        return await ctx.send("❌ Usage: `.hack @user`")
-    
-    target_player = get_player(str(target.id))
-    if target_player.name is None:
-        return await ctx.send("❌ Target hasn't started their civilization!")
-    
-    success_rate = calculate_spy_success(player, target_player) * 0.8
-    
-    if random.random() < success_rate:
-        # Successful hack
-        happiness_stolen = random.randint(100, 250)
-        gold_stolen = int(target_player.resources["gold"] * 0.05)
-        
-        target_player.resources["happiness"] = max(0, target_player.resources["happiness"] - happiness_stolen)
-        target_player.resources["gold"] = max(0, target_player.resources["gold"] - gold_stolen)
-        
-        player.resources["happiness"] += int(happiness_stolen * 0.5)
-        player.resources["gold"] += gold_stolen
-        
-        embed = create_embed("💻 Hack Success!", f"Breached **{target_player.name}**!")
-        embed.add_field(name="😈 Happiness Stolen", value=f"+{int(happiness_stolen*0.5)} for you, -{happiness_stolen} for them", inline=True)
-        embed.add_field(name="💰 Gold Stolen", value=gold_stolen, inline=True)
-    else:
-        # Failed hack
-        happiness_loss = random.randint(100, 200)
-        player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
-        embed = create_embed("💻 Hack Failed!", f"Your hackers were traced! -{happiness_loss} happiness")
-    
-    await ctx.send(embed=embed)
-
-# =============================================================================
-# ALLIANCE COMMANDS
-# =============================================================================
-
-@bot.command()
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def ally(ctx, target: guilded.Member = None):
-    """Form an alliance with another player (2 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not target:
-        embed = create_embed("❌ No Target", 
-                           "You must specify who to ally with!\nExample: `.ally @username`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if str(target.id) == str(ctx.author.id):
-        embed = create_embed("❌ Self Alliance", 
-                           "You cannot ally with yourself!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    target_player = get_player(str(target.id))
-    
-    if target_player.name is None:
-        embed = create_embed("❌ Invalid Target", 
-                           "Target player hasn't started their civilization yet!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check if already allied
-    if str(target.id) in player.alliances:
-        embed = create_embed("❌ Already Allied", 
-                           f"You are already allied with {target_player.name}!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Check alliance limits (max 5 alliances)
-    if len(player.alliances) >= 5:
-        embed = create_embed("❌ Alliance Limit", 
-                           "You can only have 5 alliances at once!\nUse `.break @user` to end an alliance first.", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Cost to form alliance
-    alliance_cost = 150
-    if player.resources["gold"] < alliance_cost:
-        embed = create_embed("❌ Insufficient Gold", 
-                           f"You need {alliance_cost} gold to form an alliance!")
-        embed.add_field(name="Your Gold", value=f"💰 {player.resources['gold']}")
-        await ctx.send(embed=embed)
-        return
-    
-    # Form the alliance (mutual)
-    player.resources["gold"] -= alliance_cost
-    player.alliances.add(str(target.id))
-    target_player.alliances.add(str(ctx.author.id))
-    
-    # Both sides gain happiness
-    happiness_gain = random.randint(75, 125)
-    player.resources["happiness"] += happiness_gain
-    target_player.resources["happiness"] += happiness_gain
-    
-    embed = create_embed("🤝 Alliance Formed!", 
-                       f"{player.name} and {target_player.name} are now allies!")
-    embed.add_field(name="💰 Diplomatic Cost", value=f"-{alliance_cost} gold", inline=True)
-    embed.add_field(name="😊 Happiness Boost", value=f"+{happiness_gain} (both sides)", inline=True)
-    embed.add_field(name="🛡️ Protection", value="Cannot attack each other", inline=True)
-    
-    # Notify the target player
-    try:
-        await target.send(f"🤝 {player.name} has formed an alliance with your civilization {target_player.name}!")
-    except:
-        pass  # User might have DMs disabled
-    
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def break_alliance(ctx, target: guilded.Member = None):
-    """Break an alliance with another player (2 min cooldown)"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not target:
-        embed = create_embed("❌ No Target", 
-                           "You must specify whose alliance to break!\nExample: `.break @username`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if str(target.id) == str(ctx.author.id):
-        embed = create_embed("❌ Invalid Target", 
-                           "You cannot break alliance with yourself!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    target_player = get_player(str(target.id))
-    
-    # Check if alliance exists
-    if str(target.id) not in player.alliances:
-        embed = create_embed("❌ No Alliance", 
-                           f"You are not allied with {target.name}!", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    # Break the alliance (mutual)
-    player.alliances.discard(str(target.id))
-    target_player.alliances.discard(str(ctx.author.id))
-    
-    # Both sides lose happiness
-    happiness_loss = random.randint(100, 200)
-    player.resources["happiness"] = max(0, player.resources["happiness"] - happiness_loss)
-    target_player.resources["happiness"] = max(0, target_player.resources["happiness"] - happiness_loss)
-    
-    embed = create_embed("💔 Alliance Broken!", 
-                       f"{player.name} has ended their alliance with {target_player.name}!")
-    embed.add_field(name="😔 Diplomatic Fallout", value=f"-{happiness_loss} happiness (both sides)", inline=True)
-    embed.add_field(name="⚔️ Combat Enabled", value="You can now attack each other", inline=True)
-    
-    # Notify the target player
-    try:
-        await target.send(f"💔 {player.name} has broken their alliance with your civilization {target_player.name}!")
-    except:
-        pass  # User might have DMs disabled
-    
-    await ctx.send(embed=embed)
-
-# Add alias for break command
-@bot.command(name="break")
-@commands.cooldown(1, 120, commands.BucketType.user)  # 2-minute cooldown
-async def break_command(ctx, target: guilded.Member = None):
-    """Alias for break_alliance command"""
-    await break_alliance(ctx, target)
-
-# =============================================================================
-# COMMUNICATION COMMANDS
-# =============================================================================
-
-@bot.command()
-async def send(ctx, target: guilded.Member = None, *, message=None):
-    """Send a diplomatic message to another nation"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not target or not message:
-        embed = create_embed("📧 Send Message", 
-                           "Send diplomatic messages to other nations!\n"
-                           "**Usage:** `.send @player Your message here`")
-        await ctx.send(embed=embed)
-        return
-    
-    target_player = get_player(str(target.id))
-    if target_player.name is None:
-        return await ctx.send("❌ Target hasn't started their civilization!")
-    
-    # Create message
-    mail = {
-        "from": player.name,
-        "from_id": str(ctx.author.id),
-        "subject": f"Message from {player.name}",
-        "content": message,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-    
-    target_player.mailbox.append(mail)
-    player.sent_mail.append(mail)
-    
-    embed = create_embed("📧 Message Sent!", f"Sent to **{target_player.name}**: {message[:100]}...")
-    await ctx.send(embed=embed)
-    
-    # Notify target
-    try:
-        await target.send(f"📧 New message from **{player.name}** in Guilded: {message[:50]}...")
-    except:
-        pass
-
-@bot.command()
-async def mail(ctx):
-    """Check your diplomatic messages"""
-    player = get_player(str(ctx.author.id))
-    
-    if player.name is None:
-        embed = create_embed("❌ No Civilization", 
-                           "You need to start your civilization first! Use `.start <name>`", 
-                           0xff0000)
-        await ctx.send(embed=embed)
-        return
-    
-    if not player.mailbox:
-        return await ctx.send("📭 Your inbox is empty!")
-    
-    embed = create_embed("📧 Diplomatic Mail", f"You have {len(player.mailbox)} messages:")
-    
-    for i, mail in enumerate(player.mailbox[-5:], 1):
-        embed.add_field(
-            name=f"#{i} From: {mail['from']} ({mail['timestamp']})",
-            value=mail['content'][:100] + ("..." if len(mail['content']) > 100 else ""),
-            inline=False
-        )
-    
-    await ctx.send(embed=embed)
+def check_cooldown(player: Player, command: str) -> Tuple[bool, int]:
+    """Check if player can use a command"""
+    cooldown = Cooldown.query.filter_by(player_id=player.id, command=command).first()
+    if not cooldown:
+        return True, 0
+    
+    now = datetime.utcnow()
+    if now >= cooldown.expires_at:
+        db.session.delete(cooldown)
+        db.session.commit()
+        return True, 0
+    
+    time_left = int((cooldown.expires_at - now).total_seconds())
+    return False, time_left
 
 # =============================================================================
 # FLASK WEB SERVER
 # =============================================================================
 
-# Initialize Flask app for keep-alive
-app = Flask(__name__)
-
-# HTML template for the web interface
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WarBot - Advanced Civilization Management</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .main-container {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-            margin: 2rem auto;
-            max-width: 1200px;
-        }
-        .header-section {
-            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-            color: white;
-            border-radius: 15px 15px 0 0;
-            padding: 2rem;
-            text-align: center;
-        }
-        .status-badge {
-            background: #2ecc71;
-            color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-weight: bold;
-        }
-        .command-card {
-            background: white;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
-            border-left: 4px solid #3498db;
-        }
-        .command-title {
-            color: #2c3e50;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-        }
-        .command-description {
-            color: #7f8c8d;
-            margin-bottom: 1rem;
-        }
-        .command-example {
-            background: #f8f9ff;
-            padding: 0.5rem 1rem;
-            border-radius: 5px;
-            font-family: 'Courier New', monospace;
-            border-left: 3px solid #3498db;
-        }
-        .feature-icon {
-            font-size: 2rem;
-            color: #3498db;
-            margin-bottom: 1rem;
-        }
-        .disaster-alert {
-            background: linear-gradient(45deg, #ff6b6b, #ffa500);
-            color: white;
-            padding: 1rem;
-            border-radius: 10px;
-            margin: 1rem 0;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-    <div class="container-fluid">
-        <div class="main-container">
-            <div class="header-section">
-                <div class="row align-items-center">
-                    <div class="col-md-8">
-                        <h1><i class="fas fa-crown"></i> WarBot</h1>
-                        <p class="lead mb-0">Advanced Civilization Management with Espionage</p>
-                    </div>
-                    <div class="col-md-4 text-end">
-                        <div class="status-badge">
-                            <i class="fas fa-circle pulse"></i> Online & Ready
-                        </div>
-                    </div>
-                </div>
+def create_flask_app():
+    """Create Flask web server for status monitoring"""
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///warbot.db")
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "pool_recycle": 300,
+        "pool_pre_ping": True,
+    }
+    
+    db.init_app(app)
+    
+    @app.route('/')
+    def status():
+        html_template = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>WarBot Status</title>
+            <meta http-equiv="refresh" content="30">
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; background: #f0f0f0; }
+                .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+                .status { color: #28a745; font-weight: bold; }
+                .info { margin: 10px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🏰 WarBot Civilization System</h1>
+                <div class="info">Status: <span class="status">ONLINE</span></div>
+                <div class="info">Last Updated: {{ timestamp }}</div>
+                <div class="info">Total Players: {{ player_count }}</div>
+                <div class="info">Active Alliances: {{ alliance_count }}</div>
+                <h3>🎮 Features</h3>
+                <ul>
+                    <li>Civilization Management (resources, population, military)</li>
+                    <li>Combat System with technology bonuses</li>
+                    <li>Stealth warfare and nuclear capabilities</li>
+                    <li>Espionage and intelligence operations</li>
+                    <li>Alliance and diplomatic systems</li>
+                    <li>Technology research and advancement</li>
+                    <li>Puppet states and political control</li>
+                    <li>Civil war resolution mechanics</li>
+                    <li>Resource sharing and trade</li>
+                    <li>Complete historical event logging</li>
+                </ul>
             </div>
+        </body>
+        </html>
+        """
+        
+        with app.app_context():
+            player_count = Player.query.count()
+            alliance_count = Alliance.query.count()
+            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            
+            return render_template_string(html_template, 
+                                        player_count=player_count,
+                                        alliance_count=alliance_count,
+                                        timestamp=timestamp)
+    
+    return app
 
-            <div class="container p-4">
-                <div class="disaster-alert">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>NEW FEATURES:</strong> Espionage System, Natural Disasters, Diplomatic Messaging & GIF Animations!
-                </div>
+# =============================================================================
+# GUILDED BOT
+# =============================================================================
 
-                <div class="row">
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-rocket feature-icon"></i></h3>
-                        <h4>Core Features</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-check text-success"></i> Complete civilization management</li>
-                            <li><i class="fas fa-check text-success"></i> Resource gathering & economy</li>
-                            <li><i class="fas fa-check text-success"></i> Strategic combat & military units</li>
-                            <li><i class="fas fa-check text-success"></i> Alliance system & diplomacy</li>
-                        </ul>
-                    </div>
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-user-secret feature-icon"></i></h3>
-                        <h4>Espionage System</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-eye text-info"></i> Spy on enemy nations</li>
-                            <li><i class="fas fa-bomb text-danger"></i> Sabotage military units</li>
-                            <li><i class="fas fa-laptop-code text-warning"></i> Hack enemy systems</li>
-                            <li><i class="fas fa-graduation-cap text-primary"></i> Train elite soldiers</li>
-                        </ul>
-                    </div>
-                    <div class="col-lg-4">
-                        <h3><i class="fas fa-cloud-rain feature-icon"></i></h3>
-                        <h4>Dynamic Events</h4>
-                        <ul class="list-unstyled">
-                            <li><i class="fas fa-bolt text-warning"></i> Natural disasters (3% daily)</li>
-                            <li><i class="fas fa-envelope text-primary"></i> Diplomatic messaging</li>
-                            <li><i class="fas fa-moon text-info"></i> Day/night cycle bonuses</li>
-                            <li><i class="fas fa-heart text-danger"></i> Hunger & happiness systems</li>
-                        </ul>
-                    </div>
-                </div>
+def create_guilded_bot():
+    """Create and configure the Guilded bot"""
+    bot = guilded.Client()
+    
+    def create_embed(title: str, description: str, color: int = 0x00ff00, gif_url: str = None):
+        """Create a formatted embed message"""
+        embed = guilded.Embed(title=title, description=description, color=color)
+        if gif_url:
+            embed.set_image(url=gif_url)
+        return embed
+    
+    bot.create_embed = create_embed
+    
+    # =============================================================================
+    # BOT EVENTS
+    # =============================================================================
+    
+    @bot.event
+    async def on_ready():
+        print(f"NationBot has connected to Guilded!")
+    
+    # =============================================================================
+    # CORE COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='start')
+    async def start_civilization(ctx, *, civilization_name: str):
+        """Start a new civilization"""
+        existing = get_or_create_player(ctx.author.id, ctx.author.name)
+        if existing:
+            await ctx.send("❌ You already have a civilization! Use `.status` to check it.")
+            return
+        
+        if len(civilization_name) > 50:
+            await ctx.send("❌ Civilization name must be 50 characters or less.")
+            return
+        
+        user_id = str(ctx.author.id)
+        username = ctx.author.name
+        
+        player = Player(
+            user_id=user_id,
+            username=username,
+            civilization_name=civilization_name
+        )
+        db.session.add(player)
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🏰 Civilization Founded!",
+            f"Welcome, {username}!\n"
+            f"Your civilization '{civilization_name}' has been established!\n\n"
+            f"**Starting Resources:**\n"
+            f"💰 Gold: 1,000\n"
+            f"🪵 Wood: 100\n"
+            f"🪨 Stone: 50\n"
+            f"🍖 Food: 100\n"
+            f"👥 Population: 100\n"
+            f"⚔️ Soldiers: 10\n"
+            f"🕵️ Spies: 2\n\n"
+            f"Use `.status` to check your civilization and `.help` for commands!",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='status')
+    async def check_status(ctx):
+        """Check civilization status"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ You haven't started a civilization yet! Use `.start <name>` to begin.")
+            return
+        
+        buildings = player.get_buildings()
+        building_list = "\n".join([f"🏢 {name.title()}: {count}" for name, count in buildings.items()]) or "None"
+        
+        # Political status information
+        political_status = ""
+        if player.is_puppet:
+            puppet_master = Player.query.get(player.puppet_master_id)
+            master_name = puppet_master.civilization_name if puppet_master else "Unknown"
+            political_status = f"**👑 Political Status:** Puppet State of {master_name}\n"
+        
+        # Civil war status
+        civil_war_status = ""
+        if player.civil_war_strikes > 0:
+            remaining = 3 - player.civil_war_strikes
+            civil_war_status = f"**🏴‍☠️ Civil War:** Battle {player.civil_war_strikes}/3 ({remaining} more needed)\n"
+        
+        embed = bot.create_embed(
+            f"🏰 {player.civilization_name}",
+            f"**👑 Ruler:** {player.username}\n"
+            f"{political_status}"
+            f"{civil_war_status}\n"
+            f"**💰 Resources:**\n"
+            f"Gold: {player.gold:,}\n"
+            f"Wood: {player.wood:,}\n"
+            f"Stone: {player.stone:,}\n"
+            f"Food: {player.food:,}\n\n"
+            f"**👥 Population:**\n"
+            f"Citizens: {player.population:,}\n"
+            f"Happiness: {player.happiness}/100\n"
+            f"Hunger: {player.hunger}/100\n\n"
+            f"**⚔️ Military:**\n"
+            f"Soldiers: {player.soldiers:,}\n"
+            f"Spies: {player.spies:,}\n"
+            f"🧪 Tech Level: {player.tech_level}\n\n"
+            f"**🏢 Buildings:**\n{building_list}\n\n"
+            f"**🎯 Special Items:**\n"
+            f"☢️ Nukes: {player.nukes}\n"
+            f"🛡️ Anti-Nuke Shields: {player.anti_nuke_shields}\n"
+            f"🔪 Knives: {player.knives}",
+            color=0x00ff00
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # ECONOMY COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='gather')
+    async def gather_resources(ctx):
+        """Gather resources"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'gather')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before gathering again.")
+            return
+        
+        # Random resource gathering
+        wood_gain = random.randint(20, 50)
+        stone_gain = random.randint(10, 30)
+        food_gain = random.randint(15, 35)
+        
+        player.wood += wood_gain
+        player.stone += stone_gain
+        player.food += food_gain
+        
+        player.set_cooldown('gather', COOLDOWNS['gather'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🌲 Resources Gathered!",
+            f"Your workers collected:\n"
+            f"🪵 Wood: +{wood_gain}\n"
+            f"🪨 Stone: +{stone_gain}\n"
+            f"🍖 Food: +{food_gain}",
+            gif_url=GIFS['gather']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='build')
+    async def build_structure(ctx, building_type: str, quantity: int = 1):
+        """Build structures"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'build')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before building again.")
+            return
+        
+        building_type = building_type.lower()
+        if building_type not in BUILDINGS:
+            available = ", ".join(BUILDINGS.keys())
+            await ctx.send(f"❌ Invalid building type. Available: {available}")
+            return
+        
+        if quantity <= 0:
+            await ctx.send("❌ Quantity must be positive!")
+            return
+        
+        # Calculate costs
+        costs = BUILDINGS[building_type]
+        total_wood = costs['wood'] * quantity
+        total_stone = costs['stone'] * quantity
+        total_gold = costs['gold'] * quantity
+        
+        # Check resources
+        if (player.wood < total_wood or player.stone < total_stone or player.gold < total_gold):
+            await ctx.send(f"❌ Insufficient resources! Need: {total_wood} wood, {total_stone} stone, {total_gold} gold")
+            return
+        
+        # Deduct resources
+        player.wood -= total_wood
+        player.stone -= total_stone
+        player.gold -= total_gold
+        
+        # Add buildings
+        buildings = player.get_buildings()
+        buildings[building_type] = buildings.get(building_type, 0) + quantity
+        player.set_buildings(buildings)
+        
+        player.set_cooldown('build', COOLDOWNS['build'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🏗️ Construction Complete!",
+            f"Built {quantity} {building_type}(s)!\n\n"
+            f"**Costs:**\n"
+            f"🪵 Wood: -{total_wood}\n"
+            f"🪨 Stone: -{total_stone}\n"
+            f"💰 Gold: -{total_gold}",
+            gif_url=GIFS['build']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='buy')
+    async def buy_item(ctx, item: str, quantity: int = 1):
+        """Buy items from the shop"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'buy')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before buying again.")
+            return
+        
+        item = item.lower()
+        if item not in SHOP_ITEMS:
+            available = ", ".join(SHOP_ITEMS.keys())
+            await ctx.send(f"❌ Invalid item. Available: {available}")
+            return
+        
+        if quantity <= 0:
+            await ctx.send("❌ Quantity must be positive!")
+            return
+        
+        total_cost = SHOP_ITEMS[item]['price'] * quantity
+        
+        if player.gold < total_cost:
+            await ctx.send(f"❌ You need {total_cost:,} gold. You have {player.gold:,}")
+            return
+        
+        player.gold -= total_cost
+        
+        # Add items to inventory
+        if item == 'nuke':
+            player.nukes += quantity
+        elif item == 'anti_nuke_shield':
+            player.anti_nuke_shields += quantity
+        elif item == 'knife':
+            player.knives += quantity
+        
+        player.set_cooldown('buy', COOLDOWNS['buy'])
+        db.session.commit()
+        
+        item_name = item.replace('_', ' ').title()
+        embed = bot.create_embed(
+            "🛒 Purchase Complete!",
+            f"Bought {quantity} {item_name}(s) for {total_cost:,} gold!\n\n"
+            f"💰 Remaining gold: {player.gold:,}",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='farm')
+    async def farm_food(ctx):
+        """Farm food for your population"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'farm')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before farming again.")
+            return
+        
+        # Check for farms
+        buildings = player.get_buildings()
+        farm_count = buildings.get('farm', 0)
+        base_food = random.randint(30, 60)
+        farm_bonus = farm_count * random.randint(5, 15)
+        total_food = base_food + farm_bonus
+        
+        player.food += total_food
+        player.set_cooldown('farm', COOLDOWNS['farm'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🌾 Harvest Complete!",
+            f"Your farmers harvested:\n"
+            f"🍖 Food: +{total_food}\n"
+            f"🏢 Farm bonus: +{farm_bonus}\n\n"
+            f"Total food: {player.food:,}",
+            gif_url=GIFS['gather']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='cheer')
+    async def boost_morale(ctx):
+        """Boost citizen happiness"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'cheer')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before cheering again.")
+            return
+        
+        cost = 200
+        if player.gold < cost:
+            await ctx.send(f"❌ Celebrations cost {cost:,} gold. You have {player.gold:,}")
+            return
+        
+        player.gold -= cost
+        happiness_gain = random.randint(15, 30)
+        player.happiness = min(100, player.happiness + happiness_gain)
+        
+        player.set_cooldown('cheer', COOLDOWNS['cheer'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🎉 Celebration!",
+            f"Your people celebrate with festivals and parades!\n\n"
+            f"😊 Happiness: +{happiness_gain}\n"
+            f"💰 Cost: {cost:,} gold",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='feed')
+    async def feed_population(ctx):
+        """Feed your population to reduce hunger"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'feed')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before feeding again.")
+            return
+        
+        food_needed = int(player.population * 0.5)
+        if player.food < food_needed:
+            await ctx.send(f"❌ You need {food_needed:,} food to feed your population. You have {player.food:,}")
+            return
+        
+        player.food -= food_needed
+        hunger_reduction = random.randint(20, 40)
+        player.hunger = max(0, player.hunger - hunger_reduction)
+        
+        # Well-fed population is happier
+        if player.hunger < 30:
+            player.happiness = min(100, player.happiness + 5)
+        
+        player.set_cooldown('feed', COOLDOWNS['feed'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🍽️ Population Fed!",
+            f"Your people have been well fed!\n\n"
+            f"🍖 Food consumed: {food_needed:,}\n"
+            f"😋 Hunger reduced: -{hunger_reduction}\n"
+            f"😊 Happiness bonus applied!",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='gamble')
+    async def gamble_resources(ctx):
+        """Gamble resources for potential gains"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'gamble')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before gambling again.")
+            return
+        
+        bet = 500
+        if player.gold < bet:
+            await ctx.send(f"❌ You need {bet:,} gold to gamble. You have {player.gold:,}")
+            return
+        
+        player.gold -= bet
+        
+        # 40% chance to win
+        if random.random() < 0.4:
+            winnings = random.randint(800, 1500)
+            player.gold += winnings
+            net_gain = winnings - bet
+            
+            embed = bot.create_embed(
+                "🎰 Gambling Win!",
+                f"Lady Luck smiles upon you!\n\n"
+                f"💰 Winnings: {winnings:,} gold\n"
+                f"📈 Net gain: {net_gain:,} gold\n"
+                f"💎 Total gold: {player.gold:,}",
+                gif_url=GIFS['success']
+            )
+        else:
+            embed = bot.create_embed(
+                "🎰 Gambling Loss!",
+                f"The house always wins...\n\n"
+                f"💸 Lost: {bet:,} gold\n"
+                f"💰 Remaining gold: {player.gold:,}",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        player.set_cooldown('gamble', COOLDOWNS['gamble'])
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # COMBAT COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='attack')
+    async def attack_player(ctx, target: guilded.Member):
+        """Attack another player"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot attack yourself!")
+            return
+        
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
+        defender = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not attacker:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not defender:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(attacker, 'attack')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before attacking again.")
+            return
+        
+        # Check for alliance
+        alliance = Alliance.query.filter(
+            ((Alliance.player1_id == attacker.id) & (Alliance.player2_id == defender.id)) |
+            ((Alliance.player1_id == defender.id) & (Alliance.player2_id == attacker.id))
+        ).first()
+        
+        if alliance:
+            await ctx.send("❌ You cannot attack an ally! Break the alliance first.")
+            return
+        
+        if attacker.soldiers < 5:
+            await ctx.send("❌ You need at least 5 soldiers to attack!")
+            return
+        
+        victory, stolen_gold, stolen_food = GameMechanics.calculate_attack_damage(attacker, defender)
+        
+        attacker.set_cooldown('attack', COOLDOWNS['attack'])
+        
+        # Log the attack event
+        if victory:
+            event_desc = f"{attacker.civilization_name} attacked {defender.civilization_name} and stole {stolen_gold} gold, {stolen_food} food"
+            embed = bot.create_embed(
+                "⚔️ Victory!",
+                f"**{attacker.civilization_name}** conquered **{defender.civilization_name}**!\n\n"
+                f"**Spoils of War:**\n"
+                f"💰 Gold stolen: {stolen_gold:,}\n"
+                f"🍖 Food stolen: {stolen_food:,}",
+                gif_url=GIFS['attack']
+            )
+        else:
+            event_desc = f"{defender.civilization_name} repelled {attacker.civilization_name}'s attack"
+            embed = bot.create_embed(
+                "⚔️ Defeat!",
+                f"**{defender.civilization_name}** repelled **{attacker.civilization_name}**'s attack!\n\n"
+                f"Your forces suffered heavy casualties.",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        # Create event records
+        attack_event = Event(
+            player_id=attacker.id,
+            target_player_id=defender.id,
+            event_type='attack',
+            description=event_desc
+        )
+        db.session.add(attack_event)
+        
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='stealthbattle')
+    async def stealth_attack_player(ctx, target: guilded.Member):
+        """Launch a stealth attack on another player"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot attack yourself!")
+            return
+        
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
+        defender = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not attacker:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not defender:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(attacker, 'stealthbattle')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before launching another stealth attack.")
+            return
+        
+        # Check for alliance
+        alliance = Alliance.query.filter(
+            ((Alliance.player1_id == attacker.id) & (Alliance.player2_id == defender.id)) |
+            ((Alliance.player1_id == defender.id) & (Alliance.player2_id == attacker.id))
+        ).first()
+        
+        if alliance:
+            await ctx.send("❌ You cannot stealth attack an ally! Break the alliance first.")
+            return
+        
+        if attacker.soldiers < 8:
+            await ctx.send("❌ You need at least 8 soldiers for a stealth operation!")
+            return
+        
+        # Stealth attacks have higher success rate due to surprise
+        victory, stolen_gold, stolen_food = GameMechanics.calculate_attack_damage(attacker, defender, is_stealth=True)
+        
+        attacker.set_cooldown('stealthbattle', COOLDOWNS['stealthbattle'])
+        
+        # Log the stealth attack event
+        if victory:
+            event_desc = f"{attacker.civilization_name} launched a stealth attack on {defender.civilization_name} and stole {stolen_gold} gold, {stolen_food} food"
+            embed = bot.create_embed(
+                "🥷 Stealth Victory!",
+                f"**{attacker.civilization_name}** struck **{defender.civilization_name}** under cover of darkness!\n\n"
+                f"**Spoils of War:**\n"
+                f"💰 Gold stolen: {stolen_gold:,}\n"
+                f"🍖 Food stolen: {stolen_food:,}\n\n"
+                f"The surprise attack caught them completely off guard!",
+                gif_url=GIFS['attack']
+            )
+        else:
+            event_desc = f"{defender.civilization_name} detected and repelled {attacker.civilization_name}'s stealth attack"
+            embed = bot.create_embed(
+                "🥷 Stealth Failed!",
+                f"**{defender.civilization_name}** detected **{attacker.civilization_name}**'s stealth approach!\n\n"
+                f"The stealth attack was discovered and repelled with heavy losses!",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        # Create event records
+        stealth_event = Event(
+            player_id=attacker.id,
+            target_player_id=defender.id,
+            event_type='stealthbattle',
+            description=event_desc
+        )
+        db.session.add(stealth_event)
+        
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='civil_war')
+    async def civil_war(ctx):
+        """Start a civil war to restore order (requires 3 attempts when happiness is low)"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'civil_war')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before starting another civil war.")
+            return
+        
+        # Check if civil war is needed (low happiness triggers automatic civil war state)
+        if player.happiness <= 20 and player.civil_war_strikes == 0:
+            player.civil_war_strikes = 1  # Automatically enter civil war state
+        
+        if player.civil_war_strikes == 0 and player.happiness > 20:
+            await ctx.send("❌ Your civilization is stable. Civil wars only occur when happiness is very low (≤20).")
+            return
+        
+        if player.soldiers < 5:
+            await ctx.send("❌ You need at least 5 soldiers to fight a civil war!")
+            return
+        
+        # Civil war battle
+        soldier_loss = random.randint(2, 5)
+        player.soldiers = max(0, player.soldiers - soldier_loss)
+        player.civil_war_strikes += 1
+        player.set_cooldown('civil_war', COOLDOWNS['civil_war'])
+        
+        # Log the civil war event
+        if player.civil_war_strikes >= 3:
+            # Civil war resolved after 3 attempts
+            player.civil_war_strikes = 0
+            player.happiness = 50  # Restore to moderate level
+            event_desc = f"{player.civilization_name} ended their civil war after 3 battles and restored order"
+            embed = bot.create_embed(
+                "🏛️ Order Restored!",
+                f"**{player.civilization_name}** has ended the civil war after 3 brutal conflicts!\n\n"
+                f"💀 Final battle casualties: {soldier_loss:,} soldiers\n"
+                f"😊 Happiness restored to 50\n"
+                f"🏛️ Order and stability have returned to your people!",
+                gif_url=GIFS['success']
+            )
+            civil_event = Event(
+                player_id=player.id,
+                event_type='civil_war',
+                description=event_desc
+            )
+        else:
+            remaining = 3 - player.civil_war_strikes
+            event_desc = f"{player.civilization_name} fought civil war battle #{player.civil_war_strikes}"
+            embed = bot.create_embed(
+                f"⚔️ Civil War Battle #{player.civil_war_strikes}/3",
+                f"The civil war in **{player.civilization_name}** continues!\n\n"
+                f"💀 Casualties: {soldier_loss:,} soldiers lost\n"
+                f"🏴‍☠️ **{remaining} more civil war battles needed** to restore order\n\n"
+                f"Your civilization remains divided and unstable.",
+                color=0xff0000,
+                gif_url=GIFS['civil_war']
+            )
+            civil_event = Event(
+                player_id=player.id,
+                event_type='civil_war',
+                description=event_desc
+            )
+        
+        db.session.add(civil_event)
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='train')
+    async def train_military(ctx):
+        """Train soldiers and improve spies"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'train')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before training again.")
+            return
+        
+        cost = 200
+        if player.gold < cost:
+            await ctx.send(f"❌ Training costs {cost:,} gold. You have {player.gold:,}")
+            return
+        
+        player.gold -= cost
+        
+        soldiers_trained = random.randint(3, 8)
+        spies_trained = random.randint(1, 3)
+        
+        player.soldiers += soldiers_trained
+        player.spies += spies_trained
+        
+        player.set_cooldown('train', COOLDOWNS['train'])
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🎖️ Training Complete!",
+            f"Military training successful!\n\n"
+            f"**New Recruits:**\n"
+            f"⚔️ Soldiers: +{soldiers_trained}\n"
+            f"🕵️ Spies: +{spies_trained}\n\n"
+            f"Cost: {cost:,} gold",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='nuke')
+    async def nuke_attack(ctx, target: guilded.Member):
+        """Launch a nuclear attack on another civilization"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot nuke yourself!")
+            return
+        
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
+        defender = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not attacker:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not defender:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(attacker, 'nuke')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before launching another nuke.")
+            return
+        
+        if attacker.nukes < 1:
+            await ctx.send("❌ You need at least 1 nuke to launch a nuclear attack! Buy one from the shop first.")
+            return
+        
+        # Check for alliance
+        alliance = Alliance.query.filter(
+            ((Alliance.player1_id == attacker.id) & (Alliance.player2_id == defender.id)) |
+            ((Alliance.player1_id == defender.id) & (Alliance.player2_id == attacker.id))
+        ).first()
+        
+        if alliance:
+            await ctx.send("❌ You cannot nuke an ally! Break the alliance first.")
+            return
+        
+        # Check if defender has anti-nuke shields
+        if defender.anti_nuke_shields > 0:
+            defender.anti_nuke_shields -= 1
+            attacker.nukes -= 1
+            attacker.set_cooldown('nuke', COOLDOWNS['nuke'])
+            
+            # Log the intercepted nuke event
+            nuke_event = Event(
+                player_id=attacker.id,
+                target_player_id=defender.id,
+                event_type='nuke',
+                description=f"{attacker.civilization_name}'s nuclear attack on {defender.civilization_name} was intercepted by anti-nuke shields"
+            )
+            db.session.add(nuke_event)
+            db.session.commit()
+            
+            embed = bot.create_embed(
+                "🛡️ Nuclear Attack Intercepted!",
+                f"**{defender.civilization_name}**'s anti-nuke shield intercepted the nuclear missile!\n\n"
+                f"The devastating attack was completely neutralized.\n"
+                f"Both the nuke and shield were destroyed in the process.",
+                color=0x00ff00,
+                gif_url=GIFS['success']
+            )
+            await ctx.send(embed=embed)
+            return
+        
+        # Nuclear attack devastates the target
+        attacker.nukes -= 1
+        attacker.set_cooldown('nuke', COOLDOWNS['nuke'])
+        
+        # Nuclear devastation
+        soldiers_lost = int(defender.soldiers * 0.7)  # 70% of soldiers die
+        gold_lost = int(defender.gold * 0.5)          # 50% of gold destroyed
+        food_lost = int(defender.food * 0.6)          # 60% of food destroyed
+        buildings_destroyed = int(len(defender.get_buildings()) * 0.4)  # 40% of buildings
+        
+        defender.soldiers = max(0, defender.soldiers - soldiers_lost)
+        defender.gold = max(0, defender.gold - gold_lost)
+        defender.food = max(0, defender.food - food_lost)
+        defender.happiness = max(0, defender.happiness - 40)  # Massive morale loss
+        
+        # Destroy some buildings
+        buildings = defender.get_buildings()
+        if buildings:
+            building_types = list(buildings.keys())
+            for _ in range(min(buildings_destroyed, len(building_types))):
+                if building_types:
+                    building_to_destroy = random.choice(building_types)
+                    if buildings[building_to_destroy] > 0:
+                        buildings[building_to_destroy] -= 1
+                        if buildings[building_to_destroy] == 0:
+                            building_types.remove(building_to_destroy)
+            defender.set_buildings(buildings)
+        
+        # Log the nuclear attack event
+        nuke_event = Event(
+            player_id=attacker.id,
+            target_player_id=defender.id,
+            event_type='nuke',
+            description=f"{attacker.civilization_name} launched a nuclear attack on {defender.civilization_name}, causing massive devastation"
+        )
+        db.session.add(nuke_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "☢️ NUCLEAR DEVASTATION!",
+            f"**{attacker.civilization_name}** has launched a nuclear strike against **{defender.civilization_name}**!\n\n"
+            f"**Catastrophic Damage:**\n"
+            f"💀 Soldiers killed: {soldiers_lost:,}\n"
+            f"💰 Gold destroyed: {gold_lost:,}\n"
+            f"🍖 Food destroyed: {food_lost:,}\n"
+            f"🏢 Buildings destroyed: {buildings_destroyed}\n"
+            f"😢 Massive morale collapse (-40 happiness)\n\n"
+            f"The nuclear fallout will affect the region for generations...",
+            color=0xff0000,
+            gif_url=GIFS['nuke']
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # ESPIONAGE COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='spy')
+    async def spy_on_player(ctx, target: guilded.Member):
+        """Spy on another player to gather intelligence"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot spy on yourself!")
+            return
+        
+        spy_player = get_or_create_player(ctx.author.id, ctx.author.name)
+        target_player = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not spy_player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not target_player:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(spy_player, 'spy')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before spying again.")
+            return
+        
+        if spy_player.spies < 1:
+            await ctx.send("❌ You need at least 1 spy for this mission!")
+            return
+        
+        success, intel = GameMechanics.execute_spy_mission(spy_player, target_player)
+        
+        spy_player.set_cooldown('spy', COOLDOWNS['spy'])
+        
+        # Log spy mission event
+        if success:
+            spy_event = Event(
+                player_id=spy_player.id,
+                target_player_id=target_player.id,
+                event_type='spy_mission',
+                description=f"{spy_player.civilization_name} successfully spied on {target_player.civilization_name} and gathered intelligence"
+            )
+            embed = bot.create_embed(
+                "🕵️ Intelligence Report",
+                f"Spy mission successful on **{target_player.civilization_name}**!\n\n"
+                f"**Gathered Intelligence:**\n"
+                f"💰 Gold: {intel['gold']:,}\n"
+                f"⚔️ Soldiers: {intel['soldiers']:,}\n"
+                f"😊 Happiness: {intel['happiness']}/100\n"
+                f"🏢 Buildings: {intel['buildings']}",
+                gif_url=GIFS['spy']
+            )
+        else:
+            spy_event = Event(
+                player_id=spy_player.id,
+                target_player_id=target_player.id,
+                event_type='spy_mission',
+                description=f"{spy_player.civilization_name}'s spy was caught infiltrating {target_player.civilization_name}"
+            )
+            embed = bot.create_embed(
+                "🕵️ Mission Failed!",
+                f"Your spy was caught infiltrating **{target_player.civilization_name}**!\n"
+                f"Lost 1 spy in the process.",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        db.session.add(spy_event)
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='sabotage')
+    async def sabotage_player(ctx, target: guilded.Member):
+        """Sabotage another player's infrastructure"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot sabotage yourself!")
+            return
+        
+        saboteur = get_or_create_player(ctx.author.id, ctx.author.name)
+        target_player = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not saboteur:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not target_player:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(saboteur, 'sabotage')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before sabotaging again.")
+            return
+        
+        if saboteur.spies < 2:
+            await ctx.send("❌ You need at least 2 spies for sabotage missions!")
+            return
+        
+        # 50% base success chance
+        success_chance = 50 + (saboteur.spies * 3) - (target_player.spies * 2)
+        success = random.randint(1, 100) <= success_chance
+        
+        saboteur.set_cooldown('sabotage', COOLDOWNS['sabotage'])
+        
+        if success:
+            # Successful sabotage
+            gold_destroyed = random.randint(100, 300)
+            food_destroyed = random.randint(50, 150)
+            
+            target_player.gold = max(0, target_player.gold - gold_destroyed)
+            target_player.food = max(0, target_player.food - food_destroyed)
+            target_player.happiness = max(0, target_player.happiness - 10)
+            
+            # Log successful sabotage
+            sabotage_event = Event(
+                player_id=saboteur.id,
+                target_player_id=target_player.id,
+                event_type='sabotage',
+                description=f"{saboteur.civilization_name} sabotaged {target_player.civilization_name}, destroying {gold_destroyed} gold and {food_destroyed} food"
+            )
+            
+            embed = bot.create_embed(
+                "💥 Sabotage Successful!",
+                f"Your spies sabotaged **{target_player.civilization_name}**!\n\n"
+                f"**Damage Caused:**\n"
+                f"💰 Gold destroyed: {gold_destroyed:,}\n"
+                f"🍖 Food destroyed: {food_destroyed:,}\n"
+                f"😢 Morale damage: -10 happiness",
+                gif_url=GIFS['spy']
+            )
+        else:
+            # Failed sabotage
+            spies_lost = 1
+            saboteur.spies = max(0, saboteur.spies - spies_lost)
+            
+            # Log failed sabotage
+            sabotage_event = Event(
+                player_id=saboteur.id,
+                target_player_id=target_player.id,
+                event_type='sabotage',
+                description=f"{saboteur.civilization_name}'s sabotage mission against {target_player.civilization_name} was thwarted"
+            )
+            
+            embed = bot.create_embed(
+                "💥 Sabotage Failed!",
+                f"Your sabotage mission against **{target_player.civilization_name}** was discovered!\n\n"
+                f"🕵️ Lost 1 spy",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        db.session.add(sabotage_event)
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='hack')
+    async def hack_player(ctx, target: guilded.Member):
+        """Hack another player's systems to steal resources"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot hack yourself!")
+            return
+        
+        hacker = get_or_create_player(ctx.author.id, ctx.author.name)
+        target_player = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not hacker:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not target_player:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(hacker, 'hack')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before hacking again.")
+            return
+        
+        if hacker.spies < 3:
+            await ctx.send("❌ You need at least 3 spies for hacking operations!")
+            return
+        
+        # 45% base success chance
+        success_chance = 45 + (hacker.spies * 2) + (hacker.tech_level * 5) - (target_player.tech_level * 3)
+        success = random.randint(1, 100) <= success_chance
+        
+        hacker.set_cooldown('hack', COOLDOWNS['hack'])
+        
+        if success:
+            # Successful hack - steal resources
+            gold_stolen = random.randint(200, 500)
+            gold_stolen = min(gold_stolen, target_player.gold)
+            
+            target_player.gold -= gold_stolen
+            hacker.gold += gold_stolen
+            
+            # Log successful hack
+            hack_event = Event(
+                player_id=hacker.id,
+                target_player_id=target_player.id,
+                event_type='hack',
+                description=f"{hacker.civilization_name} hacked {target_player.civilization_name} and stole {gold_stolen} gold"
+            )
+            
+            embed = bot.create_embed(
+                "💻 Hack Successful!",
+                f"Your cyber specialists infiltrated **{target_player.civilization_name}**'s systems!\n\n"
+                f"**Digital Theft:**\n"
+                f"💰 Gold stolen: {gold_stolen:,}\n"
+                f"🔒 Security bypassed using advanced technology",
+                gif_url=GIFS['spy']
+            )
+        else:
+            # Failed hack
+            spies_lost = 1
+            hacker.spies = max(0, hacker.spies - spies_lost)
+            
+            # Log failed hack
+            hack_event = Event(
+                player_id=hacker.id,
+                target_player_id=target_player.id,
+                event_type='hack',
+                description=f"{hacker.civilization_name}'s hacking attempt against {target_player.civilization_name} was detected and blocked"
+            )
+            
+            embed = bot.create_embed(
+                "💻 Hack Failed!",
+                f"Your hacking attempt against **{target_player.civilization_name}** was detected!\n\n"
+                f"🕵️ Lost 1 spy to counter-intelligence\n"
+                f"🛡️ Their security systems proved too strong",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        db.session.add(hack_event)
+        db.session.commit()
+        
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # ALLIANCE COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='ally')
+    async def form_alliance(ctx, target: guilded.Member):
+        """Form an alliance with another player"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot form an alliance with yourself!")
+            return
+        
+        player1 = get_or_create_player(ctx.author.id, ctx.author.name)
+        player2 = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not player1:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not player2:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(player1, 'ally')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before forming another alliance.")
+            return
+        
+        # Check if alliance already exists
+        existing = Alliance.query.filter(
+            ((Alliance.player1_id == player1.id) & (Alliance.player2_id == player2.id)) |
+            ((Alliance.player1_id == player2.id) & (Alliance.player2_id == player1.id))
+        ).first()
+        
+        if existing:
+            await ctx.send(f"❌ You already have an alliance with **{player2.civilization_name}**!")
+            return
+        
+        # Create alliance
+        alliance = Alliance(player1_id=player1.id, player2_id=player2.id)
+        db.session.add(alliance)
+        
+        # Both players gain happiness from alliance
+        player1.happiness = min(100, player1.happiness + 10)
+        player2.happiness = min(100, player2.happiness + 10)
+        
+        player1.set_cooldown('ally', COOLDOWNS['ally'])
+        
+        # Log alliance formation event
+        ally_event = Event(
+            player_id=player1.id,
+            target_player_id=player2.id,
+            event_type='ally_formed',
+            description=f"{player1.civilization_name} formed an alliance with {player2.civilization_name}"
+        )
+        db.session.add(ally_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🤝 Alliance Formed!",
+            f"**{player1.civilization_name}** and **{player2.civilization_name}** have formed an alliance!\n\n"
+            f"Both civilizations cannot attack each other and gain +10 happiness.\n"
+            f"Use `.break {target.mention}` to dissolve the alliance.",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='break')
+    async def break_alliance(ctx, target: guilded.Member):
+        """Break an alliance with another player"""
+        player1 = get_or_create_player(ctx.author.id, ctx.author.name)
+        player2 = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not player1:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not player2:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(player1, 'break')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before breaking another alliance.")
+            return
+        
+        # Find alliance
+        alliance = Alliance.query.filter(
+            ((Alliance.player1_id == player1.id) & (Alliance.player2_id == player2.id)) |
+            ((Alliance.player1_id == player2.id) & (Alliance.player2_id == player1.id))
+        ).first()
+        
+        if not alliance:
+            await ctx.send(f"❌ You don't have an alliance with **{player2.civilization_name}**!")
+            return
+        
+        # Remove alliance
+        db.session.delete(alliance)
+        
+        # Happiness penalties for betrayal
+        player1.happiness = max(0, player1.happiness - 15)
+        player2.happiness = max(0, player2.happiness - 20)  # Betrayed player loses more
+        
+        player1.set_cooldown('break', COOLDOWNS['break'])
+        
+        # Log alliance breaking event
+        break_event = Event(
+            player_id=player1.id,
+            target_player_id=player2.id,
+            event_type='ally_broken',
+            description=f"{player1.civilization_name} betrayed and broke alliance with {player2.civilization_name}"
+        )
+        db.session.add(break_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "💔 Alliance Broken!",
+            f"**{player1.civilization_name}** has betrayed **{player2.civilization_name}**!\n\n"
+            f"The alliance has been dissolved.\n"
+            f"Both civilizations suffer happiness penalties from this betrayal.\n"
+            f"You can now attack each other again.",
+            color=0xff0000,
+            gif_url=GIFS['fail']
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # TECHNOLOGY COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='invent')
+    async def research_technology(ctx):
+        """Research new technology to improve your civilization"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'invent')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before researching again.")
+            return
+        
+        # Technology research costs scale with current tech level
+        base_cost = 2000
+        cost = base_cost + (player.tech_level * 500)
+        
+        if player.gold < cost:
+            await ctx.send(f"❌ You need {cost:,} gold to research new technology!")
+            return
+        
+        player.gold -= cost
+        player.tech_level += 1
+        player.set_cooldown('invent', COOLDOWNS['invent'])
+        
+        # Random technology discoveries
+        tech_names = [
+            "Advanced Metallurgy", "Siege Engineering", "Military Tactics", "Fortification",
+            "Logistics", "Communication Networks", "Naval Technology", "Cryptography",
+            "Engineering", "Architecture", "Medicine", "Agriculture", "Mathematics"
+        ]
+        
+        discovered_tech = random.choice(tech_names)
+        
+        # Log the invention event
+        invent_event = Event(
+            player_id=player.id,
+            event_type='invention',
+            description=f"{player.civilization_name} discovered {discovered_tech} (Tech Level {player.tech_level})"
+        )
+        db.session.add(invent_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "🔬 Scientific Breakthrough!",
+            f"**{player.civilization_name}** has made a technological advancement!\n\n"
+            f"**Discovery:** {discovered_tech}\n"
+            f"🧪 Tech Level: {player.tech_level}\n"
+            f"💰 Research Cost: {cost:,} gold\n\n"
+            f"⚔️ Combat Bonus: +{player.tech_level * 5}%\n"
+            f"🛡️ Defense Bonus: +{player.tech_level * 3}%",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='tech')
+    async def show_technology(ctx):
+        """Show your current technology level and research progress"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        next_cost = 2000 + (player.tech_level * 500)
+        combat_bonus = player.tech_level * 5
+        defense_bonus = player.tech_level * 3
+        
+        embed = bot.create_embed(
+            "🔬 Technology Status",
+            f"**{player.civilization_name}** Science Department\n\n"
+            f"🧪 **Current Tech Level:** {player.tech_level}\n"
+            f"⚔️ **Combat Bonus:** +{combat_bonus}%\n"
+            f"🛡️ **Defense Bonus:** +{defense_bonus}%\n\n"
+            f"**Next Research:**\n"
+            f"💰 Cost: {next_cost:,} gold\n"
+            f"📈 Will increase combat bonus to +{(player.tech_level + 1) * 5}%",
+            color=0x0066cc
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # COMMUNICATION COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='send')
+    async def send_message(ctx, target: guilded.Member, *, message_content: str):
+        """Send a diplomatic message"""
+        sender = get_or_create_player(ctx.author.id, ctx.author.name)
+        recipient = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not sender:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not recipient:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot send a message to yourself!")
+            return
+        
+        # Create message
+        message = Message(
+            sender_id=sender.id,
+            recipient_id=recipient.id,
+            content=message_content[:500]  # Limit message length
+        )
+        db.session.add(message)
+        
+        # Log message event
+        message_event = Event(
+            player_id=sender.id,
+            target_player_id=recipient.id,
+            event_type='message',
+            description=f"{sender.civilization_name} sent a diplomatic message to {recipient.civilization_name}"
+        )
+        db.session.add(message_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "📧 Message Sent!",
+            f"Your diplomatic message has been delivered to **{recipient.civilization_name}**!\n\n"
+            f"**Message Preview:**\n{message_content[:100]}{'...' if len(message_content) > 100 else ''}",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='mail')
+    async def check_mail(ctx):
+        """Check your diplomatic messages"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        messages = Message.query.filter_by(recipient_id=player.id).order_by(Message.created_at.desc()).limit(5).all()
+        
+        if not messages:
+            embed = bot.create_embed(
+                "📧 No Messages",
+                "Your diplomatic mailbox is empty.",
+                color=0x666666
+            )
+            await ctx.send(embed=embed)
+            return
+        
+        message_list = []
+        for msg in messages:
+            status = "📩" if not msg.read else "📧"
+            sender_name = msg.sender.civilization_name
+            preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
+            time_ago = (datetime.utcnow() - msg.created_at).total_seconds() / 3600
+            
+            if time_ago < 1:
+                time_str = f"{int(time_ago * 60)}m ago"
+            elif time_ago < 24:
+                time_str = f"{int(time_ago)}h ago"
+            else:
+                time_str = f"{int(time_ago / 24)}d ago"
+            
+            message_list.append(f"{status} **{sender_name}** ({time_str})\n{preview}")
+            
+            # Mark as read
+            msg.read = True
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "📧 Diplomatic Messages",
+            "\n\n".join(message_list),
+            color=0x0066cc
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # RESOURCE SHARING COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='provide')
+    async def provide_resources(ctx, target: guilded.Member, resource_type: str, amount: int):
+        """Provide resources to another player"""
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot provide resources to yourself!")
+            return
+        
+        provider = get_or_create_player(ctx.author.id, ctx.author.name)
+        recipient = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not provider:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not recipient:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        can_use, time_left = check_cooldown(provider, 'provide')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before providing resources again.")
+            return
+        
+        if amount <= 0:
+            await ctx.send("❌ Amount must be positive!")
+            return
+        
+        resource_type = resource_type.lower()
+        valid_resources = ['gold', 'wood', 'stone', 'food']
+        
+        if resource_type not in valid_resources:
+            await ctx.send(f"❌ Invalid resource type! Valid resources: {', '.join(valid_resources)}")
+            return
+        
+        # Check if provider has enough resources
+        provider_amount = getattr(provider, resource_type)
+        if provider_amount < amount:
+            await ctx.send(f"❌ You don't have enough {resource_type}! You have {provider_amount:,}, need {amount:,}")
+            return
+        
+        # Transfer resources
+        setattr(provider, resource_type, provider_amount - amount)
+        recipient_amount = getattr(recipient, resource_type)
+        setattr(recipient, resource_type, recipient_amount + amount)
+        
+        provider.set_cooldown('provide', COOLDOWNS['provide'])
+        
+        # Log the resource sharing event
+        provide_event = Event(
+            player_id=provider.id,
+            target_player_id=recipient.id,
+            event_type='resource_sharing',
+            description=f"{provider.civilization_name} provided {amount:,} {resource_type} to {recipient.civilization_name}"
+        )
+        db.session.add(provide_event)
+        
+        db.session.commit()
+        
+        resource_emojis = {'gold': '💰', 'wood': '🪵', 'stone': '🪨', 'food': '🍖'}
+        
+        embed = bot.create_embed(
+            "🤝 Resources Provided!",
+            f"**{provider.civilization_name}** has generously provided resources to **{recipient.civilization_name}**!\n\n"
+            f"**Transfer:**\n"
+            f"{resource_emojis[resource_type]} {amount:,} {resource_type.title()}\n\n"
+            f"This act of diplomacy strengthens ties between civilizations!",
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # PUPPET STATE COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='puppet')
+    async def create_puppet_state(ctx, target: guilded.Member):
+        """Turn a defeated civilization into your puppet state"""
+        conqueror = get_or_create_player(ctx.author.id, ctx.author.name)
+        target_player = Player.query.filter_by(user_id=str(target.id)).first()
+        
+        if not conqueror:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not target_player:
+            await ctx.send("❌ Target player hasn't started a civilization yet.")
+            return
+        
+        if target.id == ctx.author.id:
+            await ctx.send("❌ You cannot make yourself a puppet state!")
+            return
+        
+        can_use, time_left = check_cooldown(conqueror, 'puppet')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before creating another puppet state.")
+            return
+        
+        # Check if target is weak enough to puppet (less than 20% of conqueror's soldiers)
+        min_required_soldiers = int(target_player.soldiers * 5)  # Need 5x their army
+        if conqueror.soldiers < min_required_soldiers:
+            await ctx.send(f"❌ You need at least {min_required_soldiers:,} soldiers to puppet **{target_player.civilization_name}** (they have {target_player.soldiers:,} soldiers)")
+            return
+        
+        # Check if target has low happiness (easier to puppet demoralized civilizations)
+        if target_player.happiness > 30:
+            await ctx.send(f"❌ **{target_player.civilization_name}** has too high morale ({target_player.happiness}/100) to puppet! Attack them first to lower their morale.")
+            return
+        
+        # Check for alliance
+        alliance = Alliance.query.filter(
+            ((Alliance.player1_id == conqueror.id) & (Alliance.player2_id == target_player.id)) |
+            ((Alliance.player1_id == target_player.id) & (Alliance.player2_id == conqueror.id))
+        ).first()
+        
+        if alliance:
+            await ctx.send("❌ You cannot puppet an ally! Break the alliance first.")
+            return
+        
+        # Create puppet state
+        target_player.is_puppet = True
+        target_player.puppet_master_id = conqueror.id
+        target_player.happiness = max(0, target_player.happiness - 20)  # Further demoralization
+        
+        conqueror.set_cooldown('puppet', COOLDOWNS['puppet'])
+        
+        # Log the puppet creation event
+        puppet_event = Event(
+            player_id=conqueror.id,
+            target_player_id=target_player.id,
+            event_type='puppet_creation',
+            description=f"{conqueror.civilization_name} established {target_player.civilization_name} as a puppet state"
+        )
+        db.session.add(puppet_event)
+        
+        db.session.commit()
+        
+        embed = bot.create_embed(
+            "👑 Puppet State Established!",
+            f"**{conqueror.civilization_name}** has established **{target_player.civilization_name}** as a puppet state!\n\n"
+            f"**{target_player.civilization_name}** is now under the political control of **{conqueror.civilization_name}**.\n\n"
+            f"The puppet state can only regain independence through a successful revolt.",
+            color=0x800080,
+            gif_url=GIFS['success']
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='revolt')
+    async def revolt_against_master(ctx):
+        """Revolt against your puppet master to regain independence"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        if not player.is_puppet:
+            await ctx.send("❌ You are not a puppet state! This command is only for puppet states.")
+            return
+        
+        can_use, time_left = check_cooldown(player, 'revolt')
+        if not can_use:
+            await ctx.send(f"⏰ You must wait {time_left} seconds before attempting another revolt.")
+            return
+        
+        puppet_master = Player.query.get(player.puppet_master_id)
+        if not puppet_master:
+            # Master no longer exists, automatically free
+            player.is_puppet = False
+            player.puppet_master_id = None
+            db.session.commit()
+            await ctx.send("🎉 Your puppet master no longer exists! You are now free!")
+            return
+        
+        # Revolt success chance based on relative strength and happiness
+        base_chance = 30  # 30% base chance
+        happiness_bonus = player.happiness * 0.5  # Higher happiness helps
+        strength_ratio = (player.soldiers / max(puppet_master.soldiers, 1)) * 100
+        strength_bonus = min(strength_ratio * 0.3, 30)  # Max 30% bonus from strength
+        
+        success_chance = base_chance + happiness_bonus + strength_bonus
+        success = random.randint(1, 100) <= success_chance
+        
+        player.set_cooldown('revolt', COOLDOWNS['revolt'])
+        
+        if success:
+            # Successful revolt
+            player.is_puppet = False
+            player.puppet_master_id = None
+            player.happiness = min(100, player.happiness + 30)  # Liberation boost
+            
+            # Master loses some soldiers (revolt suppression costs)
+            soldiers_lost = int(puppet_master.soldiers * 0.1)
+            puppet_master.soldiers = max(0, puppet_master.soldiers - soldiers_lost)
+            
+            # Log the successful revolt
+            revolt_event = Event(
+                player_id=player.id,
+                target_player_id=puppet_master.id,
+                event_type='revolt',
+                description=f"{player.civilization_name} successfully revolted against {puppet_master.civilization_name} and regained independence"
+            )
+            db.session.add(revolt_event)
+            
+            embed = bot.create_embed(
+                "🗽 INDEPENDENCE ACHIEVED!",
+                f"**{player.civilization_name}** has successfully revolted against **{puppet_master.civilization_name}**!\n\n"
+                f"🎉 Your civilization is now free and independent!\n"
+                f"😊 Morale boost: +30 happiness\n"
+                f"⚔️ **{puppet_master.civilization_name}** lost {soldiers_lost:,} soldiers suppressing the revolt\n\n"
+                f"Freedom has been restored to your people!",
+                color=0x00ff00,
+                gif_url=GIFS['success']
+            )
+        else:
+            # Failed revolt
+            soldiers_lost = int(player.soldiers * 0.2)  # 20% casualties
+            player.soldiers = max(0, player.soldiers - soldiers_lost)
+            player.happiness = max(0, player.happiness - 15)  # Crushing defeat
+            
+            # Log the failed revolt
+            revolt_event = Event(
+                player_id=player.id,
+                target_player_id=puppet_master.id,
+                event_type='revolt',
+                description=f"{player.civilization_name}'s revolt against {puppet_master.civilization_name} was crushed"
+            )
+            db.session.add(revolt_event)
+            
+            embed = bot.create_embed(
+                "💔 Revolt Crushed!",
+                f"**{player.civilization_name}**'s revolt against **{puppet_master.civilization_name}** has been brutally suppressed!\n\n"
+                f"💀 Casualties: {soldiers_lost:,} soldiers lost\n"
+                f"😢 Morale penalty: -15 happiness\n\n"
+                f"The dream of independence will have to wait...",
+                color=0xff0000,
+                gif_url=GIFS['fail']
+            )
+        
+        db.session.commit()
+        await ctx.send(embed=embed)
+    
+    # =============================================================================
+    # UTILITY COMMANDS
+    # =============================================================================
+    
+    @bot.command(name='shop')
+    async def show_shop(ctx):
+        """Display the shop"""
+        shop_items = []
+        for item, details in SHOP_ITEMS.items():
+            item_name = item.replace('_', ' ').title()
+            price = details['price']
+            item_type = details['type'].title()
+            shop_items.append(f"**{item_name}** - {price:,} gold ({item_type})")
+        
+        embed = bot.create_embed(
+            "🏪 War Shop",
+            "Use `.buy <item> [amount]` to purchase items:\n\n" + "\n".join(shop_items),
+            color=0xffd700
+        )
+        await ctx.send(embed=embed)
+    
+    @bot.command(name='lore')
+    async def show_lore(ctx, event_type: str = None, limit: int = 10):
+        """Show civilization history and lore"""
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
+        if not player:
+            await ctx.send("❌ Start a civilization first with `.start <name>`")
+            return
+        
+        # Build query for events
+        query = Event.query
+        
+        if event_type:
+            event_type = event_type.lower()
+            valid_types = ['battle', 'alliance', 'message', 'disaster', 'spy', 'nuke', 'all']
+            if event_type not in valid_types:
+                await ctx.send(f"❌ Invalid event type. Valid types: {', '.join(valid_types)}")
+                return
+            
+            if event_type != 'all':
+                if event_type == 'battle':
+                    query = query.filter(Event.event_type.in_(['attack', 'civil_war', 'backstab', 'stealthbattle']))
+                elif event_type == 'alliance':
+                    query = query.filter(Event.event_type.in_(['ally_formed', 'ally_broken']))
+                elif event_type == 'spy':
+                    query = query.filter(Event.event_type.in_(['spy_mission', 'sabotage', 'hack']))
+                else:
+                    query = query.filter(Event.event_type == event_type)
+        
+        # Filter to events involving this player
+        query = query.filter(
+            (Event.player_id == player.id) | 
+            (Event.target_player_id == player.id)
+        )
+        
+        # Get recent events
+        events = query.order_by(Event.created_at.desc()).limit(min(limit, 20)).all()
+        
+        if not events:
+            embed = bot.create_embed(
+                "📜 Civilization Lore",
+                f"No historical events found for **{player.civilization_name}**.\n"
+                f"Start your legend by interacting with other civilizations!",
+                color=0x8b4513
+            )
+            await ctx.send(embed=embed)
+            return
+        
+        # Format events for display
+        lore_entries = []
+        for event in events:
+            timestamp = event.created_at.strftime("%m/%d %H:%M")
+            
+            # Get emoji for event type
+            emoji_map = {
+                'attack': '⚔️',
+                'civil_war': '🏴‍☠️',
+                'backstab': '🗡️',
+                'nuke': '☢️',
+                'stealthbattle': '🥷',
+                'spy_mission': '🕵️',
+                'sabotage': '💥',
+                'hack': '💻',
+                'ally_formed': '🤝',
+                'ally_broken': '💔',
+                'disaster': '🌪️',
+                'message': '📧',
+                'invention': '🔬',
+                'resource_sharing': '🤝',
+                'puppet_creation': '👑',
+                'revolt': '🗽'
+            }
+            
+            emoji = emoji_map.get(event.event_type, '📅')
+            entry = f"{emoji} `{timestamp}` {event.description}"
+            lore_entries.append(entry)
+        
+        # Create embed with lore
+        title = f"📜 {player.civilization_name} - Historical Chronicles"
+        if event_type and event_type != 'all':
+            title += f" ({event_type.title()} Events)"
+        
+        description = f"**Recent events in the life of {player.civilization_name}:**\n\n"
+        description += "\n".join(lore_entries)
+        
+        if len(events) == limit and limit < 20:
+            description += f"\n\n*Use `.lore {event_type or 'all'} {limit + 10}` to see more events*"
+        
+        embed = bot.create_embed(
+            title,
+            description,
+            color=0x8b4513
+        )
+        
+        await ctx.send(embed=embed)
+    
+    return bot
 
-                <hr class="my-4">
+# =============================================================================
+# DISASTER SYSTEM
+# =============================================================================
 
-                <h3 class="text-center mb-4"><i class="fas fa-terminal"></i> Complete Command List</h3>
+async def disaster_system(bot):
+    """Background task for random disasters"""
+    while True:
+        try:
+            await asyncio.sleep(1800)  # Check every 30 minutes
+            
+            players = Player.query.filter(Player.last_active > datetime.utcnow() - timedelta(hours=2)).all()
+            
+            if players and random.random() < 0.3:  # 30% chance
+                victim = random.choice(players)
                 
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-flag"></i> Basic & Economy</div>
-                            <div class="command-example">
-                                .start Roman Empire<br>
-                                .gather | .build house<br>
-                                .buy soldiers 10 | .farm<br>
-                                .cheer | .feed | .gamble 100
-                            </div>
-                        </div>
-
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-sword"></i> Combat & Training</div>
-                            <div class="command-example">
-                                .attack @enemy<br>
-                                .civil_war<br>
-                                .train (with GIF)
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-md-6">
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-user-secret"></i> Espionage</div>
-                            <div class="command-example">
-                                .spy @enemy<br>
-                                .sabotage @enemy<br>
-                                .hack @enemy
-                            </div>
-                        </div>
-
-                        <div class="command-card">
-                            <div class="command-title"><i class="fas fa-handshake"></i> Diplomacy</div>
-                            <div class="command-example">
-                                .ally @friend | .break @friend<br>
-                                .send @player Hello!<br>
-                                .mail (check inbox)
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <hr class="my-4">
-
-                <div class="text-center">
-                    <h4><i class="fas fa-info-circle"></i> Getting Started</h4>
-                    <p class="lead">Join a Guilded server with WarBot and type <code>.start YourCivilizationName</code> to begin!</p>
-                    <p class="text-muted">All cooldowns optimized for balanced gameplay. Natural disasters occur randomly affecting all players!</p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
-"""
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/health')
-def health():
-    return {"status": "healthy", "bot_ready": bot.is_ready() if hasattr(bot, 'is_ready') else False}
-
-def run_flask():
-    """Run Flask server in a separate thread"""
-    app.run(host='0.0.0.0', port=5000, debug=False)
-
-def run_bot():
-    """Run the Guilded bot"""
-    token = os.getenv('GUILDED_BOT_TOKEN', 'your_bot_token_here')
-    if token == 'your_bot_token_here':
-        print("WARNING: Using default bot token. Set GUILDED_BOT_TOKEN environment variable.")
-    bot.run(token)
+                disasters = [
+                    {
+                        'name': 'Earthquake',
+                        'emoji': '🌍',
+                        'damage': lambda p: {
+                            'soldiers': random.randint(5, 15),
+                            'buildings': 1,
+                            'happiness': random.randint(10, 20)
+                        }
+                    },
+                    {
+                        'name': 'Plague',
+                        'emoji': '🦠',
+                        'damage': lambda p: {
+                            'population': int(p.population * 0.1),
+                            'happiness': random.randint(15, 25)
+                        }
+                    },
+                    {
+                        'name': 'Famine',
+                        'emoji': '🌾',
+                        'damage': lambda p: {
+                            'food': int(p.food * 0.3),
+                            'happiness': random.randint(10, 20)
+                        }
+                    },
+                    {
+                        'name': 'Economic Crisis',
+                        'emoji': '💸',
+                        'damage': lambda p: {
+                            'gold': int(p.gold * 0.2),
+                            'happiness': random.randint(5, 15)
+                        }
+                    }
+                ]
+                
+                disaster = random.choice(disasters)
+                damage = disaster['damage'](victim)
+                
+                # Apply damage
+                for attr, amount in damage.items():
+                    if hasattr(victim, attr):
+                        current = getattr(victim, attr)
+                        setattr(victim, attr, max(0, current - amount))
+                
+                # Log disaster event
+                disaster_event = Event(
+                    player_id=victim.id,
+                    event_type='disaster',
+                    description=f"{victim.civilization_name} was struck by a {disaster['name']}"
+                )
+                db.session.add(disaster_event)
+                db.session.commit()
+                
+        except Exception as e:
+            print(f"Disaster system error: {e}")
 
 # =============================================================================
-# MAIN EXECUTION
+# MAIN APPLICATION
 # =============================================================================
 
-if __name__ == '__main__':
-    print("WarBot - Complete Civilization Management System")
+def main():
+    """Main application entry point"""
+    print("🏰 Starting WarBot Civilization Management System...")
     print("=" * 50)
-    print("✅ Enhanced Features:")
-    print("  • Espionage System (.spy, .sabotage, .hack)")
-    print("  • Natural Disasters (3% daily occurrence)")
-    print("  • Diplomatic Messaging (.send, .mail)")
-    print("  • Soldier Training with GIFs")
-    print("  • Attack GIFs")
-    print("=" * 50)
+    
+    # Create Flask app
+    flask_app = create_flask_app()
+    
+    # Create database tables
+    with flask_app.app_context():
+        db.create_all()
+        print("Database tables created successfully!")
+    
+    # Create Guilded bot
+    guilded_bot = create_guilded_bot()
+    
+    def run_flask():
+        """Run Flask server in a separate thread"""
+        print("Starting Flask web server on port 5000...")
+        flask_app.run(host='0.0.0.0', port=5000, debug=False)
+    
+    def run_guilded():
+        """Run Guilded bot"""
+        print("Starting Guilded bot...")
+        token = os.environ.get('GUILDED_BOT_TOKEN')
+        if not token:
+            print("❌ GUILDED_BOT_TOKEN environment variable not set!")
+            return
+        
+        print("Bot token configured: Yes")
+        
+        # Start disaster system
+        async def start_with_disasters():
+            async with guilded_bot:
+                # Start disaster system in background
+                disaster_task = asyncio.create_task(disaster_system(guilded_bot))
+                
+                # Start bot
+                await guilded_bot.start(token)
+        
+        asyncio.run(start_with_disasters())
     
     # Start Flask server in background thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print("Flask server started on port 5000")
     
-    # Start the bot (this will block)
-    print("Starting Guilded bot...")
-    run_bot()
+    # Start Guilded bot (main thread)
+    run_guilded()
+
+if __name__ == "__main__":
+    main()
