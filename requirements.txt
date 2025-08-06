@@ -1,3 +1,4 @@
 guilded.py
 aiohttp
-flask
+Flask
+Flask_SQLAlchemy
