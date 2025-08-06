@@ -397,7 +397,6 @@ def create_flask_app():
 # GUILDED BOT
 # =============================================================================
 
-def create_guilded_bot():
     """Create and configure the Guilded bot"""
     bot = commands.Bot()
     
@@ -2206,7 +2205,6 @@ def main():
         print("Database tables created successfully!")
     
     # Create Guilded bot
-    guilded_bot = create_guilded_bot()
     
     def run_flask():
         """Run Flask server in a separate thread"""
