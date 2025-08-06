@@ -1,5 +1,5 @@
 """
-Guilded Civilization Bot - Complete Single File Implementation
+Guilded Civilization Bot - Complete Fixed Version
 A comprehensive civilization-building game bot with economy, combat, alliances, espionage, and natural disasters.
 """
 
@@ -782,9 +782,8 @@ class NaturalDisasterManager:
 
 class CivilizationBot(commands.Bot):
     def __init__(self):
-        # PROPERLY CONFIGURE COMMAND HANDLING
         super().__init__(
-            command_prefix='.', 
+            command_prefix='.',
             help_command=None,
             case_insensitive=True
         )
@@ -793,91 +792,19 @@ class CivilizationBot(commands.Bot):
         self.game_logic = GameLogic()
         self.disaster_manager = None
         
-        # MANUALLY REGISTER COMMANDS TO ENSURE THEY'RE PROPERLY LOADED
-        self.add_command(commands.Command(
-            name='start',
-            callback=self.start_civilization,
-            help='Create a new civilization'
-        ))
-        self.add_command(commands.Command(
-            name='status',
-            callback=self.civilization_status,
-            help='Display civilization status'
-        ))
-        self.add_command(commands.Command(
-            name='help',
-            callback=self.help_command,
-            help='Display help information'
-        ))
-        self.add_command(commands.Command(
-            name='gather',
-            callback=self.gather_resources,
-            help='Gather resources for your civilization'
-        ))
-        self.add_command(commands.Command(
-            name='build',
-            callback=self.build_structure,
-            help='Construct buildings'
-        ))
-        self.add_command(commands.Command(
-            name='train',
-            callback=self.train_soldiers,
-            help='Train soldiers for your army'
-        ))
-        self.add_command(commands.Command(
-            name='attack',
-            callback=self.attack_player,
-            help='Attack another player\'s civilization'
-        ))
-        self.add_command(commands.Command(
-            name='ally',
-            callback=self.form_alliance,
-            help='Form an alliance with another player'
-        ))
-        self.add_command(commands.Command(
-            name='break',
-            callback=self.break_alliance,
-            help='Break an alliance with another player'
-        ))
-        self.add_command(commands.Command(
-            name='spy',
-            callback=self.spy_on_player,
-            help='Gather intelligence on another civilization'
-        ))
-        self.add_command(commands.Command(
-            name='send',
-            callback=self.send_message,
-            help='Send a message to another player'
-        ))
-        self.add_command(commands.Command(
-            name='mail',
-            callback=self.check_mail,
-            help='Check inbox and read messages'
-        ))
-        
     async def on_ready(self):
         logger.info(f'{self.user} has connected to Guilded!')
         await self.db.initialize()
-        
-        # Log registered commands for debugging
-        logger.info(f"Registered commands: {', '.join([cmd.name for cmd in self.commands])}")
         
         # Start natural disaster system
         self.disaster_manager = NaturalDisasterManager(self)
         asyncio.create_task(self.disaster_manager.start_disaster_system())
         
-    async def on_message(self, message):
-        # Ignore bot messages
-        if message.author == self.user:
-            return
-            
-        # Process commands
-        await self.process_commands(message)
-
     # ========================================================================
     # BASIC COMMANDS
     # ========================================================================
     
+    @commands.command(name='start')
     async def start_civilization(self, ctx: commands.Context, *, name: str = ""):
         """Create a new civilization"""
         if not name.strip():
@@ -931,6 +858,7 @@ class CivilizationBot(commands.Bot):
         else:
             await ctx.reply("❌ Failed to create civilization. Please try again.")
 
+    @commands.command(name='status')
     async def civilization_status(self, ctx: commands.Context):
         """Display civilization status"""
         user_id = str(ctx.author.id)
@@ -1001,6 +929,7 @@ class CivilizationBot(commands.Bot):
         
         await ctx.reply(embed=embed)
 
+    @commands.command(name='help')
     async def help_command(self, ctx: commands.Context):
         """Display help information"""
         embed = guilded.Embed(
@@ -1067,6 +996,7 @@ class CivilizationBot(commands.Bot):
     # ECONOMY COMMANDS
     # ========================================================================
     
+    @commands.command(name='gather')
     async def gather_resources(self, ctx: commands.Context):
         """Gather resources for your civilization"""
         user_id = str(ctx.author.id)
@@ -1125,6 +1055,7 @@ class CivilizationBot(commands.Bot):
         
         await ctx.reply(embed=embed)
 
+    @commands.command(name='build')
     async def build_structure(self, ctx: commands.Context, building_type: str = ""):
         """Construct buildings"""
         if not building_type:
@@ -1217,6 +1148,7 @@ class CivilizationBot(commands.Bot):
         
         await ctx.reply(embed=embed)
 
+    @commands.command(name='train')
     async def train_soldiers(self, ctx: commands.Context):
         """Train soldiers for your army"""
         user_id = str(ctx.author.id)
@@ -1291,6 +1223,7 @@ class CivilizationBot(commands.Bot):
     # COMBAT COMMANDS
     # ========================================================================
     
+    @commands.command(name='attack')
     async def attack_player(self, ctx: commands.Context, target_mention: str = ""):
         """Attack another player's civilization"""
         if not target_mention.strip():
@@ -1438,6 +1371,7 @@ class CivilizationBot(commands.Bot):
     # ALLIANCE COMMANDS
     # ========================================================================
     
+    @commands.command(name='ally')
     async def form_alliance(self, ctx: commands.Context, target_mention: str = ""):
         """Form an alliance with another player"""
         if not target_mention.strip():
@@ -1557,6 +1491,7 @@ class CivilizationBot(commands.Bot):
         else:
             await ctx.reply("❌ Failed to send alliance request. You may have already sent one.")
 
+    @commands.command(name='break')
     async def break_alliance(self, ctx: commands.Context, target_mention: str = ""):
         """Break an alliance with another player"""
         if not target_mention.strip():
@@ -1630,6 +1565,7 @@ class CivilizationBot(commands.Bot):
     # ESPIONAGE COMMANDS
     # ========================================================================
     
+    @commands.command(name='spy')
     async def spy_on_player(self, ctx: commands.Context, target_mention: str = ""):
         """Gather intelligence on another civilization"""
         if not target_mention.strip():
@@ -1754,6 +1690,7 @@ class CivilizationBot(commands.Bot):
     # COMMUNICATION COMMANDS
     # ========================================================================
     
+    @commands.command(name='send')
     async def send_message(self, ctx: commands.Context, target_mention: str = "", *, message: str = ""):
         """Send a message to another player"""
         if not target_mention.strip() or not message.strip():
@@ -1804,6 +1741,7 @@ class CivilizationBot(commands.Bot):
         
         await ctx.reply(embed=embed)
 
+    @commands.command(name='mail')
     async def check_mail(self, ctx: commands.Context, action: str = ""):
         """Check inbox and read messages"""
         user_id = str(ctx.author.id)
