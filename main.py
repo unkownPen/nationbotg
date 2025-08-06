@@ -10,10 +10,11 @@ import random
 import asyncio
 import threading
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any
 
 # Framework imports
 import guilded
+from guilded.ext import commands
 from flask import Flask, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
@@ -147,25 +148,22 @@ class Player(db.Model):
     puppet_master = db.relationship('Player', foreign_keys=[puppet_master_id], remote_side=[id])
     puppet_states = db.relationship('Player', foreign_keys=[puppet_master_id])
 
-    def get_buildings(self) -> Dict[str, int]:
+    def get_buildings(self):
         try:
             return json.loads(self.buildings) if self.buildings else {}
         except:
             return {}
     
-    def set_buildings(self, building_dict: Dict[str, int]):
+    def set_buildings(self, building_dict):
         self.buildings = json.dumps(building_dict)
     
-    def set_cooldown(self, command: str, seconds: int):
+    def set_cooldown(self, command, seconds):
         existing = Cooldown.query.filter_by(player_id=self.id, command=command).first()
         if existing:
             existing.expires_at = datetime.utcnow() + timedelta(seconds=seconds)
         else:
-            cooldown = Cooldown(
-                player_id=self.id, 
-                command=command, 
-                expires_at=datetime.utcnow() + timedelta(seconds=seconds)
-            )
+            cooldown = Cooldown(player_id=self.id, command=command, 
+                              expires_at=datetime.utcnow() + timedelta(seconds=seconds))
             db.session.add(cooldown)
 
 class Alliance(db.Model):
@@ -221,7 +219,7 @@ class Event(db.Model):
 
 class GameMechanics:
     @staticmethod
-    def calculate_attack_damage(attacker: Player, defender: Player, is_stealth: bool = False) -> Tuple[bool, int, int]:
+    def calculate_attack_damage(attacker, defender, is_stealth=False):
         """Calculate damage dealt in an attack"""
         attacker_power = attacker.soldiers * random.uniform(0.8, 1.2)
         defender_power = defender.soldiers * random.uniform(0.7, 1.0)
@@ -272,10 +270,10 @@ class GameMechanics:
             return False, 0, 0
     
     @staticmethod
-    def execute_spy_mission(spy_player: Player, target_player: Player) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    def execute_spy_mission(spy_player, target_player):
         """Execute a spy mission"""
         success_chance = 60 + (spy_player.spies * 5) - (target_player.spies * 3)
-        success = random.randint(1, 100) <= min(max(success_chance, 5), 95)  # Clamped between 5-95%
+        success = random.randint(1, 100) <= success_chance
         
         if success:
             # Successful spying
@@ -292,7 +290,7 @@ class GameMechanics:
             return False, None
     
     @staticmethod
-    def execute_civil_war(player: Player) -> Tuple[bool, int]:
+    def execute_civil_war(player):
         """Execute a civil war"""
         soldier_loss = random.randint(2, 5)
         player.soldiers = max(0, player.soldiers - soldier_loss)
@@ -309,7 +307,7 @@ class GameMechanics:
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def get_player(user_id: str) -> Optional[Player]:
+def get_or_create_player(user_id: str, username: str) -> Optional[Player]:
     """Get existing player or return None"""
     return Player.query.filter_by(user_id=str(user_id)).first()
 
@@ -401,9 +399,9 @@ def create_flask_app():
 
 def create_guilded_bot():
     """Create and configure the Guilded bot"""
-    bot = guilded.Client()
+    bot = commands.Bot()
     
-    def create_embed(title: str, description: str, color: int = 0x00ff00, gif_url: str = None) -> guilded.Embed:
+    def create_embed(title: str, description: str, color: int = 0x00ff00, gif_url: str = None):
         """Create a formatted embed message"""
         embed = guilded.Embed(title=title, description=description, color=color)
         if gif_url:
@@ -427,7 +425,7 @@ def create_guilded_bot():
     @bot.command(name='start')
     async def start_civilization(ctx, *, civilization_name: str):
         """Start a new civilization"""
-        existing = get_player(ctx.author.id)
+        existing = get_or_create_player(ctx.author.id, ctx.author.name)
         if existing:
             await ctx.send("❌ You already have a civilization! Use `.status` to check it.")
             return
@@ -467,14 +465,10 @@ def create_guilded_bot():
     @bot.command(name='status')
     async def check_status(ctx):
         """Check civilization status"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ You haven't started a civilization yet! Use `.start <name>` to begin.")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
-        db.session.commit()
         
         buildings = player.get_buildings()
         building_list = "\n".join([f"🏢 {name.title()}: {count}" for name, count in buildings.items()]) or "None"
@@ -526,13 +520,10 @@ def create_guilded_bot():
     @bot.command(name='gather')
     async def gather_resources(ctx):
         """Gather resources"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'gather')
         if not can_use:
@@ -564,13 +555,10 @@ def create_guilded_bot():
     @bot.command(name='build')
     async def build_structure(ctx, building_type: str, quantity: int = 1):
         """Build structures"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'build')
         if not can_use:
@@ -625,13 +613,10 @@ def create_guilded_bot():
     @bot.command(name='buy')
     async def buy_item(ctx, item: str, quantity: int = 1):
         """Buy items from the shop"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'buy')
         if not can_use:
@@ -679,13 +664,10 @@ def create_guilded_bot():
     @bot.command(name='farm')
     async def farm_food(ctx):
         """Farm food for your population"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'farm')
         if not can_use:
@@ -716,13 +698,10 @@ def create_guilded_bot():
     @bot.command(name='cheer')
     async def boost_morale(ctx):
         """Boost citizen happiness"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'cheer')
         if not can_use:
@@ -753,13 +732,10 @@ def create_guilded_bot():
     @bot.command(name='feed')
     async def feed_population(ctx):
         """Feed your population to reduce hunger"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'feed')
         if not can_use:
@@ -795,13 +771,10 @@ def create_guilded_bot():
     @bot.command(name='gamble')
     async def gamble_resources(ctx):
         """Gamble resources for potential gains"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'gamble')
         if not can_use:
@@ -855,7 +828,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot attack yourself!")
             return
         
-        attacker = get_player(ctx.author.id)
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
         defender = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not attacker:
@@ -865,10 +838,6 @@ def create_guilded_bot():
         if not defender:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        attacker.last_active = datetime.utcnow()
-        defender.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(attacker, 'attack')
         if not can_use:
@@ -934,7 +903,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot attack yourself!")
             return
         
-        attacker = get_player(ctx.author.id)
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
         defender = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not attacker:
@@ -944,10 +913,6 @@ def create_guilded_bot():
         if not defender:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        attacker.last_active = datetime.utcnow()
-        defender.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(attacker, 'stealthbattle')
         if not can_use:
@@ -1011,13 +976,10 @@ def create_guilded_bot():
     @bot.command(name='civil_war')
     async def civil_war(ctx):
         """Start a civil war to restore order (requires 3 attempts when happiness is low)"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'civil_war')
         if not can_use:
@@ -1087,13 +1049,10 @@ def create_guilded_bot():
     @bot.command(name='train')
     async def train_military(ctx):
         """Train soldiers and improve spies"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'train')
         if not can_use:
@@ -1134,7 +1093,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot nuke yourself!")
             return
         
-        attacker = get_player(ctx.author.id)
+        attacker = get_or_create_player(ctx.author.id, ctx.author.name)
         defender = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not attacker:
@@ -1144,10 +1103,6 @@ def create_guilded_bot():
         if not defender:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        attacker.last_active = datetime.utcnow()
-        defender.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(attacker, 'nuke')
         if not can_use:
@@ -1260,7 +1215,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot spy on yourself!")
             return
         
-        spy_player = get_player(ctx.author.id)
+        spy_player = get_or_create_player(ctx.author.id, ctx.author.name)
         target_player = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not spy_player:
@@ -1270,10 +1225,6 @@ def create_guilded_bot():
         if not target_player:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        spy_player.last_active = datetime.utcnow()
-        target_player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(spy_player, 'spy')
         if not can_use:
@@ -1333,7 +1284,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot sabotage yourself!")
             return
         
-        saboteur = get_player(ctx.author.id)
+        saboteur = get_or_create_player(ctx.author.id, ctx.author.name)
         target_player = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not saboteur:
@@ -1343,10 +1294,6 @@ def create_guilded_bot():
         if not target_player:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        saboteur.last_active = datetime.utcnow()
-        target_player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(saboteur, 'sabotage')
         if not can_use:
@@ -1422,7 +1369,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot hack yourself!")
             return
         
-        hacker = get_player(ctx.author.id)
+        hacker = get_or_create_player(ctx.author.id, ctx.author.name)
         target_player = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not hacker:
@@ -1432,10 +1379,6 @@ def create_guilded_bot():
         if not target_player:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        hacker.last_active = datetime.utcnow()
-        target_player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(hacker, 'hack')
         if not can_use:
@@ -1514,7 +1457,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot form an alliance with yourself!")
             return
         
-        player1 = get_player(ctx.author.id)
+        player1 = get_or_create_player(ctx.author.id, ctx.author.name)
         player2 = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not player1:
@@ -1524,10 +1467,6 @@ def create_guilded_bot():
         if not player2:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        player1.last_active = datetime.utcnow()
-        player2.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player1, 'ally')
         if not can_use:
@@ -1577,7 +1516,7 @@ def create_guilded_bot():
     @bot.command(name='break')
     async def break_alliance(ctx, target: guilded.Member):
         """Break an alliance with another player"""
-        player1 = get_player(ctx.author.id)
+        player1 = get_or_create_player(ctx.author.id, ctx.author.name)
         player2 = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not player1:
@@ -1587,10 +1526,6 @@ def create_guilded_bot():
         if not player2:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        player1.last_active = datetime.utcnow()
-        player2.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player1, 'break')
         if not can_use:
@@ -1645,13 +1580,10 @@ def create_guilded_bot():
     @bot.command(name='invent')
     async def research_technology(ctx):
         """Research new technology to improve your civilization"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(player, 'invent')
         if not can_use:
@@ -1704,14 +1636,10 @@ def create_guilded_bot():
     @bot.command(name='tech')
     async def show_technology(ctx):
         """Show your current technology level and research progress"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
-        db.session.commit()
         
         next_cost = 2000 + (player.tech_level * 500)
         combat_bonus = player.tech_level * 5
@@ -1737,7 +1665,7 @@ def create_guilded_bot():
     @bot.command(name='send')
     async def send_message(ctx, target: guilded.Member, *, message_content: str):
         """Send a diplomatic message"""
-        sender = get_player(ctx.author.id)
+        sender = get_or_create_player(ctx.author.id, ctx.author.name)
         recipient = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not sender:
@@ -1751,10 +1679,6 @@ def create_guilded_bot():
         if target.id == ctx.author.id:
             await ctx.send("❌ You cannot send a message to yourself!")
             return
-        
-        # Update last active timestamp
-        sender.last_active = datetime.utcnow()
-        recipient.last_active = datetime.utcnow()
         
         # Create message
         message = Message(
@@ -1786,14 +1710,10 @@ def create_guilded_bot():
     @bot.command(name='mail')
     async def check_mail(ctx):
         """Check your diplomatic messages"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
-        db.session.commit()
         
         messages = Message.query.filter_by(recipient_id=player.id).order_by(Message.created_at.desc()).limit(5).all()
         
@@ -1845,7 +1765,7 @@ def create_guilded_bot():
             await ctx.send("❌ You cannot provide resources to yourself!")
             return
         
-        provider = get_player(ctx.author.id)
+        provider = get_or_create_player(ctx.author.id, ctx.author.name)
         recipient = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not provider:
@@ -1855,10 +1775,6 @@ def create_guilded_bot():
         if not recipient:
             await ctx.send("❌ Target player hasn't started a civilization yet.")
             return
-        
-        # Update last active timestamp
-        provider.last_active = datetime.utcnow()
-        recipient.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(provider, 'provide')
         if not can_use:
@@ -1919,7 +1835,7 @@ def create_guilded_bot():
     @bot.command(name='puppet')
     async def create_puppet_state(ctx, target: guilded.Member):
         """Turn a defeated civilization into your puppet state"""
-        conqueror = get_player(ctx.author.id)
+        conqueror = get_or_create_player(ctx.author.id, ctx.author.name)
         target_player = Player.query.filter_by(user_id=str(target.id)).first()
         
         if not conqueror:
@@ -1933,10 +1849,6 @@ def create_guilded_bot():
         if target.id == ctx.author.id:
             await ctx.send("❌ You cannot make yourself a puppet state!")
             return
-        
-        # Update last active timestamp
-        conqueror.last_active = datetime.utcnow()
-        target_player.last_active = datetime.utcnow()
         
         can_use, time_left = check_cooldown(conqueror, 'puppet')
         if not can_use:
@@ -1995,13 +1907,10 @@ def create_guilded_bot():
     @bot.command(name='revolt')
     async def revolt_against_master(ctx):
         """Revolt against your puppet master to regain independence"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
         
         if not player.is_puppet:
             await ctx.send("❌ You are not a puppet state! This command is only for puppet states.")
@@ -2113,14 +2022,10 @@ def create_guilded_bot():
     @bot.command(name='lore')
     async def show_lore(ctx, event_type: str = None, limit: int = 10):
         """Show civilization history and lore"""
-        player = get_player(ctx.author.id)
+        player = get_or_create_player(ctx.author.id, ctx.author.name)
         if not player:
             await ctx.send("❌ Start a civilization first with `.start <name>`")
             return
-        
-        # Update last active timestamp
-        player.last_active = datetime.utcnow()
-        db.session.commit()
         
         # Build query for events
         query = Event.query
@@ -2221,10 +2126,7 @@ async def disaster_system(bot):
         try:
             await asyncio.sleep(1800)  # Check every 30 minutes
             
-            # Only consider players active in last 2 hours
-            players = Player.query.filter(
-                Player.last_active > datetime.utcnow() - timedelta(hours=2)
-            ).all()
+            players = Player.query.filter(Player.last_active > datetime.utcnow() - timedelta(hours=2)).all()
             
             if players and random.random() < 0.3:  # 30% chance
                 victim = random.choice(players)
