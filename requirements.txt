@@ -1,5 +1,5 @@
 guilded.py
 Flask
 aiohttp
-flask_SQLAlchemy
+SQLAlchemy
 websockets
