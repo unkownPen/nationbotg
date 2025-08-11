@@ -206,14 +206,17 @@ class BasicCommands(commands.Cog):
 • `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy)
 
 **💰 ECONOMIC EMPIRE**
-• `.gather` - Collect basic resources from your lands
-• `.farm` - Cultivate food to feed your population
-• `.mine` - Extract stone from quarries
-• `.harvest` - Gather wood from forests
-• `.trade <user> <resource> <amount>` - Trade with other civilizations
-• `.tax` - Collect taxes from your citizens
-• `.lottery` - Try your luck for bonus resources
-
+  drill         Extract rare minerals with advanced drilling
+  farm          Farm food for your civilization
+  fish          Fish for food or occasionally find treasure
+  gather        Gather random resources from your territory
+  harvest       Large harvest with longer cooldown
+  invest        Invest gold for delayed profit
+  lottery       Gamble gold for a chance at the jackpot
+  mine          Mine stone and wood from your territory
+  raidcaravan   Raid NPC merchant caravans for loot
+  tax           Collect taxes from your citizens
+  
 **⚔️ MILITARY CONQUEST**
 • `.attack <user>` - Launch military assault
 • `.train <type> <amount>` - Train soldiers or spies
@@ -236,15 +239,26 @@ class BasicCommands(commands.Cog):
 • `.send <user> <resource> <amount>` - Gift resources
 
 **🏪 MARKETPLACE**
-• `.store` - Browse items for purchase
-• `.blackmarket` - Access rare and forbidden items
-
+ blackmarket   Enter the black market to purchase random HyperItems
+  inventory     View your HyperItems and store upgrades
+  market        Display information about the Black Market
+  store         View the civilization store and purchase upgrades
+  
 **🎁 HYPERITEMS & ULTIMATE POWER**
-• `.nuke <user>` - Nuclear devastation (requires Nuclear Warhead)
-• `.shield` - Activate defensive systems
-• `.propaganda <message>` - Influence other civilizations
-• `.obliterate <user>` - Complete annihilation (requires Planet Killer)
-
+• backstab      Use Dagger for assassination attempt
+  bomb          Use Missiles for mid-tier military strike
+  boosttech     Use Ancient Scroll to instantly advance technology
+  hiremercs     Use Mercenary Contract to instantly hire professional soldiers
+  luckystrike   Use Lucky Charm for guaranteed critical success on next action
+  megainvent    Use Tech Core to advance multiple technology levels
+  mintgold      Use Gold Mint to generate large amounts of gold
+  nuke          Launch a devastating nuclear attack (Nuclear Warhead required)
+  obliterate    Completely obliterate a civilization (HyperLaser required)
+  propaganda    Use Propaganda Kit to steal enemy soldiers
+  shield        Display Anti-Nuke Shield status
+  superharvest  Use Harvest Engine for massive food production
+  superspy      Use Spy Network for elite espionage mission
+  
 **📊 INFORMATION**
 • `.warhelp` - Display this help menu
 • Web Dashboard available at your server's port 5000
