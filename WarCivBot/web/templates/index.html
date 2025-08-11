@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WarBot - Civilization Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="fas fa-crown"></i> WarBot - Civilization Dashboard
+            </span>
+            <div class="navbar-text">
+                <i class="fas fa-globe"></i> Live Statistics
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        {% if error %}
+        <div class="alert alert-danger" role="alert">
+            <i class="fas fa-exclamation-triangle"></i> {{ error }}
+        </div>
+        {% endif %}
+
+        <!-- Statistics Overview -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2><i class="fas fa-chart-line"></i> Global Statistics</h2>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-city stat-icon text-primary"></i>
+                        <h5 class="card-title">{{ stats.get('total_civilizations', 0) }}</h5>
+                        <p class="card-text">Civilizations</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-users stat-icon text-success"></i>
+                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_population', 0)) }}</h5>
+                        <p class="card-text">Total Population</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-coins stat-icon text-warning"></i>
+                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_resources', 0)) }}</h5>
+                        <p class="card-text">Total Resources</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-sword stat-icon text-danger"></i>
+                        <h5 class="card-title">{{ stats.get('active_wars', 0) }}</h5>
+                        <p class="card-text">Active Wars</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-handshake stat-icon text-info"></i>
+                        <h5 class="card-title">{{ stats.get('total_alliances', 0) }}</h5>
+                        <p class="card-text">Alliances</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-2 col-sm-4 col-6 mb-3">
+                <div class="card stat-card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-smile stat-icon text-success"></i>
+                        <h5 class="card-title">{{ "%.1f"|format(stats.get('average_happiness', 0)) }}%</h5>
+                        <p class="card-text">Avg Happiness</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Top Civilizations -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h4><i class="fas fa-trophy"></i> Top Civilizations by Power</h4>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Rank</th>
+                                        <th>Civilization</th>
+                                        <th>Power Score</th>
+                                        <th>Ideology</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for civ in top_civs[:10] %}
+                                    <tr>
+                                        <td>
+                                            {% if loop.index == 1 %}
+                                                <i class="fas fa-crown text-warning"></i> #{{ loop.index }}
+                                            {% elif loop.index == 2 %}
+                                                <i class="fas fa-medal text-secondary"></i> #{{ loop.index }}
+                                            {% elif loop.index == 3 %}
+                                                <i class="fas fa-medal text-brown"></i> #{{ loop.index }}
+                                            {% else %}
+                                                #{{ loop.index }}
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <strong>{{ civ.rank_emoji }} {{ civ.name }}</strong>
+                                            <br><small class="text-muted">{{ civ.rank }}</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary">{{ "{:,}".format(civ.power_score) }}</span>
+                                        </td>
+                                        <td>
+                                            <span class="ideology-badge ideology-{{ civ.ideology.lower() }}">
+                                                {{ civ.ideology.title() }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-light text-dark">
+                                                {{ civ.happiness_emoji }} {{ civ.happiness_status }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% if not top_civs %}
+                                    <tr>
+                                        <td colspan="5" class="text-center text-muted">
+                                            <i class="fas fa-city"></i> No civilizations found
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Events -->
+            <div class="col-lg-6 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h4><i class="fas fa-newspaper"></i> Recent Events</h4>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="event-timeline">
+                            {% for event in recent_events[:15] %}
+                            <div class="event-item">
+                                <div class="event-icon">{{ event.event_icon }}</div>
+                                <div class="event-content">
+                                    <div class="event-title">{{ event.title }}</div>
+                                    <div class="event-description">{{ event.description }}</div>
+                                    <div class="event-meta">
+                                        <span class="event-civ">{{ event.civilization }}</span>
+                                        <span class="event-time">{{ event.time_ago }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% if not recent_events %}
+                            <div class="text-center text-muted p-4">
+                                <i class="fas fa-calendar-times"></i> No recent events
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Statistics Row -->
+        <div class="row">
+            <!-- Ideology Distribution -->
+            <div class="col-lg-4 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Ideology Distribution</h5>
+                    </div>
+                    <div class="card-body">
+                        {% for ideology, count in stats.get('ideology_distribution', {}).items() %}
+                        <div class="ideology-stat mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="ideology-badge ideology-{{ ideology.lower() }}">
+                                    {{ ideology.title() }}
+                                </span>
+                                <span class="badge bg-secondary">{{ count }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if not stats.get('ideology_distribution') %}
+                        <div class="text-center text-muted">
+                            <i class="fas fa-balance-scale"></i> No ideology data
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alliance Information -->
+            <div class="col-lg-8 mb-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-handshake"></i> Active Alliances</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>Alliance Name</th>
+                                        <th>Members</th>
+                                        <th>Active Wars</th>
+                                        <th>Created</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for alliance in alliances %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ alliance.name }}</strong>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">{{ alliance.member_count }} members</span>
+                                            <br>
+                                            <small class="text-muted">
+                                                {{ alliance.member_names[:3]|join(", ") }}
+                                                {% if alliance.member_names|length > 3 %}
+                                                    and {{ alliance.member_names|length - 3 }} more
+                                                {% endif %}
+                                            </small>
+                                        </td>
+                                        <td>
+                                            {% if alliance.active_wars > 0 %}
+                                                <span class="badge bg-danger">{{ alliance.active_wars }}</span>
+                                            {% else %}
+                                                <span class="badge bg-success">Peaceful</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">{{ alliance.created_at[:10] }}</small>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% if not alliances %}
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted">
+                                            <i class="fas fa-handshake"></i> No active alliances
+                                        </td>
+                                    </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-dark text-light text-center py-3 mt-5">
+        <div class="container">
+            <p class="mb-0">
+                <i class="fas fa-robot"></i> WarBot Civilization Dashboard | 
+                Last Updated: <span id="lastUpdate">Loading...</span>
+            </p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Auto-refresh the page every 5 minutes
+        setTimeout(function() {
+            window.location.reload();
+        }, 300000);
+
+        // Update last updated timestamp
+        document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+    </script>
+</body>
+</html>
