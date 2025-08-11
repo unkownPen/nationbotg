@@ -1,5 +1,0 @@
-guilded.py
-aiohttp
-Flask
-Flask_SQLAlchemy
-dotenv
