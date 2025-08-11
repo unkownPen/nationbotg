@@ -35,6 +35,18 @@ class CivilizationManager:
                 "random_event_frequency": 2.0,
                 "soldier_upkeep": 0.0,
                 "spy_success": 0.80
+            },
+            "destruction": {
+                "soldier_training_speed": 1.75,
+                "soldier_attack_power": 1.50,
+                "sabotage_success": 1.30,
+                "resource_pillage": 1.40,
+                "citizen_productivity": 0.60,
+                "tech_speed": 0.70,
+                "diplomacy_success": 0.50,
+                "happiness_boost": 0.80,
+                "random_event_frequency": 1.25,
+                "soldier_upkeep": 1.20
             }
         }
 
@@ -142,6 +154,10 @@ class CivilizationManager:
             base_food = int(base_food * self.ideology_modifiers['communism']['citizen_productivity'])
         elif ideology == 'democracy':
             base_gold = int(base_gold * self.ideology_modifiers['democracy']['trade_profit'])
+        elif ideology == 'destruction':
+            # Destruction focuses on pillaging, not production
+            base_gold = int(base_gold * 0.8)  # 20% penalty
+            base_food = int(base_food * 0.7)  # 30% penalty
             
         return {
             "gold": base_gold,
@@ -170,6 +186,9 @@ class CivilizationManager:
         # Apply ideology modifiers
         if ideology == 'anarchy':
             soldier_upkeep = 0  # No soldier upkeep in anarchy
+        elif ideology == 'destruction':
+            # Apply destruction modifier to upkeep
+            soldier_upkeep = int(soldier_upkeep * self.ideology_modifiers['destruction']['soldier_upkeep'])
             
         return {
             "food": food_consumption,
@@ -184,11 +203,16 @@ class CivilizationManager:
             
         population = civ['population']
         happiness = population['happiness']
+        ideology = civ.get('ideology', '')
         
         # Low happiness effects
         if happiness < 20:
             # Chance of population revolt
-            if random.random() < 0.1:
+            revolt_chance = 0.1
+            if ideology == 'destruction':
+                revolt_chance *= 1.5  # Higher chance of revolt for destruction
+            
+            if random.random() < revolt_chance:
                 revolt_loss = int(population['citizens'] * 0.05)
                 self.update_population(user_id, {"citizens": -revolt_loss})
                 self.db.log_event(user_id, "revolt", "Population Revolt", 
@@ -197,7 +221,11 @@ class CivilizationManager:
         # High happiness effects
         elif happiness > 80:
             # Chance of population growth
-            if random.random() < 0.15:
+            growth_chance = 0.15
+            if ideology == 'destruction':
+                growth_chance *= 0.7  # Lower growth chance for destruction
+                
+            if random.random() < growth_chance:
                 growth = int(population['citizens'] * 0.03)
                 self.update_population(user_id, {"citizens": growth})
                 self.db.log_event(user_id, "growth", "Population Boom", 
@@ -211,6 +239,7 @@ class CivilizationManager:
             
         population = civ['population']
         resources = civ['resources']
+        ideology = civ.get('ideology', '')
         
         # Calculate food needed
         food_needed = int(population['citizens'] * 0.2)
@@ -223,14 +252,24 @@ class CivilizationManager:
             # Severe hunger effects
             if population['hunger'] > 80:
                 starvation_loss = int(population['citizens'] * 0.02)
-                self.update_population(user_id, {"citizens": -starvation_loss, "happiness": -10})
+                happiness_penalty = -10
+                
+                if ideology == 'destruction':
+                    # Destruction civilizations suffer less from starvation
+                    starvation_loss = int(starvation_loss * 0.8)
+                    happiness_penalty = -5
+                    
+                self.update_population(user_id, {"citizens": -starvation_loss, "happiness": happiness_penalty})
                 self.db.log_event(user_id, "famine", "Famine Strikes", 
                                 f"Severe hunger caused {starvation_loss} citizens to perish!")
         else:
             # Enough food - reduce hunger and consume food
             self.update_resources(user_id, {"food": -food_needed})
             if population['hunger'] > 0:
-                self.update_population(user_id, {"hunger": -5})
+                hunger_reduction = 5
+                if ideology == 'destruction':
+                    hunger_reduction = 3  # Slower hunger recovery
+                self.update_population(user_id, {"hunger": -hunger_reduction})
 
     def get_ideology_modifier(self, user_id: str, modifier_type: str) -> float:
         """Get ideology modifier for specific action"""
@@ -300,6 +339,7 @@ class CivilizationManager:
         population = civ['population']
         military = civ['military']
         territory = civ['territory']
+        ideology = civ.get('ideology', '')
         
         # Calculate power components
         resource_power = sum(resources.values()) // 10
@@ -308,6 +348,14 @@ class CivilizationManager:
         tech_power = military['tech_level'] * 100
         territory_power = territory['land_size'] // 100
         happiness_power = population['happiness']
+        
+        # Apply destruction bonuses
+        if ideology == 'destruction':
+            # Destruction gets bonus from military power
+            military_power = int(military_power * 1.3)
+            # But penalty from other sources
+            resource_power = int(resource_power * 0.7)
+            population_power = int(population_power * 0.8)
         
         total_power = (resource_power + population_power + military_power + 
                       tech_power + territory_power + happiness_power)
