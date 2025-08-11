@@ -76,13 +76,13 @@ class BasicCommands(commands.Cog):
             
         embed.add_field(
             name="📋 Next Step",
-            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy",
+            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy, destruction",
             inline=False
         )
         
         await ctx.send(embed=embed)
 
-     @commands.command(name='ideology')
+    @commands.command(name='ideology')
     async def choose_ideology(self, ctx, ideology_type: str = None):
         """Choose your civilization's government ideology"""
         if not ideology_type:
@@ -92,7 +92,6 @@ class BasicCommands(commands.Cog):
                 "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
                 "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
-                # ADDED DESTRUCTION IDEOLOGY
                 "destruction": "+75% soldier training, +50% attack power, +40% pillage rewards\n-40% productivity, -50% diplomacy, +20% upkeep"
             }
             
@@ -116,7 +115,6 @@ class BasicCommands(commands.Cog):
             return
             
         ideology_type = ideology_type.lower()
-        # ADDED DESTRUCTION TO VALID IDEOLOGIES
         valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction"]
         
         if ideology_type not in valid_ideologies:
@@ -132,7 +130,6 @@ class BasicCommands(commands.Cog):
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
             "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
-            # ADDED DESTRUCTION DESCRIPTION
             "destruction": "🔥 **Destruction**: Burn everything. Leave only ashes. Glory comes through ruin."
         }
         
@@ -157,7 +154,7 @@ class BasicCommands(commands.Cog):
         )
         
         await ctx.send(embed=embed)
-        
+
     @commands.command(name='status')
     async def civilization_status(self, ctx):
         """View your civilization status"""
@@ -217,7 +214,7 @@ class BasicCommands(commands.Cog):
 **🏛️ CIVILIZATION BASICS**
 • `.start <name>` - Found your civilization
 • `.status` - View your empire's current state
-• `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy)
+• `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy, destruction)
 
 **💰 ECONOMIC EMPIRE**
 • `.gather` - Collect basic resources from your lands
@@ -234,6 +231,7 @@ class BasicCommands(commands.Cog):
 • `.declare <user>` - Declare war formally
 • `.siege <user>` - Lay siege to enemy territory
 • `.stealthbattle <user>` - Covert military operation
+• `.pillage <user>` - Destruction-only: Massive resource raid
 
 **🕵️ SHADOW OPERATIONS**
 • `.spy <user>` - Gather intelligence on enemies
@@ -258,6 +256,7 @@ class BasicCommands(commands.Cog):
 • `.shield` - Activate defensive systems
 • `.propaganda <message>` - Influence other civilizations
 • `.obliterate <user>` - Complete annihilation (requires Planet Killer)
+• `.scorch` - Destruction-only: Burn lands for military boost
 
 **📊 INFORMATION**
 • `.warhelp` - Display this help menu
