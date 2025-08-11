@@ -82,7 +82,7 @@ class BasicCommands(commands.Cog):
         
         await ctx.send(embed=embed)
 
-    @commands.command(name='ideology')
+     @commands.command(name='ideology')
     async def choose_ideology(self, ctx, ideology_type: str = None):
         """Choose your civilization's government ideology"""
         if not ideology_type:
@@ -91,7 +91,9 @@ class BasicCommands(commands.Cog):
                 "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
                 "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
-                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success"
+                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
+                # ADDED DESTRUCTION IDEOLOGY
+                "destruction": "+75% soldier training, +50% attack power, +40% pillage rewards\n-40% productivity, -50% diplomacy, +20% upkeep"
             }
             
             embed = guilded.Embed(title="🏛️ Government Ideologies", color=0x0099ff)
@@ -114,7 +116,8 @@ class BasicCommands(commands.Cog):
             return
             
         ideology_type = ideology_type.lower()
-        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy"]
+        # ADDED DESTRUCTION TO VALID IDEOLOGIES
+        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction"]
         
         if ideology_type not in valid_ideologies:
             await ctx.send(f"❌ Invalid ideology! Choose from: {', '.join(valid_ideologies)}")
@@ -128,7 +131,9 @@ class BasicCommands(commands.Cog):
             "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
-            "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits."
+            "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
+            # ADDED DESTRUCTION DESCRIPTION
+            "destruction": "🔥 **Destruction**: Burn everything. Leave only ashes. Glory comes through ruin."
         }
         
         embed = guilded.Embed(
@@ -136,6 +141,15 @@ class BasicCommands(commands.Cog):
             description=ideology_descriptions[ideology_type],
             color=0x00ff00
         )
+        
+        # SPECIAL WARNING FOR DESTRUCTION
+        if ideology_type == "destruction":
+            embed.add_field(
+                name="☠️ WARNING",
+                value="Destruction is a path of no return. Your people will either conquer through fire... or perish in it.",
+                inline=False
+            )
+            
         embed.add_field(
             name="✅ Civilization Complete!",
             value="Your civilization is now ready. Use `.status` to view your progress and `.warhelp` for available commands.",
@@ -143,7 +157,7 @@ class BasicCommands(commands.Cog):
         )
         
         await ctx.send(embed=embed)
-
+        
     @commands.command(name='status')
     async def civilization_status(self, ctx):
         """View your civilization status"""
