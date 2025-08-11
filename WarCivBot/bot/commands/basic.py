@@ -216,65 +216,41 @@ class BasicCommands(commands.Cog):
 • `.status` - View your empire's current state
 • `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy, destruction)
 
-**💰 ECONOMIC EMPIRE**
-• `.gather` - Collect basic resources from your lands
-• `.farm` - Cultivate food to feed your population
-• `.mine` - Extract stone from quarries
-• `.harvest` - Gather wood from forests
-• `.trade <user> <resource> <amount>` - Trade with other civilizations
-• `.tax` - Collect taxes from your citizens
-• `.lottery` - Try your luck for bonus resources
+**💰 ECONOMIC COMMANDS**
+• `.gather` - Collect basic resources
+• `.farm` - Produce food
+• `.mine` - Extract stone
+• `.harvest` - Gather wood
+• `.trade <user> <resource> <amount>` - Trade with others
 
-**⚔️ MILITARY CONQUEST**
-• `.attack <user>` - Launch military assault
-• `.train <type> <amount>` - Train soldiers or spies
-• `.declare <user>` - Declare war formally
-• `.siege <user>` - Lay siege to enemy territory
-• `.stealthbattle <user>` - Covert military operation
-• `.pillage <user>` - Destruction-only: Massive resource raid
+**⚔️ MILITARY COMMANDS**
+• `.train soldiers <amount>` - Train troops
+• `.train spies <amount>` - Train covert agents
+• `.attack <user>` - Launch assault
+• `.pillage <user>` - (Destruction only) Brutal raid
+• `.scorch` - (Destruction only) Burn your lands for power
 
-**🕵️ SHADOW OPERATIONS**
-• `.spy <user>` - Gather intelligence on enemies
+**🕵️ ESPIONAGE COMMANDS**
+• `.spy <user>` - Gather intelligence
 • `.sabotage <user>` - Disrupt enemy operations
-• `.hack <user>` - Cyber warfare attacks
-• `.steal <user> <resource>` - Steal resources covertly
-• `.superspy <user>` - Elite espionage mission
+• `.assassinate <user>` - Eliminate key figures
 
-**🤝 DIPLOMATIC RELATIONS**
-• `.ally <user>` - Form strategic alliance
-• `.break <user>` - End alliance or peace
-• `.coalition <name>` - Create multi-nation alliance
-• `.mail <user> <message>` - Send diplomatic message
-• `.send <user> <resource> <amount>` - Gift resources
+**💣 ULTIMATE WEAPONS**
+• `.nuke <user>` - Nuclear strike (requires warhead)
+• `.bioweapon` - Plague attack (requires lab)
+• `.propaganda` - Mass persuasion campaign
 
-**🏪 MARKETPLACE**
-• `.store` - Browse items for purchase
-• `.blackmarket` - Access rare and forbidden items
+**💀 DESTRUCTION-ONLY**
+• `.burn` - Destroy your own infrastructure for bonuses
+• `.berserk` - Unleash uncontrollable armies
+• `.sacrifice` - Kill citizens for temporary power
 
-**🎁 HYPERITEMS & ULTIMATE POWER**
-• `.nuke <user>` - Nuclear devastation (requires Nuclear Warhead)
-• `.shield` - Activate defensive systems
-• `.propaganda <message>` - Influence other civilizations
-• `.obliterate <user>` - Complete annihilation (requires Planet Killer)
-• `.scorch` - Destruction-only: Burn lands for military boost
-
-**📊 INFORMATION**
-• `.warhelp` - Display this help menu
-• Web Dashboard available at your server's port 5000
+**🔄 OTHER COMMANDS**
+• `.help` - Show this message
+• `.ideologies` - Explain all government types
 """
             
-            embed.description += help_text
-            
-            embed.add_field(
-                name="🌟 Pro Tips",
-                value="• Choose your ideology wisely - each has unique bonuses\n• HyperItems are rare but extremely powerful\n• Maintain happiness to keep your civilization stable\n• Form alliances for mutual protection and growth",
-                inline=False
-            )
-            
+            embed.description = help_text
             await ctx.send(embed=embed)
         else:
-            # Category-specific help would be implemented here
-            await ctx.send(f"Detailed help for category '{category}' coming soon!")
-
-async def setup(bot):
-    await bot.add_cog(BasicCommands(bot))
+            await ctx.send(f"Category help for '{category}' coming soon!")
