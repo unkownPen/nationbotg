@@ -13,7 +13,7 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='train')
-    @check_cooldown_decorator(minutes=10)
+    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         if not unit_type:
@@ -99,7 +99,7 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='declare')
-    @check_cooldown_decorator(minutes=60)
+    @check_cooldown_decorator(minutes=1)
     async def declare_war(self, ctx, target: str = None):
         """Declare war on another civilization"""
         if not target:
@@ -168,7 +168,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
-    @check_cooldown_decorator(minutes=30)
+    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target: str = None):
         """Launch a direct attack on another civilization"""
         if not target:
@@ -325,7 +325,7 @@ class MilitaryCommands(commands.Cog):
         self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']}!")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=45)
+    @check_cooldown_decorator(minutes=5)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -436,7 +436,7 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='siege')
-    @check_cooldown_decorator(minutes=60)
+    @check_cooldown_decorator(minutes=1)
     async def siege_city(self, ctx, target: str = None):
         """Lay siege to an enemy civilization"""
         if not target:
