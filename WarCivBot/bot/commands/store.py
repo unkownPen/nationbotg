@@ -242,7 +242,7 @@ class StoreCommands(commands.Cog):
         self.db.log_event(user_id, "store_purchase", "Store Purchase", f"Purchased {item_data['name']}")
 
     @commands.command(name='blackmarket')
-    @check_cooldown_decorator(minutes=180)  # 3 hour cooldown
+    @check_cooldown_decorator(minutes=1)  # 3 hour cooldown
     async def black_market(self, ctx):
         """Enter the black market to purchase random HyperItems"""
         user_id = str(ctx.author.id)
