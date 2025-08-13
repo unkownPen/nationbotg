@@ -15,7 +15,7 @@ class EconomyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='gather')
-    @check_cooldown_decorator(minutes=5)
+    @check_cooldown_decorator(minutes=1)
     async def gather_resources(self, ctx):
         """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
@@ -65,7 +65,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='farm')
-    @check_cooldown_decorator(minutes=3)
+    @check_cooldown_decorator(minutes=1)
     async def farm_food(self, ctx):
         """Farm food for your civilization"""
         user_id = str(ctx.author.id)
@@ -111,7 +111,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='mine')
-    @check_cooldown_decorator(minutes=4)
+    @check_cooldown_decorator(minutes=1)
     async def mine_resources(self, ctx):
         """Mine stone and wood from your territory"""
         user_id = str(ctx.author.id)
@@ -192,7 +192,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='drill')
-    @check_cooldown_decorator(minutes=15)
+    @check_cooldown_decorator(minutes=5)
     async def drill_minerals(self, ctx):
         """Extract rare minerals with advanced drilling"""
         user_id = str(ctx.author.id)
@@ -265,7 +265,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='tax')
-    @check_cooldown_decorator(minutes=60)  # 1 hour cooldown
+    @check_cooldown_decorator(minutes=2)  # 1 hour cooldown
     async def collect_taxes(self, ctx):
         """Collect taxes from your citizens"""
         user_id = str(ctx.author.id)
@@ -311,7 +311,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='lottery')
-    @check_cooldown_decorator(minutes=30)
+    @check_cooldown_decorator(minutes=1)
     async def play_lottery(self, ctx, bet: int = None):
         """Gamble gold for a chance at the jackpot"""
         if bet is None:
@@ -371,7 +371,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='invest')
-    @check_cooldown_decorator(minutes=120)  # 2 hour cooldown
+    @check_cooldown_decorator(minutes=3)  # 2 hour cooldown
     async def invest_gold(self, ctx, amount: int = None):
         """Invest gold for delayed profit"""
         if amount is None:
@@ -406,7 +406,7 @@ class EconomyCommands(commands.Cog):
         
         # Schedule the return after 2 hours
         async def investment_return():
-            await asyncio.sleep(7200)  # 2 hours in seconds
+            await asyncio.sleep(60)  # 2 hours in seconds
             
             # 80% chance of profit
             if random.random() < 0.8:
