@@ -76,7 +76,7 @@ class BasicCommands(commands.Cog):
             
         embed.add_field(
             name="📋 Next Step",
-            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy",
+            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist",
             inline=False
         )
         
@@ -91,7 +91,10 @@ class BasicCommands(commands.Cog):
                 "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
                 "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
-                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success"
+                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
+                # NEW IDEOLOGIES
+                "destruction": "+35% combat strength, +40% soldier training, -25% resources, -30% happiness, -50% diplomacy",
+                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy"
             }
             
             embed = guilded.Embed(title="🏛️ Government Ideologies", color=0x0099ff)
@@ -114,7 +117,8 @@ class BasicCommands(commands.Cog):
             return
             
         ideology_type = ideology_type.lower()
-        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy"]
+        # UPDATED valid ideologies list
+        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction", "pacifist"]
         
         if ideology_type not in valid_ideologies:
             await ctx.send(f"❌ Invalid ideology! Choose from: {', '.join(valid_ideologies)}")
@@ -128,7 +132,10 @@ class BasicCommands(commands.Cog):
             "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
-            "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits."
+            "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
+            # NEW IDEOLOGY DESCRIPTIONS
+            "destruction": "💥 **Destruction**: Your civilization is built for war and conquest, but at a cost.",
+            "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony."
         }
         
         embed = guilded.Embed(
@@ -203,7 +210,7 @@ class BasicCommands(commands.Cog):
 **🏛️ CIVILIZATION BASICS**
 • `.start <name>` - Found your civilization
 • `.status` - View your empire's current state
-• `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy)
+• `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy, destruction, pacifist)
 
 **💰 ECONOMIC EMPIRE**
   drill         Extract rare minerals with advanced drilling
