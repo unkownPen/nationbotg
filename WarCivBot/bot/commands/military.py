@@ -649,7 +649,7 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='peace')
-    @check_cooldown_decorator(hours=1)
+    @check_cooldown_decorator(minutes=1)
     async def make_peace(self, ctx, target: str = None):
         """Attempt to make peace with an enemy civilization"""
         if not target:
