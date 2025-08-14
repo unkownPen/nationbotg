@@ -12,6 +12,7 @@ class DiplomacyCommands(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
+        self.pending_trades = {}  # Temp storage for pending trades {trade_id: details}
 
     @commands.command(name='ally')
     @check_cooldown_decorator(minutes=1)
@@ -297,9 +298,9 @@ class DiplomacyCommands(commands.Cog):
 
     @commands.command(name='trade')
     @check_cooldown_decorator(minutes=0)
-    async def trade_resources(self, ctx, target: str = None, offer_resource: str = None, offer_amount: int = None, 
+    async def propose_trade(self, ctx, target: str = None, offer_resource: str = None, offer_amount: int = None, 
                             request_resource: str = None, request_amount: int = None):
-        """Propose a resource trade with another civilization"""
+        """Propose a resource trade with another civilization (requires acceptance)"""
         if not all([target, offer_resource, offer_amount, request_resource, request_amount]):
             await ctx.send("💰 **Resource Trading**\nUsage: `.trade @user <offer_resource> <offer_amount> <request_resource> <request_amount>`\nExample: `.trade @user gold 100 food 200`")
             return
@@ -335,90 +336,138 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send(f"❌ You don't have {format_number(offer_amount)} {offer_resource} to offer!")
             return
             
-        # Check if target can afford what's requested
-        if not self.civ_manager.can_afford(target_id, {request_resource: request_amount}):
-            await ctx.send(f"❌ Target doesn't have {format_number(request_amount)} {request_resource}!")
-            return
-            
-        # Calculate trade fairness and acceptance chance
-        resource_values = {"gold": 1.0, "food": 0.5, "wood": 0.8, "stone": 0.9}
+        # Generate unique trade ID
+        trade_id = str(random.randint(100000, 999999))
         
-        offer_value = offer_amount * resource_values[offer_resource]
-        request_value = request_amount * resource_values[request_resource]
+        # Store pending trade
+        self.pending_trades[trade_id] = {
+            "proposer_id": user_id,
+            "target_id": target_id,
+            "offer_resource": offer_resource,
+            "offer_amount": offer_amount,
+            "request_resource": request_resource,
+            "request_amount": request_amount,
+            "expires": datetime.now() + timedelta(minutes=30)  # Expires in 30 min
+        }
         
-        fairness_ratio = offer_value / request_value if request_value > 0 else 0
-        
-        # Base acceptance chance based on fairness
-        if fairness_ratio >= 1.2:
-            acceptance_chance = 0.9  # Very favorable to target
-        elif fairness_ratio >= 1.0:
-            acceptance_chance = 0.7  # Fair trade
-        elif fairness_ratio >= 0.8:
-            acceptance_chance = 0.5  # Slightly unfavorable
-        else:
-            acceptance_chance = 0.2  # Very unfavorable
-            
-        # Apply diplomacy modifier
-        diplomacy_modifier = self.civ_manager.calculate_total_modifier(user_id, "diplomacy_success")
-        acceptance_chance *= diplomacy_modifier
-        
-        # Apply ideology modifier
-        if civ.get('ideology') == 'democracy':
-            acceptance_chance += 0.1  # Democracy bonus to trade
-            
-        if random.random() < acceptance_chance:
-            # Trade accepted
-            self.civ_manager.spend_resources(user_id, {offer_resource: offer_amount})
-            self.civ_manager.update_resources(user_id, {request_resource: request_amount})
-            
-            self.civ_manager.spend_resources(target_id, {request_resource: request_amount})
-            self.civ_manager.update_resources(target_id, {offer_resource: offer_amount})
+        # Send proposal to target via DM
+        try:
+            target_user = await self.bot.fetch_user(int(target_id))
             
             resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
             
             embed = create_embed(
-                "💰 Trade Successful!",
-                f"Trade completed between **{civ['name']}** and **{target_civ['name']}**!",
-                guilded.Color.green()
+                "💰 Trade Proposal Received!",
+                f"From **{civ['name']}** (led by {ctx.author.name})",
+                guilded.Color.blue()
             )
             
             embed.add_field(
-                name="Your Side",
-                value=f"Gave: {resource_icons[offer_resource]} {format_number(offer_amount)} {offer_resource.capitalize()}\nReceived: {resource_icons[request_resource]} {format_number(request_amount)} {request_resource.capitalize()}",
-                inline=True
+                name="Proposed Trade",
+                value=f"They offer: {resource_icons[offer_resource]} {format_number(offer_amount)} {offer_resource.capitalize()}\nThey request: {resource_icons[request_resource]} {format_number(request_amount)} {request_resource.capitalize()}",
+                inline=False
             )
             
             embed.add_field(
-                name="Their Side",
-                value=f"Gave: {resource_icons[request_resource]} {format_number(request_amount)} {request_resource.capitalize()}\nReceived: {resource_icons[offer_resource]} {format_number(offer_amount)} {offer_resource.capitalize()}",
-                inline=True
+                name="How to Respond",
+                value=f"Use `.accepttrade {trade_id}` to accept\nOr `.rejecttrade {trade_id}` to reject\nProposal expires in 30 minutes.",
+                inline=False
             )
             
-            # Happiness bonus for successful trade
-            self.civ_manager.update_population(user_id, {"happiness": 3})
-            self.civ_manager.update_population(target_id, {"happiness": 3})
+            await target_user.send(embed=embed)
             
-            await ctx.send(embed=embed)
+            await ctx.send(f"💰 **Trade Proposed!** Your offer has been sent to **{target_civ['name']}**. They'll respond via DM.")
             
-            # Notify target
-            try:
-                target_user = await self.bot.fetch_user(int(target_id))
-                await target_user.send(f"💰 **Trade Completed!** Successfully traded with {civ['name']}!")
-            except:
-                pass
-                
-        else:
-            # Trade rejected
-            embed = create_embed(
-                "💰 Trade Rejected",
-                f"**{target_civ['name']}** has declined your trade offer.",
-                guilded.Color.red()
-            )
+            # Log proposal
+            self.db.log_event(user_id, "trade_proposal", "Trade Proposed", f"Proposed trade to {target_civ['name']}: {offer_amount} {offer_resource} for {request_amount} {request_resource}")
             
-            fairness_text = "Fair" if 0.9 <= fairness_ratio <= 1.1 else "Unfavorable" if fairness_ratio < 0.9 else "Very Favorable"
-            embed.add_field(name="Trade Analysis", value=f"Fairness: {fairness_text}\nAcceptance Chance: {int(acceptance_chance * 100)}%", inline=False)
+        except Exception as e:
+            logger.error(f"Error sending trade proposal: {e}")
+            await ctx.send("❌ Failed to send trade proposal. The recipient might have DMs disabled.")
+            del self.pending_trades[trade_id]  # Clean up
+
+    @commands.command(name='accepttrade')
+    async def accept_trade(self, ctx, trade_id: str):
+        """Accept a pending trade proposal"""
+        user_id = str(ctx.author.id)
+        
+        if trade_id not in self.pending_trades:
+            await ctx.send("❌ Invalid or expired trade ID!")
+            return
             
-            await ctx.send(embed=embed)
+        trade = self.pending_trades[trade_id]
+        
+        if user_id != trade["target_id"]:
+            await ctx.send("❌ This trade proposal isn't for you!")
+            return
+            
+        if datetime.now() > trade["expires"]:
+            await ctx.send("❌ This trade proposal has expired!")
+            del self.pending_trades[trade_id]
+            return
+            
+        # Check if both can still afford
+        if not self.civ_manager.can_afford(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]}):
+            await ctx.send("❌ The proposer no longer has the offered resources!")
+            del self.pending_trades[trade_id]
+            return
+            
+        if not self.civ_manager.can_afford(user_id, {trade["request_resource"]: trade["request_amount"]}):
+            await ctx.send("❌ You no longer have the requested resources!")
+            del self.pending_trades[trade_id]
+            return
+            
+        # Execute trade
+        self.civ_manager.spend_resources(trade["proposer_id"], {trade["offer_resource"]: trade["offer_amount"]})
+        self.civ_manager.update_resources(trade["proposer_id"], {trade["request_resource"]: trade["request_amount"]})
+        
+        self.civ_manager.spend_resources(user_id, {trade["request_resource"]: trade["request_amount"]})
+        self.civ_manager.update_resources(user_id, {trade["offer_resource"]: trade["offer_amount"]})
+        
+        # Notify proposer
+        try:
+            proposer_user = await self.bot.fetch_user(int(trade["proposer_id"]))
+            await proposer_user.send("💰 **Trade Accepted!** Your trade proposal has been accepted!")
+        except:
+            pass
+            
+        await ctx.send("💰 **Trade Accepted!** The exchange has been completed.")
+        
+        # Log
+        self.db.log_event(user_id, "trade_accept", "Trade Accepted", f"Accepted trade {trade_id}")
+        self.db.log_event(trade["proposer_id"], "trade_accept", "Trade Accepted", f"Trade {trade_id} accepted by target")
+        
+        del self.pending_trades[trade_id]
+
+    @commands.command(name='rejecttrade')
+    async def reject_trade(self, ctx, trade_id: str):
+        """Reject a pending trade proposal"""
+        user_id = str(ctx.author.id)
+        
+        if trade_id not in self.pending_trades:
+            await ctx.send("❌ Invalid or expired trade ID!")
+            return
+            
+        trade = self.pending_trades[trade_id]
+        
+        if user_id != trade["target_id"]:
+            await ctx.send("❌ This trade proposal isn't for you!")
+            return
+            
+        # Notify proposer
+        try:
+            proposer_user = await self.bot.fetch_user(int(trade["proposer_id"]))
+            await proposer_user.send("💰 **Trade Rejected!** Your trade proposal has been rejected.")
+        except:
+            pass
+            
+        await ctx.send("💰 **Trade Rejected!** You've declined the proposal.")
+        
+        # Log
+        self.db.log_event(user_id, "trade_reject", "Trade Rejected", f"Rejected trade {trade_id}")
+        self.db.log_event(trade["proposer_id"], "trade_reject", "Trade Rejected", f"Trade {trade_id} rejected by target")
+        
+        del self.pending_trades[trade_id]
 
     @commands.command(name='mail')
     @check_cooldown_decorator(minutes=5)
