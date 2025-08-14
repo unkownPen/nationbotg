@@ -489,7 +489,7 @@ class EconomyCommands(commands.Cog):
         asyncio.create_task(investment_return())
 
     @commands.command(name='raidcaravan')
-    @check_cooldown_decorator(minutes=45)
+    @check_cooldown_decorator(minutes=1)
     async def raid_caravan(self, ctx):
         """Raid NPC merchant caravans for loot"""
         user_id = str(ctx.author.id)
