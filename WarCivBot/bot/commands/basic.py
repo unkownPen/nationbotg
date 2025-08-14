@@ -134,7 +134,7 @@ class BasicCommands(commands.Cog):
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
             "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
             # NEW IDEOLOGY DESCRIPTIONS
-            "destruction": "💥 **Destruction**: Your civilization is built for war and conquest, but at a cost.",
+            "destruction": "💥 **Destruction**: Y o u. m o n s t e r.",
             "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony."
         }
         
