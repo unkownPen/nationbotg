@@ -33,7 +33,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='nuke')
-    @check_cooldown_decorator(minutes=240)  # 4 hour cooldown
+    @check_cooldown_decorator(minutes=5)  # 4 hour cooldown
     async def nuclear_strike(self, ctx, target: str = None):
         """Launch a devastating nuclear attack (Nuclear Warhead required)"""
         if not target:
@@ -149,7 +149,7 @@ class HyperItemCommands(commands.Cog):
         self.db.log_event(target_id, "nuclear_victim", "Nuclear Attack Victim", f"Civilization devastated by {civ['name']}")
 
     @commands.command(name='obliterate')
-    @check_cooldown_decorator(minutes=480)  # 8 hour cooldown
+    @check_cooldown_decorator(minutes=13)  # 8 hour cooldown
     async def obliterate_civilization(self, ctx, target: str = None):
         """Completely obliterate a civilization (HyperLaser required)"""
         if not target:
@@ -288,7 +288,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='propaganda')
-    @check_cooldown_decorator(minutes=90)
+    @check_cooldown_decorator(minutes=3)
     async def propaganda_campaign(self, ctx, target: str = None):
         """Use Propaganda Kit to steal enemy soldiers"""
         if not target:
@@ -363,7 +363,7 @@ class HyperItemCommands(commands.Cog):
             pass
 
     @commands.command(name='hiremercs')
-    @check_cooldown_decorator(minutes=30)
+    @check_cooldown_decorator(minutes=10)
     async def hire_mercenaries(self, ctx):
         """Use Mercenary Contract to instantly hire professional soldiers"""
         user_id = str(ctx.author.id)
@@ -403,7 +403,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='boosttech')
-    @check_cooldown_decorator(minutes=120)
+    @check_cooldown_decorator(minutes=5)
     async def boost_technology(self, ctx):
         """Use Ancient Scroll to instantly advance technology"""
         user_id = str(ctx.author.id)
@@ -442,7 +442,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='mintgold')
-    @check_cooldown_decorator(minutes=90)
+    @check_cooldown_decorator(minutes=10)
     async def mint_gold(self, ctx):
         """Use Gold Mint to generate large amounts of gold"""
         user_id = str(ctx.author.id)
@@ -480,7 +480,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='superharvest')
-    @check_cooldown_decorator(minutes=60)
+    @check_cooldown_decorator(minutes=10)
     async def super_harvest(self, ctx):
         """Use Harvest Engine for massive food production"""
         user_id = str(ctx.author.id)
@@ -525,7 +525,7 @@ class HyperItemCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='superspy')
-    @check_cooldown_decorator(minutes=120)
+    @check_cooldown_decorator(minutes=10)
     async def super_spy_mission(self, ctx, target: str = None):
         """Use Spy Network for elite espionage mission"""
         if not target:
@@ -605,7 +605,7 @@ class HyperItemCommands(commands.Cog):
             await ctx.send(embed=embed)
 
     @commands.command(name='megainvent')
-    @check_cooldown_decorator(minutes=300)  # 5 hour cooldown
+    @check_cooldown_decorator(minutes=5)  # 5 hour cooldown
     async def mega_invention(self, ctx):
         """Use Tech Core to advance multiple technology levels"""
         user_id = str(ctx.author.id)
@@ -728,7 +728,7 @@ class HyperItemCommands(commands.Cog):
                 pass
 
     @commands.command(name='bomb')
-    @check_cooldown_decorator(minutes=150)
+    @check_cooldown_decorator(minutes=1)
     async def missile_strike(self, ctx, target: str = None):
         """Use Missiles for mid-tier military strike"""
         if not target:
