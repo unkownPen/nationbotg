@@ -300,7 +300,7 @@ class MilitaryCommands(commands.Cog):
             extra_damage = int(defender_civ['resources']['gold'] * 0.05)
             self.civ_manager.update_resources(defender_id, {"gold": -extra_damage})
             embed.add_field(name="Destruction Bonus", 
-                          value=f"Your destructive nature caused additional damage! (-{format_number(extra_damage)} gold)", 
+                          value=f"Y o u. d e s t r o y e d  e v e r y t h i n g fine take. your stupid stats! (-{format_number(extra_damage)} gold)", 
                           inline=False)
         
         await ctx.send(embed=embed)
@@ -348,7 +348,7 @@ class MilitaryCommands(commands.Cog):
         self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']}!")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=5)
+    @check_cooldown_decorator(minutes=1)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -424,7 +424,7 @@ class MilitaryCommands(commands.Cog):
                         "food": -random.randint(30, 120)
                     }
                     self.civ_manager.update_resources(defender_id, extra_damage)
-                    result_text += f"\nYour destructive nature caused additional damage!"
+                    result_text += f"\your a monster you did even more damage...!"
                 
             elif operation_type == 'theft':
                 # Steal resources
@@ -601,10 +601,10 @@ class MilitaryCommands(commands.Cog):
         
         # Apply ideology modifiers
         if civ.get('ideology') == 'pacifist':
-            base_chance *= 0.7  # Pacifists are less likely to find soldiers
+            base_chance *= 1.9  # Pacifists are more likely
             max_soldiers = 15  # Smaller groups
         elif civ.get('ideology') == 'destruction':
-            base_chance *= 1.3  # More likely to find soldiers
+            base_chance *= 0.75  # More likely to find soldiers
             max_soldiers = 30  # Larger groups
             min_soldiers = 10
             
@@ -627,12 +627,12 @@ class MilitaryCommands(commands.Cog):
             embed = create_embed(
                 "🔍 Soldiers Found!",
                 f"You've discovered {soldiers_found} wandering soldiers who have joined your army!" + 
-                (f" (including {bonus} extra from your fearsome reputation!)" if bonus else ""),
+                (f" (including {bonus} you threatened them to join you... you got more soliders)" if bonus else ""),
                 guilded.Color.green()
             )
             
             if civ.get('ideology') == 'pacifist':
-                embed.add_field(name="Pacifist Note", value="These soldiers have joined reluctantly, drawn by your peaceful ideals.", inline=False)
+                embed.add_field(name="Pacifist Note", value="These soldiers have joined reluctantly, drawn by your peaceful ideals as a message im kop the one who makes theese messages.", inline=False)
         else:
             # Failure
             embed = create_embed(
@@ -643,7 +643,7 @@ class MilitaryCommands(commands.Cog):
             
             if civ.get('ideology') == 'destruction':
                 embed.add_field(name="Destruction Backfire", 
-                              value="Your reputation may have scared away potential recruits!", 
+                              value="But nobody came.", 
                               inline=False)
         
         await ctx.send(embed=embed)
