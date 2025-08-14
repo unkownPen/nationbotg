@@ -1,3 +1,4 @@
+# economy.py
 import random
 import asyncio
 import guilded
@@ -29,12 +30,15 @@ class EconomyCommands(commands.Cog):
         possible_resources = ['gold', 'wood', 'stone', 'food']
         gathered = {}
         
+        employment_rate = self.civ_manager.get_employment_rate(user_id)
+        employment_modifier = employment_rate / 100 + 0.5  # Base 50% + employment rate
+        
         for resource in possible_resources:
             if random.random() < 0.7:  # 70% chance for each resource
                 base_amount = random.randint(10, 50)
                 # Apply territory modifier
                 territory_modifier = civ['territory']['land_size'] / 1000
-                amount = int(base_amount * territory_modifier)
+                amount = int(base_amount * territory_modifier * employment_modifier)
                 gathered[resource] = amount
         
         if not gathered:
@@ -61,6 +65,54 @@ class EconomyCommands(commands.Cog):
         resource_text = "\n".join([f"{resource_icons[res]} {format_number(amt)} {res.capitalize()}" 
                                   for res, amt in gathered.items()])
         embed.add_field(name="Resources Gathered", value=resource_text, inline=False)
+        embed.add_field(name="Employment Rate", value=f"{employment_rate:.1f}%", inline=True)
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='work')
+    @check_cooldown_decorator(minutes=1)
+    async def work(self, ctx, amount: int = None):
+        """Employ citizens to work and gain immediate gold"""
+        if amount is None or amount < 1:
+            await ctx.send("💼 **Work Command**\nUsage: `.work <amount>`\nEmploy <amount> citizens to increase employment and gain gold based on new employment rate.")
+            return
+            
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        population = civ['population']
+        current_employed = population.get('employed', 0)
+        unemployed = population['citizens'] - current_employed
+        
+        if amount > unemployed:
+            await ctx.send(f"❌ Only {unemployed} unemployed citizens available!")
+            return
+            
+        # Update employment
+        self.civ_manager.update_employment(user_id, amount)
+        
+        # Calculate gold gain based on amount employed
+        gold_gain = amount * random.randint(3, 7)  # Base gain per employed citizen
+        
+        # Apply ideology modifiers if any
+        ideology = civ.get('ideology', '')
+        if ideology == 'communism':
+            gold_gain = int(gold_gain * 1.15)
+            
+        self.civ_manager.update_resources(user_id, {"gold": gold_gain})
+        
+        new_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "💼 Citizens Employed",
+            f"Successfully employed {format_number(amount)} citizens and gained {format_number(gold_gain)} gold!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
         
         await ctx.send(embed=embed)
 
