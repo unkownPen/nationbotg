@@ -35,6 +35,23 @@ class CivilizationManager:
                 "random_event_frequency": 2.0,
                 "soldier_upkeep": 0.0,
                 "spy_success": 0.80
+            },
+            # NEW IDEOLOGY: Destruction
+            "destruction": {
+                "combat_strength": 1.35,
+                "resource_production": 0.75,
+                "soldier_training_speed": 1.40,
+                "happiness_boost": 0.70,
+                "diplomacy_success": 0.50
+            },
+            # NEW IDEOLOGY: Pacifist
+            "pacifist": {
+                "happiness_boost": 1.35,
+                "population_growth": 1.25,
+                "trade_profit": 1.20,
+                "soldier_training_speed": 0.40,
+                "combat_strength": 0.60,
+                "diplomacy_success": 1.25
             }
         }
 
@@ -142,6 +159,14 @@ class CivilizationManager:
             base_food = int(base_food * self.ideology_modifiers['communism']['citizen_productivity'])
         elif ideology == 'democracy':
             base_gold = int(base_gold * self.ideology_modifiers['democracy']['trade_profit'])
+        # NEW: Destruction resource penalty
+        elif ideology == 'destruction':
+            resource_mod = self.ideology_modifiers['destruction']['resource_production']
+            base_gold = int(base_gold * resource_mod)
+            base_food = int(base_food * resource_mod)
+        # NEW: Pacifist trade bonus
+        elif ideology == 'pacifist':
+            base_gold = int(base_gold * self.ideology_modifiers['pacifist']['trade_profit'])
             
         return {
             "gold": base_gold,
