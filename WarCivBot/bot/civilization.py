@@ -1,3 +1,4 @@
+# Civilization.py
 import random
 import logging
 from typing import Dict, List, Optional, Any
@@ -61,7 +62,11 @@ class CivilizationManager:
 
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get civilization data"""
-        return self.db.get_civilization(user_id)
+        civ = self.db.get_civilization(user_id)
+        if civ and 'employed' not in civ['population']:
+            civ['population']['employed'] = civ['population']['citizens'] // 2  # Start with 50% employment
+            self.db.update_civilization(user_id, {"population": civ['population']})
+        return civ
 
     def set_ideology(self, user_id: str, ideology: str) -> bool:
         """Set civilization ideology"""
@@ -95,6 +100,10 @@ class CivilizationManager:
             if stat in population:
                 if stat in ['happiness', 'hunger']:
                     population[stat] = max(0, min(100, population[stat] + change))
+                elif stat == 'citizens':
+                    population['citizens'] = max(0, population['citizens'] + change)
+                    # Adjust employed if necessary
+                    population['employed'] = min(population.get('employed', 0), population['citizens'])
                 else:
                     population[stat] = max(0, population[stat] + change)
         
@@ -114,6 +123,30 @@ class CivilizationManager:
                 military[stat] = max(0, military[stat] + change)
         
         return self.db.update_civilization(user_id, {"military": military})
+
+    def update_employment(self, user_id: str, change: int) -> bool:
+        """Update employed citizens"""
+        civ = self.get_civilization(user_id)
+        if not civ:
+            return False
+        
+        population = civ['population']
+        employed = population.get('employed', 0) + change
+        employed = max(0, min(population['citizens'], employed))
+        population['employed'] = employed
+        
+        return self.db.update_civilization(user_id, {"population": population})
+
+    def get_employment_rate(self, user_id: str) -> float:
+        """Get employment rate percentage"""
+        civ = self.get_civilization(user_id)
+        if not civ:
+            return 0.0
+        
+        population = civ['population']
+        citizens = population['citizens']
+        employed = population.get('employed', 0)
+        return (employed / citizens * 100) if citizens > 0 else 0.0
 
     def add_hyper_item(self, user_id: str, item: str) -> bool:
         """Add a HyperItem to civilization"""
@@ -148,10 +181,12 @@ class CivilizationManager:
         population = civ['population']
         territory = civ['territory']
         ideology = civ.get('ideology', '')
+        employment_rate = self.get_employment_rate(user_id)
+        employment_modifier = employment_rate / 100
         
         # Base income calculations
-        base_gold = int(population['citizens'] * 0.1 * (territory['land_size'] / 1000))
-        base_food = int(population['citizens'] * 0.2)
+        base_gold = int(population['citizens'] * 0.1 * (territory['land_size'] / 1000) * employment_modifier)
+        base_food = int(population['citizens'] * 0.2 * employment_modifier)
         
         # Apply ideology modifiers
         if ideology == 'communism':
