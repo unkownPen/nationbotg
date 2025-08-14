@@ -14,7 +14,7 @@ class DiplomacyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='ally')
-    @check_cooldown_decorator(minutes=30)
+    @check_cooldown_decorator(minutes=1)
     async def create_alliance(self, ctx, target: str = None, alliance_name: str = None):
         """Create an alliance with another civilization"""
         if not target or not alliance_name:
@@ -140,7 +140,7 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send(embed=embed)
 
     @commands.command(name='break')
-    @check_cooldown_decorator(minutes=60)
+    @check_cooldown_decorator(minutes=1)
     async def break_alliance(self, ctx):
         """Break your current alliance"""
         user_id = str(ctx.author.id)
@@ -201,7 +201,7 @@ class DiplomacyCommands(commands.Cog):
         self.db.log_event(user_id, "alliance_break", "Alliance Broken", f"Left the {alliance_dict['name']} alliance")
 
     @commands.command(name='send')
-    @check_cooldown_decorator(minutes=10)
+    @check_cooldown_decorator(minutes=1)
     async def send_resources(self, ctx, target: str = None, resource_type: str = None, amount: int = None):
         """Send resources to an ally"""
         if not target or not resource_type or amount is None:
@@ -296,7 +296,7 @@ class DiplomacyCommands(commands.Cog):
         self.db.log_event(target_id, "resource_transfer", "Resources Received", f"Received {received_amount} {resource_type} from {civ['name']}")
 
     @commands.command(name='trade')
-    @check_cooldown_decorator(minutes=20)
+    @check_cooldown_decorator(minutes=0)
     async def trade_resources(self, ctx, target: str = None, offer_resource: str = None, offer_amount: int = None, 
                             request_resource: str = None, request_amount: int = None):
         """Propose a resource trade with another civilization"""
@@ -477,7 +477,7 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ Failed to send diplomatic message. The recipient might have DMs disabled.")
 
     @commands.command(name='coalition')
-    @check_cooldown_decorator(minutes=120)
+    @check_cooldown_decorator(minutes=0)
     async def form_coalition(self, ctx, target_alliance: str = None):
         """Form a coalition against another alliance"""
         if not target_alliance:
