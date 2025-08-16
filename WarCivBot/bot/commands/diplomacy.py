@@ -4,6 +4,7 @@ from guilded.ext import commands
 import json
 import logging
 from bot.utils import format_number, check_cooldown_decorator, create_embed
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +14,14 @@ class DiplomacyCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.pending_trades = {}  # Temp storage for pending trades {trade_id: details}
+        self.pending_alliances = {}  # Temp storage for pending alliances {alliance_id: details}
 
     @commands.command(name='ally')
     @check_cooldown_decorator(minutes=1)
-    async def create_alliance(self, ctx, target: str = None, alliance_name: str = None):
-        """Create an alliance with another civilization"""
+    async def propose_alliance(self, ctx, target: str = None, alliance_name: str = None):
+        """Propose an alliance with another civilization"""
         if not target or not alliance_name:
-            await ctx.send("🤝 **Alliance Creation**\nUsage: `.ally @user <alliance_name>`\nCreate a mutual defense pact with another civilization.")
+            await ctx.send("🤝 **Alliance Proposal**\nUsage: `.ally @user <alliance_name>`\nPropose a mutual defense pact with another civilization.")
             return
             
         user_id = str(ctx.author.id)
@@ -73,72 +75,143 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ One of you is already in an alliance!")
             return
             
-        # Create alliance proposal (simplified - in real implementation, would require target acceptance)
-        success_chance = 0.7  # Base 70% acceptance rate
+        # Generate unique alliance ID
+        alliance_id = str(random.randint(100000, 999999))
         
-        # Apply diplomacy modifiers
-        diplomacy_modifier = self.civ_manager.calculate_total_modifier(user_id, "diplomacy_success")
-        success_chance *= diplomacy_modifier
+        # Store pending alliance
+        self.pending_alliances[alliance_id] = {
+            "proposer_id": user_id,
+            "target_id": target_id,
+            "alliance_name": alliance_name,
+            "expires": datetime.now() + timedelta(minutes=30)  # Expires in 30 min
+        }
         
-        # Ideology compatibility
-        if civ.get('ideology') == target_civ.get('ideology'):
-            success_chance += 0.2  # Same ideology bonus
-        elif civ.get('ideology') == 'fascism' and target_civ.get('ideology') == 'democracy':
-            success_chance -= 0.3  # Ideological enemies
-        elif civ.get('ideology') == 'democracy' and target_civ.get('ideology') == 'fascism':
-            success_chance -= 0.3
+        # Send proposal to target via DM
+        try:
+            target_user = await self.bot.fetch_user(int(target_id))
             
-        if random.random() < success_chance:
-            # Alliance accepted
-            try:
-                cursor.execute('''
-                    INSERT INTO alliances (name, leader_id, members)
-                    VALUES (?, ?, ?)
-                ''', (alliance_name, user_id, json.dumps([user_id, target_id])))
-                
-                conn.commit()
-                
-                embed = create_embed(
-                    "🤝 Alliance Formed!",
-                    f"**{alliance_name}** has been established between **{civ['name']}** and **{target_civ['name']}**!",
-                    guilded.Color.green()
-                )
-                
-                embed.add_field(
-                    name="Alliance Benefits",
-                    value="• Mutual defense pact\n• Resource sharing available\n• Coordinated military actions\n• Trade bonuses",
-                    inline=False
-                )
-                
-                await ctx.send(embed=embed)
-                
-                # Notify target
-                try:
-                    target_user = await self.bot.fetch_user(int(target_id))
-                    await target_user.send(f"🤝 **Alliance Formed!** Your civilization has joined the **{alliance_name}** alliance with {civ['name']}!")
-                except:
-                    pass
-                    
-                # Log events
-                self.db.log_event(user_id, "alliance", "Alliance Formed", f"Created alliance '{alliance_name}' with {target_civ['name']}")
-                self.db.log_event(target_id, "alliance", "Alliance Formed", f"Joined alliance '{alliance_name}' with {civ['name']}")
-                
-            except Exception as e:
-                logger.error(f"Error creating alliance: {e}")
-                await ctx.send("❌ Failed to create alliance. Please try again.")
-        else:
-            # Alliance rejected
             embed = create_embed(
-                "🤝 Alliance Rejected",
-                f"**{target_civ['name']}** has declined your alliance proposal.",
-                guilded.Color.red()
+                "🤝 Alliance Proposal Received!",
+                f"From **{civ['name']}** (led by {ctx.author.name})",
+                guilded.Color.blue()
             )
             
-            # Diplomatic consequence
-            self.civ_manager.update_population(user_id, {"happiness": -5})
-            embed.add_field(name="Consequence", value="Your people are disappointed by the diplomatic failure. (-5 happiness)", inline=False)
+            embed.add_field(
+                name="Proposed Alliance",
+                value=f"Alliance Name: **{alliance_name}**\nBenefits: Mutual defense, resource sharing, coordinated actions",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="How to Respond",
+                value=f"Use `.acceptally {alliance_id}` to accept\nOr `.rejectally {alliance_id}` to reject\nProposal expires in 30 minutes.",
+                inline=False
+            )
+            
+            await target_user.send(embed=embed)
+            
+            await ctx.send(f"🤝 **Alliance Proposed!** Your proposal for **{alliance_name}** has been sent to **{target_civ['name']}**. They'll respond via DM.")
+            
+            # Log proposal
+            self.db.log_event(user_id, "alliance_proposal", "Alliance Proposed", f"Proposed alliance '{alliance_name}' to {target_civ['name']}")
+            
+        except Exception as e:
+            logger.error(f"Error sending alliance proposal: {e}")
+            await ctx.send("❌ Failed to send alliance proposal. The recipient might have DMs disabled.")
+            del self.pending_alliances[alliance_id]  # Clean up
+
+    @commands.command(name='acceptally')
+    async def accept_alliance(self, ctx, alliance_id: str):
+        """Accept a pending alliance proposal"""
+        user_id = str(ctx.author.id)
+        
+        if alliance_id not in self.pending_alliances:
+            await ctx.send("❌ Invalid or expired alliance ID!")
+            return
+            
+        proposal = self.pending_alliances[alliance_id]
+        
+        if user_id != proposal["target_id"]:
+            await ctx.send("❌ This alliance proposal isn't for you!")
+            return
+            
+        if datetime.now() > proposal["expires"]:
+            await ctx.send("❌ This alliance proposal has expired!")
+            del self.pending_alliances[alliance_id]
+            return
+            
+        # Create the alliance
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO alliances (name, leader_id, members)
+                VALUES (?, ?, ?)
+            ''', (proposal["alliance_name"], proposal["proposer_id"], json.dumps([proposal["proposer_id"], proposal["target_id"]])))
+            
+            conn.commit()
+            
+            embed = create_embed(
+                "🤝 Alliance Formed!",
+                f"**{proposal['alliance_name']}** has been established!",
+                guilded.Color.green()
+            )
+            
+            embed.add_field(
+                name="Alliance Benefits",
+                value="• Mutual defense pact\n• Resource sharing available\n• Coordinated military actions\n• Trade bonuses",
+                inline=False
+            )
             
             await ctx.send(embed=embed)
+            
+            # Notify proposer
+            try:
+                proposer_user = await self.bot.fetch_user(int(proposal["proposer_id"]))
+                await proposer_user.send(f"🤝 **Alliance Accepted!** Your proposal for **{proposal['alliance_name']}** has been accepted!")
+            except:
+                pass
+                
+            # Log events
+            self.db.log_event(proposal["proposer_id"], "alliance", "Alliance Formed", f"Created alliance '{proposal['alliance_name']}'")
+            self.db.log_event(user_id, "alliance", "Alliance Formed", f"Joined alliance '{proposal['alliance_name']}'")
+            
+            del self.pending_alliances[alliance_id]
+            
+        except Exception as e:
+            logger.error(f"Error creating alliance: {e}")
+            await ctx.send("❌ Failed to form alliance. Please try again.")
+
+    @commands.command(name='rejectally')
+    async def reject_alliance(self, ctx, alliance_id: str):
+        """Reject a pending alliance proposal"""
+        user_id = str(ctx.author.id)
+        
+        if alliance_id not in self.pending_alliances:
+            await ctx.send("❌ Invalid or expired alliance ID!")
+            return
+            
+        proposal = self.pending_alliances[alliance_id]
+        
+        if user_id != proposal["target_id"]:
+            await ctx.send("❌ This alliance proposal isn't for you!")
+            return
+            
+        # Notify proposer
+        try:
+            proposer_user = await self.bot.fetch_user(int(proposal["proposer_id"]))
+            await proposer_user.send(f"🤝 **Alliance Rejected!** Your proposal for **{proposal['alliance_name']}** has been rejected.")
+        except:
+            pass
+            
+        await ctx.send("🤝 **Alliance Rejected!** You've declined the proposal.")
+        
+        # Log
+        self.db.log_event(user_id, "alliance_reject", "Alliance Rejected", f"Rejected alliance {alliance_id}")
+        self.db.log_event(proposal["proposer_id"], "alliance_reject", "Alliance Rejected", f"Alliance {alliance_id} rejected by target")
+        
+        del self.pending_alliances[alliance_id]
 
     @commands.command(name='break')
     @check_cooldown_decorator(minutes=1)
@@ -504,8 +577,7 @@ class DiplomacyCommands(commands.Cog):
             
         # Send the diplomatic message
         try:
-            target_user = await self.bot.fetch_user(int(target_id))
-            
+            # No DM - post in channel with ping
             embed = create_embed(
                 "📜 Diplomatic Message",
                 f"**From**: {civ['name']} (led by {ctx.author.name})\n**To**: {target_civ['name']}",
@@ -514,16 +586,13 @@ class DiplomacyCommands(commands.Cog):
             embed.add_field(name="Message", value=message, inline=False)
             embed.add_field(name="Reply", value="Use `.mail @user <message>` to respond", inline=False)
             
-            await target_user.send(embed=embed)
+            await ctx.send(f"<@{target_id}>", embed=embed)
             
-            await ctx.send(f"📜 **Diplomatic message sent to {target_civ['name']}!**")
-            
-            # Log the diplomatic message
-            self.db.log_event(user_id, "diplomacy", "Message Sent", f"Sent diplomatic message to {target_civ['name']}")
-            
+            await ctx.send("📜 **Sent diplomatic message**")
+                
         except Exception as e:
             logger.error(f"Error sending diplomatic message: {e}")
-            await ctx.send("❌ Failed to send diplomatic message. The recipient might have DMs disabled.")
+            await ctx.send("❌ Failed to send diplomatic message. Please try again.")
 
     @commands.command(name='coalition')
     @check_cooldown_decorator(minutes=0)
