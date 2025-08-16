@@ -70,7 +70,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='work')
-    @check_cooldown_decorator(minutes=1)
+    @check_cooldown_decorator(minutes=10)
     async def work(self, ctx, amount: int = None):
         """Employ citizens to work and gain immediate gold"""
         if amount is None or amount < 1:
@@ -96,7 +96,7 @@ class EconomyCommands(commands.Cog):
         self.civ_manager.update_employment(user_id, amount)
         
         # Calculate gold gain based on amount employed
-        gold_gain = amount * random.randint(3, 7)  # Base gain per employed citizen
+        gold_gain = amount * random.randint(3, 1)  # Base gain per employed citizen
         
         # Apply ideology modifiers if any
         ideology = civ.get('ideology', '')
