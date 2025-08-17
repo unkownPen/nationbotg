@@ -20,13 +20,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize database connection
-db = Database()
-civ_manager = CivilizationManager(db)
+db = None
+civ_manager = None
+
+def initialize_services():
+    """Lazy initialization of services to improve startup time"""
+    global db, civ_manager
+    if db is None:
+        db = Database()
+    if civ_manager is None:
+        civ_manager = CivilizationManager(db)
+    return db, civ_manager
 
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
     try:
+        db, civ_manager = initialize_services()
+        
         # Get statistics
         stats = get_dashboard_stats()
         
@@ -97,9 +108,19 @@ def api_leaderboard(category):
         logger.error(f"Error getting leaderboard for {category}: {e}")
         return jsonify({"error": f"Could not fetch {category} leaderboard"}), 500
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for deployment monitoring"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "service": "warbot-dashboard"
+    }), 200
+
 def get_dashboard_stats():
     """Get overall dashboard statistics"""
     try:
+        db, civ_manager = initialize_services()
         civilizations = db.get_all_civilizations()
         
         if not civilizations:
@@ -160,6 +181,7 @@ def get_dashboard_stats():
 def get_top_civilizations(limit=10):
     """Get top civilizations by power score"""
     try:
+        db, civ_manager = initialize_services()
         civilizations = db.get_all_civilizations()
         
         # Calculate power scores and sort
@@ -199,6 +221,7 @@ def get_top_civilizations(limit=10):
 def get_recent_events(limit=20):
     """Get recent events with formatting"""
     try:
+        db, civ_manager = initialize_services()
         events = db.get_recent_events(limit)
         
         formatted_events = []
@@ -230,6 +253,7 @@ def get_recent_events(limit=20):
 def get_alliance_info():
     """Get alliance information"""
     try:
+        db, civ_manager = initialize_services()
         conn = db.get_connection()
         cursor = conn.cursor()
         
@@ -274,6 +298,7 @@ def get_alliance_info():
 def get_leaderboard_by_category(category, limit=20):
     """Get leaderboard for specific category"""
     try:
+        db, civ_manager = initialize_services()
         civilizations = db.get_all_civilizations()
         
         leaderboard = []
@@ -372,4 +397,7 @@ def internal_error(error):
                          error="Internal server error"), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Get port from environment variable or default to 5000
+    port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)
