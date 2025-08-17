@@ -76,6 +76,17 @@ class Database:
             )
         ''')
         
+        # Messages table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id TEXT NOT NULL,
+                recipient_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Events table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS events (
@@ -358,6 +369,9 @@ class Database:
             
             return events
             
+        except Exception as e:
+            logger.error(f"Error getting recent events: {e}")
+            return []
         except Exception as e:
             logger.error(f"Error getting recent events: {e}")
             return []
