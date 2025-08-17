@@ -14,6 +14,7 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='train')
+    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         if not unit_type:
@@ -166,6 +167,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
+    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target: str = None):
         """Launch a direct attack on another civilization"""
         if not target:
@@ -356,6 +358,7 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
 
     @commands.command(name='stealthbattle')
+    @check_cooldown_decorator(minutes=1)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -483,6 +486,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send(f"<@{target_id}> 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
 
     @commands.command(name='siege')
+    @check_cooldown_decorator(minutes=5)
     async def siege_city(self, ctx, target: str = None):
         """Lay siege to an enemy civilization"""
         if not target:
@@ -594,6 +598,7 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(f"<@{target_id}> 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
 
     @commands.command(name='find')
+    @check_cooldown_decorator(minutes=5)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         user_id = str(ctx.author.id)
@@ -613,7 +618,7 @@ class MilitaryCommands(commands.Cog):
             base_chance *= 1.9  # Pacifists are more likely
             max_soldiers = 15  # Smaller groups
         elif civ.get('ideology') == 'destruction':
-            base_chance *= 0.75  # More likely to find soldiers
+            base_chance *= 0.75  # less likely but more groups
             max_soldiers = 30  # Larger groups
             min_soldiers = 10
             
@@ -652,7 +657,7 @@ class MilitaryCommands(commands.Cog):
             
             if civ.get('ideology') == 'destruction':
                 embed.add_field(name="Destruction Backfire", 
-                              value="Your fearsome reputation scared potential recruits away.", 
+                              value="but nobody came.", 
                               inline=False)
         
         await ctx.send(embed=embed)
