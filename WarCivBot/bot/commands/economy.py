@@ -5,8 +5,35 @@ from guilded.ext import commands
 from datetime import datetime, timedelta
 import logging
 from bot.utils import format_number, create_embed
+from functools import wraps
 
 logger = logging.getLogger(__name__)
+
+# Cooldown decorator implementation
+def check_cooldown_decorator(minutes=0):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, ctx, *args, **kwargs):
+            user_id = str(ctx.author.id)
+            command_name = func.__name__
+            
+            # Get last used time from database
+            last_used = self.db.get_command_cooldown(user_id, command_name)
+            
+            if last_used:
+                cooldown_end = last_used + timedelta(minutes=minutes)
+                if datetime.utcnow() < cooldown_end:
+                    remaining = cooldown_end - datetime.utcnow()
+                    mins = int(remaining.total_seconds() // 60)
+                    secs = int(remaining.total_seconds() % 60)
+                    await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
+                    return
+            
+            # Update cooldown in database
+            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+            return await func(self, ctx, *args, **kwargs)
+        return wrapper
+    return decorator
 
 class EconomyCommands(commands.Cog):
     def __init__(self, bot):
@@ -158,7 +185,8 @@ class EconomyCommands(commands.Cog):
         
         if event_text:
             embed.add_field(name="Special Event", value=event_text, inline=False)
-            
+        
+        await ctx.send(embed=embed)
 
     @commands.command(name='mine')
     @check_cooldown_decorator(minutes=1)
@@ -600,8 +628,7 @@ class EconomyCommands(commands.Cog):
         embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
         embed.add_field(name="Morale Impact", value="Unemployment has caused unrest. (-2 happiness)", inline=False)
         
-        
-     
+        await ctx.send(embed=embed)
 
     @commands.command(name='festival')
     @check_cooldown_decorator(minutes=1)
@@ -686,3 +713,6 @@ class EconomyCommands(commands.Cog):
             embed.add_field(name="Ideology Bonus", value="Democratic unity enhanced happiness!", inline=False)
             
         await ctx.send(embed=embed)
+
+def setup(bot):
+    bot.add_cog(EconomyCommands(bot))
