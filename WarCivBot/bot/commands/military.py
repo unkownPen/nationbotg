@@ -2,7 +2,8 @@ import random
 import guilded
 from guilded.ext import commands
 import logging
-from bot.utils import format_number, check_cooldown_decorator, create_embed
+from datetime import datetime
+from bot.utils import format_number, create_embed
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,6 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='train')
-    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         if not unit_type:
@@ -96,10 +96,12 @@ class MilitaryCommands(commands.Cog):
         elif ideology == 'democracy' and training_modifier < 1.0:
             embed.add_field(name="Democratic Process", value="Democratic oversight slowed training.", inline=True)
             
-        await ctx.send(embed=embed)
+        # Add training GIF
+        train_gif = '<div class="tenor-gif-embed" data-postid="18353776" data-share-method="host" data-aspect-ratio="1.77778" data-width="100%"><a href="https://tenor.com/view/ksk-bundeswehr-germany-deutschland-luftwaffe-gif-18353776">Ksk Bundeswehr GIF</a>from <a href="https://tenor.com/search/ksk-gifs">Ksk GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        
+        await ctx.send(train_gif, embed=embed)
 
     @commands.command(name='declare')
-    @check_cooldown_decorator(minutes=1)
     async def declare_war(self, ctx, target: str = None):
         """Declare war on another civilization"""
         if not target:
@@ -113,7 +115,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        # Parse target (simple implementation)
+        # Parse target
         if target.startswith('<@') and target.endswith('>'):
             target_id = target[2:-1]
             if target_id.startswith('!'):
@@ -156,19 +158,14 @@ class MilitaryCommands(commands.Cog):
             
             await ctx.send(embed=embed)
             
-            # Try to notify the target
-            try:
-                target_user = await self.bot.fetch_user(int(target_id))
-                await target_user.send(f"⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.name}) has declared war on your civilization!")
-            except:
-                pass  # User might have DMs disabled
+            # Notify the target in the channel
+            await ctx.send(f"<@{target_id}> ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.name}) has declared war on your civilization!")
                 
         except Exception as e:
             logger.error(f"Error declaring war: {e}")
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
-    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target: str = None):
         """Launch a direct attack on another civilization"""
         if not target:
@@ -250,6 +247,11 @@ class MilitaryCommands(commands.Cog):
             # Defender wins
             defeat_margin = final_defender_strength / final_attacker_strength
             await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
+        
+        # Add attack GIF
+        attack_gif = '<div class="tenor-gif-embed" data-postid="3339308492968612696" data-share-method="host" data-aspect-ratio="1.775" data-width="100%"><a href="https://tenor.com/view/trenches-war-world-war-1-world-war-2-germany-2nd-reich-gif-3339308492968612696">Trenches War GIF</a>from <a href="https://tenor.com/search/trenches-gifs">Trenches GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        
+        await ctx.send(attack_gif)
 
     async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process successful attack"""
@@ -276,8 +278,8 @@ class MilitaryCommands(commands.Cog):
         negative_spoils = {res: -amt for res, amt in spoils.items()}
         self.civ_manager.update_resources(defender_id, negative_spoils)
         
-        self.civ_manager.update_resources(attacker_id, {"territory": {"land_size": territory_gained}})
-        self.civ_manager.update_resources(defender_id, {"territory": {"land_size": -territory_gained}})
+        self.civ_manager.update_territory(attacker_id, {"land_size": territory_gained})
+        self.civ_manager.update_territory(defender_id, {"land_size": -territory_gained})
         
         # Create victory embed
         embed = create_embed(
@@ -300,7 +302,7 @@ class MilitaryCommands(commands.Cog):
             extra_damage = int(defender_civ['resources']['gold'] * 0.05)
             self.civ_manager.update_resources(defender_id, {"gold": -extra_damage})
             embed.add_field(name="Destruction Bonus", 
-                          value=f"Y o u. d e s t r o y e d  e v e r y t h i n g fine take. your stupid stats! (-{format_number(extra_damage)} gold)", 
+                          value=f"Your destructive forces caused extra damage! (-{format_number(extra_damage)} enemy gold)", 
                           inline=False)
         
         await ctx.send(embed=embed)
@@ -308,6 +310,9 @@ class MilitaryCommands(commands.Cog):
         # Log the victory
         self.db.log_event(attacker_id, "victory", "Battle Victory", f"Defeated {defender_civ['name']} in battle!")
         self.db.log_event(defender_id, "defeat", "Battle Defeat", f"Defeated by {attacker_civ['name']} in battle.")
+        
+        # Notify defender in the channel
+        await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
 
     async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process failed attack"""
@@ -338,7 +343,7 @@ class MilitaryCommands(commands.Cog):
             peace_chance = random.random()
             if peace_chance > 0.7:
                 embed.add_field(name="Pacifist Appeal", 
-                              value="The defenders have offered a chance for peace through diplomacy!", 
+                              value="The defenders have offered a chance for peace through diplomacy! Use `.peace @user` to propose peace.", 
                               inline=False)
         
         await ctx.send(embed=embed)
@@ -346,9 +351,11 @@ class MilitaryCommands(commands.Cog):
         # Log the defeat
         self.db.log_event(attacker_id, "defeat", "Battle Defeat", f"Defeated by {defender_civ['name']} in battle.")
         self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']}!")
+        
+        # Notify defender in the channel
+        await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=1)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -366,7 +373,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ You need at least 3 spies to conduct stealth operations!")
             return
             
-        # Parse target (same as attack command)
+        # Parse target
         if target.startswith('<@') and target.endswith('>'):
             target_id = target[2:-1]
             if target_id.startswith('!'):
@@ -414,7 +421,7 @@ class MilitaryCommands(commands.Cog):
                     "stone": -random.randint(50, 200),
                     "wood": -random.randint(30, 150)
                 }
-                self.civ_manager.update_resources(defender_id, damage)
+                self.civ_manager.update_resources(target_id, damage)
                 result_text = "Your spies sabotaged enemy infrastructure!"
                 
                 # Destruction ideology bonus
@@ -423,27 +430,27 @@ class MilitaryCommands(commands.Cog):
                         "gold": -random.randint(20, 100),
                         "food": -random.randint(30, 120)
                     }
-                    self.civ_manager.update_resources(defender_id, extra_damage)
-                    result_text += f"\your a monster you did even more damage...!"
+                    self.civ_manager.update_resources(target_id, extra_damage)
+                    result_text += f" Your destructive spies caused extra chaos!"
                 
             elif operation_type == 'theft':
                 # Steal resources
                 stolen = {
                     "gold": int(target_civ['resources']['gold'] * random.uniform(0.05, 0.15))
                 }
-                self.civ_manager.update_resources(attacker_id, stolen)
-                self.civ_manager.update_resources(defender_id, {"gold": -stolen["gold"]})
+                self.civ_manager.update_resources(target_id, {"gold": -stolen["gold"]})
+                self.civ_manager.update_resources(user_id, stolen)
                 result_text = f"Your spies stole {format_number(stolen['gold'])} gold!"
                 
             else:  # intel
                 # Gain tech advantage
                 tech_gain = 1 if random.random() < 0.3 else 0
                 if tech_gain:
-                    self.civ_manager.update_military(attacker_id, {"tech_level": tech_gain})
+                    self.civ_manager.update_military(user_id, {"tech_level": tech_gain})
                 result_text = "Your spies gathered valuable intelligence!" + (f" (+{tech_gain} tech level)" if tech_gain else "")
             
             if spy_losses > 0:
-                self.civ_manager.update_military(attacker_id, {"spies": -spy_losses})
+                self.civ_manager.update_military(user_id, {"spies": -spy_losses})
                 
             embed = create_embed(
                 "🕵️ Stealth Operation Success!",
@@ -454,10 +461,15 @@ class MilitaryCommands(commands.Cog):
             if spy_losses > 0:
                 embed.add_field(name="Casualties", value=f"Lost {spy_losses} spies during the operation", inline=False)
                 
+            await ctx.send(embed=embed)
+            
+            # Notify defender in the channel
+            await ctx.send(f"<@{target_id}> 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
+            
         else:
             # Stealth mission fails
             spy_losses = random.randint(1, 4)
-            self.civ_manager.update_military(attacker_id, {"spies": -spy_losses})
+            self.civ_manager.update_military(user_id, {"spies": -spy_losses})
             
             embed = create_embed(
                 "🕵️ Stealth Operation Failed!",
@@ -465,17 +477,12 @@ class MilitaryCommands(commands.Cog):
                 guilded.Color.red()
             )
             
-            # Notify defender of the attempt
-            try:
-                target_user = await self.bot.fetch_user(int(target_id))
-                await target_user.send(f"🔍 **Security Alert!** Your intelligence network detected and thwarted a stealth attack from {civ['name']}!")
-            except:
-                pass
-                
-        await ctx.send(embed=embed)
+            await ctx.send(embed=embed)
+            
+            # Notify defender in the channel
+            await ctx.send(f"<@{target_id}> 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
 
     @commands.command(name='siege')
-    @check_cooldown_decorator(minutes=1)
     async def siege_city(self, ctx, target: str = None):
         """Lay siege to an enemy civilization"""
         if not target:
@@ -493,7 +500,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ You need at least 50 soldiers to lay siege!")
             return
             
-        # Parse target (same logic as before)
+        # Parse target
         if target.startswith('<@') and target.endswith('>'):
             target_id = target[2:-1]
             if target_id.startswith('!'):
@@ -574,7 +581,7 @@ class MilitaryCommands(commands.Cog):
             }
             self.civ_manager.update_resources(target_id, {k: -v for k, v in extra_damage.items()})
             embed.add_field(name="Destruction Bonus", 
-                          value=f"Your destructive nature caused extra damage!\n🪙 {format_number(extra_damage['gold'])} Gold\n🌾 {format_number(extra_damage['food'])} Food", 
+                          value=f"Your destructive siege caused extra damage!\n🪙 {format_number(extra_damage['gold'])} Gold\n🌾 {format_number(extra_damage['food'])} Food", 
                           inline=False)
         
         await ctx.send(embed=embed)
@@ -582,9 +589,11 @@ class MilitaryCommands(commands.Cog):
         # Log the siege
         self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
         self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
+        
+        # Notify defender in the channel
+        await ctx.send(f"<@{target_id}> 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
 
     @commands.command(name='find')
-    @check_cooldown_decorator(minutes=2)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         user_id = str(ctx.author.id)
@@ -627,12 +636,12 @@ class MilitaryCommands(commands.Cog):
             embed = create_embed(
                 "🔍 Soldiers Found!",
                 f"You've discovered {soldiers_found} wandering soldiers who have joined your army!" + 
-                (f" (including {bonus} you threatened them to join you... you got more soliders)" if bonus else ""),
+                (f" (including {bonus} coerced by your destructive reputation)" if bonus else ""),
                 guilded.Color.green()
             )
             
             if civ.get('ideology') == 'pacifist':
-                embed.add_field(name="Pacifist Note", value="These soldiers have joined reluctantly, drawn by your peaceful ideals as a message im kop the one who makes theese messages.", inline=False)
+                embed.add_field(name="Pacifist Note", value="These soldiers joined reluctantly, drawn by your peaceful ideals.", inline=False)
         else:
             # Failure
             embed = create_embed(
@@ -643,13 +652,12 @@ class MilitaryCommands(commands.Cog):
             
             if civ.get('ideology') == 'destruction':
                 embed.add_field(name="Destruction Backfire", 
-                              value="But nobody came.", 
+                              value="Your fearsome reputation scared potential recruits away.", 
                               inline=False)
         
         await ctx.send(embed=embed)
 
     @commands.command(name='peace')
-    @check_cooldown_decorator(minutes=1)
     async def make_peace(self, ctx, target: str = None):
         """Offer peace to an enemy civilization"""
         if not target:
@@ -708,9 +716,9 @@ class MilitaryCommands(commands.Cog):
         # Store the peace offer
         try:
             cursor.execute('''
-                INSERT INTO peace_offers (offerer_id, receiver_id, status)
-                VALUES (?, ?, ?)
-            ''', (user_id, target_id, 'pending'))
+                INSERT INTO peace_offers (offerer_id, receiver_id, status, offered_at)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, target_id, 'pending', datetime.now()))
             
             conn.commit()
             
@@ -720,21 +728,19 @@ class MilitaryCommands(commands.Cog):
                 guilded.Color.green()
             )
             
-            await ctx.send(embed=embed)
+            # Add peace GIF
+            peace_gif = '<div class="tenor-gif-embed" data-postid="17590633283719098636" data-share-method="host" data-aspect-ratio="0.694779" data-width="100%"><a href="https://tenor.com/view/stop-war-peace-drjoy-no-war-make-love-not-war-gif-17590633283719098636">Stop War Peace GIF</a>from <a href="https://tenor.com/search/stop+war-gifs">Stop War GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
             
-            # Notify the target
-            try:
-                target_user = await self.bot.fetch_user(int(target_id))
-                await target_user.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.name}` to accept!")
-            except:
-                pass  # DMs might be off
+            await ctx.send(peace_gif, embed=embed)
+            
+            # Notify the target in the channel
+            await ctx.send(f"<@{target_id}> 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.name}` to accept!")
                 
         except Exception as e:
             logger.error(f"Error sending peace offer: {e}")
             await ctx.send("❌ Failed to send peace offer. Try again later.")
 
     @commands.command(name='accept_peace')
-    @check_cooldown_decorator(minutes=1)
     async def accept_peace(self, ctx, target: str = None):
         """Accept a peace offer from another civilization"""
         if not target:
@@ -795,10 +801,10 @@ class MilitaryCommands(commands.Cog):
         try:
             # Update wars to peace
             cursor.execute('''
-                UPDATE wars SET result = 'peace' 
+                UPDATE wars SET result = 'peace', ended_at = ?
                 WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
                 AND result = 'ongoing'
-            ''', (user_id, offerer_id, offerer_id, user_id))
+            ''', (datetime.now(), user_id, offerer_id, offerer_id, user_id))
             
             # Update peace offer status
             cursor.execute('''
@@ -823,18 +829,17 @@ class MilitaryCommands(commands.Cog):
                               value="The peace movement was strengthened by pacifist ideals!", 
                               inline=False)
             
-            await ctx.send(embed=embed)
+            # Add peace GIF
+            peace_gif = '<div class="tenor-gif-embed" data-postid="17590633283719098636" data-share-method="host" data-aspect-ratio="0.694779" data-width="100%"><a href="https://tenor.com/view/stop-war-peace-drjoy-no-war-make-love-not-war-gif-17590633283719098636">Stop War Peace GIF</a>from <a href="https://tenor.com/search/stop+war-gifs">Stop War GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+            
+            await ctx.send(peace_gif, embed=embed)
             
             # Log events
             self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
             self.db.log_event(offerer_id, "peace_accepted", "Peace Accepted", f"Peace accepted by {civ['name']}")
             
-            # Notify the offerer
-            try:
-                offerer_user = await self.bot.fetch_user(int(offerer_id))
-                await offerer_user.send(f"🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
-            except:
-                pass
+            # Notify the offerer in the channel
+            await ctx.send(f"<@{offerer_id}> 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
                 
         except Exception as e:
             logger.error(f"Error accepting peace: {e}")
