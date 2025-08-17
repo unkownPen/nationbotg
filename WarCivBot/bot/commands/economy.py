@@ -15,6 +15,7 @@ class EconomyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='gather')
+    @check_cooldown_decorator(minutes=1)
     async def gather_resources(self, ctx):
         """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
@@ -68,6 +69,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='work')
+    @check_cooldown_decorator(minutes=1)
     async def work(self, ctx, amount: int = None):
         """Employ citizens to work and gain immediate gold"""
         if amount is None or amount < 1:
@@ -114,6 +116,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='farm')
+    @check_cooldown_decorator(minutes=1)
     async def farm_food(self, ctx):
         """Farm food for your civilization"""
         user_id = str(ctx.author.id)
@@ -156,12 +159,9 @@ class EconomyCommands(commands.Cog):
         if event_text:
             embed.add_field(name="Special Event", value=event_text, inline=False)
             
-        # Add farming GIF
-        farm_gif = '<iframe src="https://giphy.com/embed/Qw0pdmT5p6hLjM5NKk" width="268" height="480" style="" frameBorder="0" class="giphy-embed" allowFullScreen></iframe><p><a href="https://giphy.com/gifs/CLAAS-global-axion-claas-arion-Qw0pdmT5p6hLjM5NKk">via GIPHY</a></p>'
-        
-        await ctx.send(farm_gif, embed=embed)
 
     @commands.command(name='mine')
+    @check_cooldown_decorator(minutes=1)
     async def mine_resources(self, ctx):
         """Mine stone and wood from your territory"""
         user_id = str(ctx.author.id)
@@ -244,6 +244,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='drill')
+    @check_cooldown_decorator(minutes=1)
     async def drill_minerals(self, ctx):
         """Extract rare minerals with advanced drilling"""
         user_id = str(ctx.author.id)
@@ -286,6 +287,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(drill_gif, embed=embed)
 
     @commands.command(name='fish')
+    @check_cooldown_decorator(minutes=1)
     async def fish_resources(self, ctx):
         """Fish for food or occasionally find treasure"""
         user_id = str(ctx.author.id)
@@ -318,6 +320,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='tax')
+    @check_cooldown_decorator(minutes=5)
     async def collect_taxes(self, ctx):
         """Collect taxes from your citizens"""
         user_id = str(ctx.author.id)
@@ -363,6 +366,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='lottery')
+    @check_cooldown_decorator(minutes=1)
     async def play_lottery(self, ctx, bet: int = None):
         """Gamble gold for a chance at the jackpot"""
         if bet is None:
@@ -426,6 +430,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='invest')
+    @check_cooldown_decorator(minutes=5)
     async def invest_gold(self, ctx, amount: int = None):
         """Invest gold for delayed profit"""
         if amount is None:
@@ -491,6 +496,7 @@ class EconomyCommands(commands.Cog):
         asyncio.create_task(investment_return())
 
     @commands.command(name='raidcaravan')
+    @check_cooldown_decorator(minutes=5)
     async def raid_caravan(self, ctx):
         """Raid NPC merchant caravans for loot"""
         user_id = str(ctx.author.id)
@@ -594,12 +600,11 @@ class EconomyCommands(commands.Cog):
         embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
         embed.add_field(name="Morale Impact", value="Unemployment has caused unrest. (-2 happiness)", inline=False)
         
-        # Add drive GIF
-        drive_gif = '<div class="tenor-gif-embed" data-postid="15651314952934037388" data-share-method="host" data-aspect-ratio="1.62745" data-width="100%"><a href="https://tenor.com/view/dess-as-asgore-driving-over-dess-with-his-remixed-theme-asgore-driving-over-dess-undertale-gif-15651314952934037388">Dess As GIF</a>from <a href="https://tenor.com/search/dess-gifs">Dess GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
         
-        await ctx.send(drive_gif, embed=embed)
+     
 
     @commands.command(name='festival')
+    @check_cooldown_decorator(minutes=1)
     async def hold_festival(self, ctx):
         """Hold a grand festival to greatly boost citizen happiness"""
         user_id = str(ctx.author.id)
@@ -641,6 +646,7 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='cheer')
+    @check_cooldown_decorator(minutes=1)
     async def cheer_citizens(self, ctx):
         """Spread cheer to boost citizen happiness"""
         user_id = str(ctx.author.id)
