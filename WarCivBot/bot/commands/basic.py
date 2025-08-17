@@ -283,6 +283,13 @@ class BasicCommands(commands.Cog):
         else:
             # Category-specific help would be implemented here
             await ctx.send(f"Detailed help for category '{category}' coming soon!")
+            
+            if cleaned_txt == "/servers":
+    server_list = "\n".join(f"{guild.name} (ID: {guild.id})" for guild in bot.guilds)
+    if server_list:
+        return await m.channel.send(f"🖥️ Bot is in these servers:\n{server_list}")
+    else:
+        return await m.channel.send("🤖 Bot ain't in any servers yet, fam!")
 
 async def setup(bot):
     await bot.add_cog(BasicCommands(bot))
