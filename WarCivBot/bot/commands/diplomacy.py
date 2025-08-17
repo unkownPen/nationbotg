@@ -85,10 +85,10 @@ class DiplomacyCommands(commands.Cog):
         }
         
         # Send proposal in channel with ping
-        embed = create_embed(
-            "🤝 Alliance Proposal Received!",
-            f"From **{civ['name']}** (led by {ctx.author.name})",
-            guilded.Color.blue()
+        embed = guilded.Embed(
+            title="🤝 Alliance Proposal Received!",
+            description=f"From **{civ['name']}** (led by {ctx.author.name})",
+            color=guilded.Color.blue()
         )
         
         embed.add_field(
@@ -104,10 +104,7 @@ class DiplomacyCommands(commands.Cog):
         )
         
         await ctx.send(f"<@{target_id}>", embed=embed)
-        
         await ctx.send(f"🤝 **Alliance Proposed!** Your proposal for **{alliance_name}** has been sent to **{target_civ['name']}**.")
-        
-        # Log proposal
         self.db.log_event(user_id, "alliance_proposal", "Alliance Proposed", f"Proposed alliance '{alliance_name}' to {target_civ['name']}")
 
     @commands.command(name='acceptally')
@@ -142,10 +139,10 @@ class DiplomacyCommands(commands.Cog):
             
             conn.commit()
             
-            embed = create_embed(
-                "🤝 Alliance Formed!",
-                f"**{proposal['alliance_name']}** has been established!",
-                guilded.Color.green()
+            embed = guilded.Embed(
+                title="🤝 Alliance Formed!",
+                description=f"**{proposal['alliance_name']}** has been established!",
+                color=guilded.Color.green()
             )
             
             embed.add_field(
@@ -155,8 +152,6 @@ class DiplomacyCommands(commands.Cog):
             )
             
             await ctx.send(embed=embed)
-            
-            # Notify proposer in channel
             await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Accepted!** Your proposal for **{proposal['alliance_name']}** has been accepted!")
             
             # Log events
@@ -186,13 +181,11 @@ class DiplomacyCommands(commands.Cog):
             
         # Notify proposer in channel
         await ctx.send(f"<@{proposal['proposer_id']}> 🤝 **Alliance Rejected!** Your proposal for **{proposal['alliance_name']}** has been rejected.")
-        
         await ctx.send("🤝 **Alliance Rejected!** You've declined the proposal.")
         
         # Log
         self.db.log_event(user_id, "alliance_reject", "Alliance Rejected", f"Rejected alliance {alliance_id}")
         self.db.log_event(proposal["proposer_id"], "alliance_reject", "Alliance Rejected", f"Alliance {alliance_id} rejected by target")
-        
         del self.pending_alliances[alliance_id]
 
     @commands.command(name='break')
@@ -235,10 +228,10 @@ class DiplomacyCommands(commands.Cog):
         # Happiness penalty for breaking alliance
         self.civ_manager.update_population(user_id, {"happiness": -10})
         
-        embed = create_embed(
-            "💔 Alliance Broken",
-            f"Your civilization has left the **{alliance_dict['name']}** alliance.",
-            guilded.Color.red()
+        embed = guilded.Embed(
+            title="💔 Alliance Broken",
+            description=f"Your civilization has left the **{alliance_dict['name']}** alliance.",
+            color=guilded.Color.red()
         )
         embed.add_field(name="Consequence", value="Breaking diplomatic ties has upset your people. (-10 happiness)", inline=False)
         
@@ -289,7 +282,7 @@ class DiplomacyCommands(commands.Cog):
             
         # Check if can afford
         if not self.civ_manager.can_afford(user_id, {resource_type: amount}):
-            await ctx.send(f"❌ You don't have {format_number(amount)} {resource_type}!")
+            await ctx.send(f"❌ You don't have {amount} {resource_type}!")
             return
             
         # Check if allied (optional - could allow sending to anyone)
@@ -317,15 +310,15 @@ class DiplomacyCommands(commands.Cog):
         # Create success embed
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
         
-        embed = create_embed(
-            "📦 Resources Sent",
-            f"Successfully sent resources to **{target_civ['name']}**!",
-            guilded.Color.blue()
+        embed = guilded.Embed(
+            title="📦 Resources Sent",
+            description=f"Successfully sent resources to **{target_civ['name']}**!",
+            color=guilded.Color.blue()
         )
         
         embed.add_field(
             name="Transfer Details",
-            value=f"{resource_icons[resource_type]} Sent: {format_number(amount)} {resource_type.capitalize()}\n{resource_icons[resource_type]} Received: {format_number(received_amount)} {resource_type.capitalize()}\n📊 Efficiency: {int(transfer_efficiency * 100)}%",
+            value=f"{resource_icons[resource_type]} Sent: {amount} {resource_type.capitalize()}\n{resource_icons[resource_type]} Received: {received_amount} {resource_type.capitalize()}\n📊 Efficiency: {int(transfer_efficiency * 100)}%",
             inline=False
         )
         
@@ -333,9 +326,7 @@ class DiplomacyCommands(commands.Cog):
             embed.add_field(name="Alliance Bonus", value="Higher transfer efficiency due to alliance!", inline=False)
             
         await ctx.send(embed=embed)
-        
-        # Notify recipient in channel
-        await ctx.send(f"<@{target_id}> 📦 **Resources Received!** {civ['name']} has sent you {format_number(received_amount)} {resource_type}!")
+        await ctx.send(f"<@{target_id}> 📦 **Resources Received!** {civ['name']} has sent you {received_amount} {resource_type}!")
         
         # Log the transfer
         self.db.log_event(user_id, "resource_transfer", "Resources Sent", f"Sent {amount} {resource_type} to {target_civ['name']}")
@@ -377,7 +368,7 @@ class DiplomacyCommands(commands.Cog):
             
         # Check if can afford the offer
         if not self.civ_manager.can_afford(user_id, {offer_resource: offer_amount}):
-            await ctx.send(f"❌ You don't have {format_number(offer_amount)} {offer_resource} to offer!")
+            await ctx.send(f"❌ You don't have {offer_amount} {offer_resource} to offer!")
             return
             
         # Generate unique trade ID
@@ -397,15 +388,15 @@ class DiplomacyCommands(commands.Cog):
         # Send proposal in channel with ping
         resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
         
-        embed = create_embed(
-            "💰 Trade Proposal Received!",
-            f"From **{civ['name']}** (led by {ctx.author.name})",
-            guilded.Color.blue()
+        embed = guilded.Embed(
+            title="💰 Trade Proposal Received!",
+            description=f"From **{civ['name']}** (led by {ctx.author.name})",
+            color=guilded.Color.blue()
         )
         
         embed.add_field(
             name="Proposed Trade",
-            value=f"They offer: {resource_icons[offer_resource]} {format_number(offer_amount)} {offer_resource.capitalize()}\nThey request: {resource_icons[request_resource]} {format_number(request_amount)} {request_resource.capitalize()}",
+            value=f"They offer: {resource_icons[offer_resource]} {offer_amount} {offer_resource.capitalize()}\nThey request: {resource_icons[request_resource]} {request_amount} {request_resource.capitalize()}",
             inline=False
         )
         
@@ -415,14 +406,8 @@ class DiplomacyCommands(commands.Cog):
             inline=False
         )
         
-        # Add trade GIF
-        trade_gif = '<iframe src="https://giphy.com/embed/5RNNQvq3fhYlOYDIQ2" width="480" height="288" style="" frameBorder="0" class="giphy-embed" allowFullScreen></iframe><p><a href="https://giphy.com/gifs/cat-crypto-typing-5RNNQvq3fhYlOYDIQ2">via GIPHY</a></p>'
-        
-        await ctx.send(f"<@{target_id}>\n{trade_gif}", embed=embed)
-        
+        await ctx.send(f"<@{target_id}>", embed=embed)
         await ctx.send(f"💰 **Trade Proposed!** Your offer has been sent to **{target_civ['name']}**.")
-        
-        # Log proposal
         self.db.log_event(user_id, "trade_proposal", "Trade Proposed", f"Proposed trade to {target_civ['name']}: {offer_amount} {offer_resource} for {request_amount} {request_resource}")
 
     @commands.command(name='accepttrade')
@@ -465,13 +450,11 @@ class DiplomacyCommands(commands.Cog):
         
         # Notify proposer in channel
         await ctx.send(f"<@{trade['proposer_id']}> 💰 **Trade Accepted!** Your trade proposal has been accepted!")
-        
         await ctx.send("💰 **Trade Accepted!** The exchange has been completed.")
         
         # Log
         self.db.log_event(user_id, "trade_accept", "Trade Accepted", f"Accepted trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_accept", "Trade Accepted", f"Trade {trade_id} accepted by target")
-        
         del self.pending_trades[trade_id]
 
     @commands.command(name='rejecttrade')
@@ -491,13 +474,11 @@ class DiplomacyCommands(commands.Cog):
             
         # Notify proposer in channel
         await ctx.send(f"<@{trade['proposer_id']}> 💰 **Trade Rejected!** Your trade proposal has been rejected.")
-        
         await ctx.send("💰 **Trade Rejected!** You've declined the proposal.")
         
         # Log
         self.db.log_event(user_id, "trade_reject", "Trade Rejected", f"Rejected trade {trade_id}")
         self.db.log_event(trade["proposer_id"], "trade_reject", "Trade Rejected", f"Trade {trade_id} rejected by target")
-        
         del self.pending_trades[trade_id]
 
     @commands.command(name='mail')
@@ -541,22 +522,17 @@ class DiplomacyCommands(commands.Cog):
         ''', (user_id, target_id, message))
         conn.commit()
         
-        # Send the diplomatic message in channel with GIF
-        mail_gif = '<iframe src="https://giphy.com/embed/f0tufxEr372ZLuA07V" width="480" height="365" style="" frameBorder="0" class="giphy-embed" allowFullScreen></iframe><p><a href="https://giphy.com/gifs/email-aol-youve-got-mail-f0tufxEr372ZLuA07V">via GIPHY</a></p>'
-        
-        embed = create_embed(
-            "📜 Diplomatic Message",
-            f"**From**: {civ['name']} (led by {ctx.author.name})\n**To**: {target_civ['name']}",
-            guilded.Color.blue()
+        # Send the diplomatic message
+        embed = guilded.Embed(
+            title="📜 Diplomatic Message",
+            description=f"**From**: {civ['name']} (led by {ctx.author.name})\n**To**: {target_civ['name']}",
+            color=guilded.Color.blue()
         )
         embed.add_field(name="Message", value=message, inline=False)
         embed.add_field(name="Reply", value="Use `.mail @user <message>` to respond", inline=False)
         
-        await ctx.send(f"<@{target_id}>\n{mail_gif}", embed=embed)
-        
+        await ctx.send(f"<@{target_id}>", embed=embed)
         await ctx.send("📜 **Sent diplomatic message**")
-        
-        # Log
         self.db.log_event(user_id, "diplomatic_message", "Message Sent", f"Sent message to {target_civ['name']}")
 
     @commands.command(name='inbox')
@@ -569,10 +545,10 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
             return
             
-        embed = create_embed(
-            "📬 Inbox",
-            f"Pending proposals and messages for **{civ['name']}**",
-            guilded.Color.blue()
+        embed = guilded.Embed(
+            title="📬 Inbox",
+            description=f"Pending proposals and messages for **{civ['name']}**",
+            color=guilded.Color.blue()
         )
         
         # Check pending alliances
@@ -597,8 +573,8 @@ class DiplomacyCommands(commands.Cog):
                 trade_proposals.append(
                     f"**Trade ID**: {trade_id}\n"
                     f"From: **{proposer_civ['name']}**\n"
-                    f"Offers: {resource_icons[trade['offer_resource']]} {format_number(trade['offer_amount'])} {trade['offer_resource'].capitalize()}\n"
-                    f"Requests: {resource_icons[trade['request_resource']]} {format_number(trade['request_amount'])} {trade['request_resource'].capitalize()}\n"
+                    f"Offers: {resource_icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
+                    f"Requests: {resource_icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
                     f"Respond with: `.accepttrade {trade_id}` or `.rejecttrade {trade_id}`\n"
                     f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
                 )
@@ -694,10 +670,10 @@ class DiplomacyCommands(commands.Cog):
         
         if random.random() < success_chance:
             # Coalition formed successfully
-            embed = create_embed(
-                "⚔️ Coalition Formed!",
-                f"**{user_alliance_dict['name']}** has formed a coalition against **{target_alliance}**!",
-                guilded.Color.red()
+            embed = guilded.Embed(
+                title="⚔️ Coalition Formed!",
+                description=f"**{user_alliance_dict['name']}** has formed a coalition against **{target_alliance}**!",
+                color=guilded.Color.red()
             )
             
             embed.add_field(
@@ -718,17 +694,17 @@ class DiplomacyCommands(commands.Cog):
             await ctx.send(embed=embed)
             
         else:
-            embed = create_embed(
-                "⚔️ Coalition Failed",
-                f"Your attempt to form a coalition against **{target_alliance}** has failed.",
-                guilded.Color.red()
+            embed = guilded.Embed(
+                title="⚔️ Coalition Failed",
+                description=f"Your attempt to form a coalition against **{target_alliance}** has failed.",
+                color=guilded.Color.red()
             )
             embed.add_field(name="Consequence", value="Failed diplomacy has consequences. (-10 happiness)", inline=False)
             
             # Penalty for failed coalition
             self.civ_manager.update_population(user_id, {"happiness": -10})
-            
             await ctx.send(embed=embed)
-            self.civ_manager.update_population(user_id, {"happiness": -10})
-            
-            await ctx.send(embed=embed)
+            self.db.log_event(user_id, "coalition_failed", "Coalition Failed", f"Failed coalition against {target_alliance}")
+
+def setup(bot):
+    bot.add_cog(DiplomacyCommands(bot))
