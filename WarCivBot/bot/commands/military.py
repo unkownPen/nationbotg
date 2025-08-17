@@ -651,9 +651,9 @@ class MilitaryCommands(commands.Cog):
     @commands.command(name='peace')
     @check_cooldown_decorator(minutes=1)
     async def make_peace(self, ctx, target: str = None):
-        """Attempt to make peace with an enemy civilization"""
+        """Offer peace to an enemy civilization"""
         if not target:
-            await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace @user`\nAttempt to end a war with another civilization.")
+            await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace @user`\nSend a peace offer to end a war. They can accept with `.accept_peace @you`.")
             return
             
         user_id = str(ctx.author.id)
@@ -669,7 +669,7 @@ class MilitaryCommands(commands.Cog):
             if target_id.startswith('!'):
                 target_id = target_id[1:]
         else:
-            await ctx.send("❌ Please mention a valid user to make peace with!")
+            await ctx.send("❌ Please mention a valid user to offer peace to!")
             return
             
         if target_id == user_id:
@@ -694,80 +694,151 @@ class MilitaryCommands(commands.Cog):
         if cursor.fetchone()[0] == 0:
             await ctx.send("❌ You're not at war with this civilization!")
             return
-            
-        # Calculate peace chance
-        base_chance = 0.6  # 60% base chance
-        
-        # Ideology modifiers
-        if civ.get('ideology') == 'pacifist':
-            base_chance += 0.3  # +30% for pacifists
-        elif civ.get('ideology') == 'destruction':
-            base_chance -= 0.4  # -40% for destructive civilizations
-            
-        if target_civ.get('ideology') == 'pacifist':
-            base_chance += 0.2  # +20% if target is pacifist
-        elif target_civ.get('ideology') == 'destruction':
-            base_chance -= 0.3  # -30% if target is destructive
-            
-        # Recent battles modifier
+
+        # Check if there's already a pending offer
         cursor.execute('''
-            SELECT COUNT(*) FROM battles 
-            WHERE (attacker_id = ? AND defender_id = ?)
-            OR (attacker_id = ? AND defender_id = ?)
-            AND timestamp > datetime('now', '-1 day')
-        ''', (user_id, target_id, target_id, user_id))
+            SELECT COUNT(*) FROM peace_offers 
+            WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
+        ''', (user_id, target_id))
         
-        recent_battles = cursor.fetchone()[0]
-        base_chance -= recent_battles * 0.1  # -10% per recent battle
+        if cursor.fetchone()[0] > 0:
+            await ctx.send("❌ You already have a pending peace offer to this civilization!")
+            return
+            
+        # Store the peace offer
+        try:
+            cursor.execute('''
+                INSERT INTO peace_offers (offerer_id, receiver_id, status)
+                VALUES (?, ?, ?)
+            ''', (user_id, target_id, 'pending'))
+            
+            conn.commit()
+            
+            embed = create_embed(
+                "🕊️ Peace Offer Sent!",
+                f"**{civ['name']}** has offered peace to **{target_civ['name']}**! They can accept with `.accept_peace @{ctx.author.name}`.",
+                guilded.Color.green()
+            )
+            
+            await ctx.send(embed=embed)
+            
+            # Notify the target
+            try:
+                target_user = await self.bot.fetch_user(int(target_id))
+                await target_user.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.name}` to accept!")
+            except:
+                pass  # DMs might be off
+                
+        except Exception as e:
+            logger.error(f"Error sending peace offer: {e}")
+            await ctx.send("❌ Failed to send peace offer. Try again later.")
+
+    @commands.command(name='accept_peace')
+    @check_cooldown_decorator(minutes=1)
+    async def accept_peace(self, ctx, target: str = None):
+        """Accept a peace offer from another civilization"""
+        if not target:
+            await ctx.send("🕊️ **Accept Peace**\nUsage: `.accept_peace @user`\nAccept a pending peace offer to end the war.")
+            return
+            
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
         
-        # Clamp between 10-90%
-        final_chance = max(0.1, min(0.9, base_chance))
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # Parse target (the offerer)
+        if target.startswith('<@') and target.endswith('>'):
+            offerer_id = target[2:-1]
+            if offerer_id.startswith('!'):
+                offerer_id = offerer_id[1:]
+        else:
+            await ctx.send("❌ Please mention a valid user who offered peace!")
+            return
+            
+        if offerer_id == user_id:
+            await ctx.send("❌ You can't accept your own peace offer!")
+            return
+            
+        offerer_civ = self.civ_manager.get_civilization(offerer_id)
+        if not offerer_civ:
+            await ctx.send("❌ That user doesn't have a civilization!")
+            return
+            
+        # Check if at war
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
         
-        if random.random() < final_chance:
-            # Peace successful
+        cursor.execute('''
+            SELECT COUNT(*) FROM wars 
+            WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+            AND result = 'ongoing'
+        ''', (user_id, offerer_id, offerer_id, user_id))
+        
+        if cursor.fetchone()[0] == 0:
+            await ctx.send("❌ You're not at war with this civilization!")
+            return
+            
+        # Check for pending offer from the offerer to this user
+        cursor.execute('''
+            SELECT * FROM peace_offers 
+            WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
+        ''', (offerer_id, user_id))
+        
+        offer = cursor.fetchone()
+        if not offer:
+            await ctx.send("❌ No pending peace offer from this civilization!")
+            return
+            
+        # Accept the peace
+        try:
+            # Update wars to peace
             cursor.execute('''
                 UPDATE wars SET result = 'peace' 
                 WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
                 AND result = 'ongoing'
-            ''', (user_id, target_id, target_id, user_id))
+            ''', (user_id, offerer_id, offerer_id, user_id))
+            
+            # Update peace offer status
+            cursor.execute('''
+                UPDATE peace_offers SET status = 'accepted' 
+                WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
+            ''', (offerer_id, user_id))
             
             conn.commit()
             
-            # Happiness boost
+            # Happiness boost for both
             self.civ_manager.update_population(user_id, {"happiness": 15})
-            self.civ_manager.update_population(target_id, {"happiness": 15})
+            self.civ_manager.update_population(offerer_id, {"happiness": 15})
             
             embed = create_embed(
                 "🕊️ Peace Achieved!",
-                f"**{civ['name']}** and **{target_civ['name']}** have agreed to peace!",
+                f"**{civ['name']}** has accepted peace from **{offerer_civ['name']}**! The war is over.",
                 guilded.Color.green()
             )
             
-            if civ.get('ideology') == 'pacifist' or target_civ.get('ideology') == 'pacifist':
+            if civ.get('ideology') == 'pacifist' or offerer_civ.get('ideology') == 'pacifist':
                 embed.add_field(name="Pacifist Influence", 
                               value="The peace movement was strengthened by pacifist ideals!", 
                               inline=False)
-        else:
-            # Peace rejected
-            embed = create_embed(
-                "❌ Peace Rejected",
-                f"**{target_civ['name']}** has rejected your peace offer!",
-                guilded.Color.red()
-            )
             
-            if target_civ.get('ideology') == 'destruction':
-                embed.add_field(name="Warning", 
-                              value="The destructive nature of their civilization makes future peace difficult!", 
-                              inline=False)
-        
-        await ctx.send(embed=embed)
-        
-        # Try to notify the target
-        try:
-            target_user = await self.bot.fetch_user(int(target_id))
-            await target_user.send(f"🕊️ **PEACE OFFER!** {civ['name']} (led by {ctx.author.name}) has {'accepted' if final_chance else 'rejected'} your peace proposal!")
-        except:
-            pass  # User might have DMs disabled
+            await ctx.send(embed=embed)
+            
+            # Log events
+            self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
+            self.db.log_event(offerer_id, "peace_accepted", "Peace Accepted", f"Peace accepted by {civ['name']}")
+            
+            # Notify the offerer
+            try:
+                offerer_user = await self.bot.fetch_user(int(offerer_id))
+                await offerer_user.send(f"🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
+            except:
+                pass
+                
+        except Exception as e:
+            logger.error(f"Error accepting peace: {e}")
+            await ctx.send("❌ Failed to accept peace. Try again later.")
 
     def _calculate_military_strength(self, civ):
         """Calculate total military strength of a civilization"""
