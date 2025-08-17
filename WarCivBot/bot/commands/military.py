@@ -13,8 +13,22 @@ class MilitaryCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
 
+        # Create peace_offers table if not exists
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS peace_offers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                offerer_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'accepted', 'rejected'
+                offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP
+            )
+        ''')
+        conn.commit()
+
     @commands.command(name='train')
-    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         if not unit_type:
@@ -97,10 +111,7 @@ class MilitaryCommands(commands.Cog):
         elif ideology == 'democracy' and training_modifier < 1.0:
             embed.add_field(name="Democratic Process", value="Democratic oversight slowed training.", inline=True)
             
-        # Add training GIF
-        train_gif = '<div class="tenor-gif-embed" data-postid="18353776" data-share-method="host" data-aspect-ratio="1.77778" data-width="100%"><a href="https://tenor.com/view/ksk-bundeswehr-germany-deutschland-luftwaffe-gif-18353776">Ksk Bundeswehr GIF</a>from <a href="https://tenor.com/search/ksk-gifs">Ksk GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
-        
-        await ctx.send(train_gif, embed=embed)
+        await ctx.send(embed=embed)
 
     @commands.command(name='declare')
     async def declare_war(self, ctx, target: str = None):
@@ -134,15 +145,25 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
             
+        # Check if war is already ongoing
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id FROM wars 
+            WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+            AND result = 'ongoing'
+        ''', (user_id, target_id, target_id, user_id))
+        
+        if cursor.fetchone():
+            await ctx.send("❌ You're already at war with this civilization!")
+            return
+            
         # Store war declaration in database
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
             cursor.execute('''
-                INSERT INTO wars (attacker_id, defender_id, war_type, result)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, target_id, 'declared', 'ongoing'))
+                INSERT INTO wars (attacker_id, defender_id, war_type, result, declared_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, target_id, 'declared', 'ongoing', datetime.now()))
             
             conn.commit()
             
@@ -158,8 +179,6 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, or `.stealthbattle` against this civilization.", inline=False)
             
             await ctx.send(embed=embed)
-            
-            # Notify the target in the channel
             await ctx.send(f"<@{target_id}> ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.name}) has declared war on your civilization!")
                 
         except Exception as e:
@@ -167,7 +186,6 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
-    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target: str = None):
         """Launch a direct attack on another civilization"""
         if not target:
@@ -208,11 +226,13 @@ class MilitaryCommands(commands.Cog):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT COUNT(*) FROM wars 
-            WHERE attacker_id = ? AND defender_id = ? AND result = 'ongoing'
-        ''', (user_id, target_id))
+            SELECT id FROM wars 
+            WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+            AND result = 'ongoing'
+        ''', (user_id, target_id, target_id, user_id))
         
-        if cursor.fetchone()[0] == 0:
+        war = cursor.fetchone()
+        if not war:
             await ctx.send("❌ You must declare war first! Use `.declare @user`")
             return
             
@@ -249,11 +269,6 @@ class MilitaryCommands(commands.Cog):
             # Defender wins
             defeat_margin = final_defender_strength / final_attacker_strength
             await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
-        
-        # Add attack GIF
-        attack_gif = '<div class="tenor-gif-embed" data-postid="3339308492968612696" data-share-method="host" data-aspect-ratio="1.775" data-width="100%"><a href="https://tenor.com/view/trenches-war-world-war-1-world-war-2-germany-2nd-reich-gif-3339308492968612696">Trenches War GIF</a>from <a href="https://tenor.com/search/trenches-gifs">Trenches GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
-        
-        await ctx.send(attack_gif)
 
     async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process successful attack"""
@@ -358,7 +373,6 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=1)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -465,8 +479,6 @@ class MilitaryCommands(commands.Cog):
                 embed.add_field(name="Casualties", value=f"Lost {spy_losses} spies during the operation", inline=False)
                 
             await ctx.send(embed=embed)
-            
-            # Notify defender in the channel
             await ctx.send(f"<@{target_id}> 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
             
         else:
@@ -481,12 +493,9 @@ class MilitaryCommands(commands.Cog):
             )
             
             await ctx.send(embed=embed)
-            
-            # Notify defender in the channel
             await ctx.send(f"<@{target_id}> 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
 
     @commands.command(name='siege')
-    @check_cooldown_decorator(minutes=5)
     async def siege_city(self, ctx, target: str = None):
         """Lay siege to an enemy civilization"""
         if not target:
@@ -523,11 +532,13 @@ class MilitaryCommands(commands.Cog):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT COUNT(*) FROM wars 
-            WHERE attacker_id = ? AND defender_id = ? AND result = 'ongoing'
-        ''', (user_id, target_id))
+            SELECT id FROM wars 
+            WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+            AND result = 'ongoing'
+        ''', (user_id, target_id, target_id, user_id))
         
-        if cursor.fetchone()[0] == 0:
+        war = cursor.fetchone()
+        if not war:
             await ctx.send("❌ You must declare war first! Use `.declare @user`")
             return
             
@@ -598,7 +609,6 @@ class MilitaryCommands(commands.Cog):
         await ctx.send(f"<@{target_id}> 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
 
     @commands.command(name='find')
-    @check_cooldown_decorator(minutes=5)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         user_id = str(ctx.author.id)
@@ -657,7 +667,7 @@ class MilitaryCommands(commands.Cog):
             
             if civ.get('ideology') == 'destruction':
                 embed.add_field(name="Destruction Backfire", 
-                              value="but nobody came.", 
+                              value="Your reputation scared away potential recruits.", 
                               inline=False)
         
         await ctx.send(embed=embed)
@@ -699,12 +709,13 @@ class MilitaryCommands(commands.Cog):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT COUNT(*) FROM wars 
+            SELECT id FROM wars 
             WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
             AND result = 'ongoing'
         ''', (user_id, target_id, target_id, user_id))
         
-        if cursor.fetchone()[0] == 0:
+        war = cursor.fetchone()
+        if not war:
             await ctx.send("❌ You're not at war with this civilization!")
             return
 
@@ -721,9 +732,9 @@ class MilitaryCommands(commands.Cog):
         # Store the peace offer
         try:
             cursor.execute('''
-                INSERT INTO peace_offers (offerer_id, receiver_id, status, offered_at)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, target_id, 'pending', datetime.now()))
+                INSERT INTO peace_offers (offerer_id, receiver_id)
+                VALUES (?, ?)
+            ''', (user_id, target_id))
             
             conn.commit()
             
@@ -733,12 +744,7 @@ class MilitaryCommands(commands.Cog):
                 guilded.Color.green()
             )
             
-            # Add peace GIF
-            peace_gif = '<div class="tenor-gif-embed" data-postid="17590633283719098636" data-share-method="host" data-aspect-ratio="0.694779" data-width="100%"><a href="https://tenor.com/view/stop-war-peace-drjoy-no-war-make-love-not-war-gif-17590633283719098636">Stop War Peace GIF</a>from <a href="https://tenor.com/search/stop+war-gifs">Stop War GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
-            
-            await ctx.send(peace_gif, embed=embed)
-            
-            # Notify the target in the channel
+            await ctx.send(embed=embed)
             await ctx.send(f"<@{target_id}> 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.name}` to accept!")
                 
         except Exception as e:
@@ -782,18 +788,19 @@ class MilitaryCommands(commands.Cog):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT COUNT(*) FROM wars 
+            SELECT id FROM wars 
             WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
             AND result = 'ongoing'
         ''', (user_id, offerer_id, offerer_id, user_id))
         
-        if cursor.fetchone()[0] == 0:
+        war = cursor.fetchone()
+        if not war:
             await ctx.send("❌ You're not at war with this civilization!")
             return
             
         # Check for pending offer from the offerer to this user
         cursor.execute('''
-            SELECT * FROM peace_offers 
+            SELECT id FROM peace_offers 
             WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
         ''', (offerer_id, user_id))
         
@@ -804,18 +811,18 @@ class MilitaryCommands(commands.Cog):
             
         # Accept the peace
         try:
-            # Update wars to peace
+            # End the war
+            war_id = war[0]
             cursor.execute('''
                 UPDATE wars SET result = 'peace', ended_at = ?
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (datetime.now(), user_id, offerer_id, offerer_id, user_id))
+                WHERE id = ?
+            ''', (datetime.now(), war_id))
             
             # Update peace offer status
             cursor.execute('''
-                UPDATE peace_offers SET status = 'accepted' 
-                WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
-            ''', (offerer_id, user_id))
+                UPDATE peace_offers SET status = 'accepted', responded_at = ?
+                WHERE id = ?
+            ''', (datetime.now(), offer[0]))
             
             conn.commit()
             
@@ -834,17 +841,12 @@ class MilitaryCommands(commands.Cog):
                               value="The peace movement was strengthened by pacifist ideals!", 
                               inline=False)
             
-            # Add peace GIF
-            peace_gif = '<div class="tenor-gif-embed" data-postid="17590633283719098636" data-share-method="host" data-aspect-ratio="0.694779" data-width="100%"><a href="https://tenor.com/view/stop-war-peace-drjoy-no-war-make-love-not-war-gif-17590633283719098636">Stop War Peace GIF</a>from <a href="https://tenor.com/search/stop+war-gifs">Stop War GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
-            
-            await ctx.send(peace_gif, embed=embed)
-            
+            await ctx.send(embed=embed)
+            await ctx.send(f"<@{offerer_id}> 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
+                
             # Log events
             self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
             self.db.log_event(offerer_id, "peace_accepted", "Peace Accepted", f"Peace accepted by {civ['name']}")
-            
-            # Notify the offerer in the channel
-            await ctx.send(f"<@{offerer_id}> 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
                 
         except Exception as e:
             logger.error(f"Error accepting peace: {e}")
