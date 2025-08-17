@@ -1,11 +1,10 @@
-# economy.py
 import random
 import asyncio
 import guilded
 from guilded.ext import commands
 from datetime import datetime, timedelta
 import logging
-from bot.utils import format_number, check_cooldown_decorator, create_embed
+from bot.utils import format_number, create_embed
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,6 @@ class EconomyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
 
     @commands.command(name='gather')
-    @check_cooldown_decorator(minutes=1)
     async def gather_resources(self, ctx):
         """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
@@ -70,7 +68,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='work')
-    @check_cooldown_decorator(minutes=10)
     async def work(self, ctx, amount: int = None):
         """Employ citizens to work and gain immediate gold"""
         if amount is None or amount < 1:
@@ -96,7 +93,7 @@ class EconomyCommands(commands.Cog):
         self.civ_manager.update_employment(user_id, amount)
         
         # Calculate gold gain based on amount employed
-        gold_gain = amount * random.randint(3, 1)  # Base gain per employed citizen
+        gold_gain = amount * random.randint(1, 3)  # Base gain per employed citizen
         
         # Apply ideology modifiers if any
         ideology = civ.get('ideology', '')
@@ -117,7 +114,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='farm')
-    @check_cooldown_decorator(minutes=1)
     async def farm_food(self, ctx):
         """Farm food for your civilization"""
         user_id = str(ctx.author.id)
@@ -160,10 +156,12 @@ class EconomyCommands(commands.Cog):
         if event_text:
             embed.add_field(name="Special Event", value=event_text, inline=False)
             
-        await ctx.send(embed=embed)
+        # Add farming GIF
+        farm_gif = '<iframe src="https://giphy.com/embed/Qw0pdmT5p6hLjM5NKk" width="268" height="480" style="" frameBorder="0" class="giphy-embed" allowFullScreen></iframe><p><a href="https://giphy.com/gifs/CLAAS-global-axion-claas-arion-Qw0pdmT5p6hLjM5NKk">via GIPHY</a></p>'
+        
+        await ctx.send(farm_gif, embed=embed)
 
     @commands.command(name='mine')
-    @check_cooldown_decorator(minutes=1)
     async def mine_resources(self, ctx):
         """Mine stone and wood from your territory"""
         user_id = str(ctx.author.id)
@@ -205,10 +203,12 @@ class EconomyCommands(commands.Cog):
             
         embed.add_field(name="Resources Extracted", value=result_text, inline=False)
         
-        await ctx.send(embed=embed)
+        # Add mining GIF
+        mine_gif = '<div class="tenor-gif-embed" data-postid="21889516" data-share-method="host" data-aspect-ratio="1" data-width="100%"><a href="https://tenor.com/view/minecraft-mining-loop-diamonds-gold-gif-21889516">Minecraft Mining GIF</a>from <a href="https://tenor.com/search/minecraft-gifs">Minecraft GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        
+        await ctx.send(mine_gif, embed=embed)
 
     @commands.command(name='harvest')
-    @check_cooldown_decorator(minutes=10)
     async def harvest_food(self, ctx):
         """Large harvest with longer cooldown"""
         user_id = str(ctx.author.id)
@@ -244,7 +244,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='drill')
-    @check_cooldown_decorator(minutes=5)
     async def drill_minerals(self, ctx):
         """Extract rare minerals with advanced drilling"""
         user_id = str(ctx.author.id)
@@ -281,10 +280,12 @@ class EconomyCommands(commands.Cog):
         if bonus_text:
             embed.add_field(name="Lucky Strike!", value=bonus_text, inline=False)
             
-        await ctx.send(embed=embed)
+        # Add drilling GIF
+        drill_gif = '<div class="tenor-gif-embed" data-postid="16917706" data-share-method="host" data-aspect-ratio="2" data-width="100%"><a href="https://tenor.com/view/thunderbirds-mole-drill-tunnel-gif-16917706">Thunderbirds Mole GIF</a>from <a href="https://tenor.com/search/thunderbirds-gifs">Thunderbirds GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        
+        await ctx.send(drill_gif, embed=embed)
 
     @commands.command(name='fish')
-    @check_cooldown_decorator(minutes=2)
     async def fish_resources(self, ctx):
         """Fish for food or occasionally find treasure"""
         user_id = str(ctx.author.id)
@@ -317,7 +318,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='tax')
-    @check_cooldown_decorator(minutes=2)  # 1 hour cooldown
     async def collect_taxes(self, ctx):
         """Collect taxes from your citizens"""
         user_id = str(ctx.author.id)
@@ -363,7 +363,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='lottery')
-    @check_cooldown_decorator(minutes=1)
     async def play_lottery(self, ctx, bet: int = None):
         """Gamble gold for a chance at the jackpot"""
         if bet is None:
@@ -415,7 +414,11 @@ class EconomyCommands(commands.Cog):
         if winnings > 0:
             self.civ_manager.update_resources(user_id, {"gold": winnings})
             
-        embed = create_embed("🎰 Lottery Results", result, color)
+        embed = create_embed(
+            "🎰 Lottery Results",
+            result,
+            color
+        )
         embed.add_field(name="Bet Amount", value=f"{format_number(bet)} gold", inline=True)
         if winnings > 0:
             embed.add_field(name="Winnings", value=f"{format_number(winnings)} gold", inline=True)
@@ -423,7 +426,6 @@ class EconomyCommands(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='invest')
-    @check_cooldown_decorator(minutes=3)  # 2 hour cooldown
     async def invest_gold(self, ctx, amount: int = None):
         """Invest gold for delayed profit"""
         if amount is None:
@@ -458,7 +460,7 @@ class EconomyCommands(commands.Cog):
         
         # Schedule the return after 2 hours
         async def investment_return():
-            await asyncio.sleep(60)  # 2 hours in seconds
+            await asyncio.sleep(7200)  # 2 hours in seconds
             
             # 80% chance of profit
             if random.random() < 0.8:
@@ -489,7 +491,6 @@ class EconomyCommands(commands.Cog):
         asyncio.create_task(investment_return())
 
     @commands.command(name='raidcaravan')
-    @check_cooldown_decorator(minutes=1)
     async def raid_caravan(self, ctx):
         """Raid NPC merchant caravans for loot"""
         user_id = str(ctx.author.id)
@@ -553,5 +554,129 @@ class EconomyCommands(commands.Cog):
                 f"The caravan's guards were too strong! You lost {soldier_loss} soldiers in the failed attack.",
                 guilded.Color.red()
             )
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='drive')
+    async def drive_citizens(self, ctx, amount: int = None):
+        """Unemploy citizens, freeing them from work"""
+        if amount is None or amount < 1:
+            await ctx.send("🚗 **Drive Command**\nUsage: `.drive <amount>`\nUnemploy <amount> citizens to reduce employment rate.")
+            return
+            
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        population = civ['population']
+        current_employed = population.get('employed', 0)
+        
+        if amount > current_employed:
+            await ctx.send(f"❌ Only {current_employed} employed citizens available to unemploy!")
+            return
+            
+        # Update employment by reducing employed citizens
+        self.civ_manager.update_employment(user_id, -amount)
+        
+        # Slight happiness decrease due to unemployment
+        self.civ_manager.update_population(user_id, {"happiness": -2})
+        
+        new_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "🚗 Citizens Unemployed",
+            f"Successfully unemployed {format_number(amount)} citizens.",
+            guilded.Color.red()
+        )
+        embed.add_field(name="New Employment Rate", value=f"{new_rate:.1f}%", inline=True)
+        embed.add_field(name="Morale Impact", value="Unemployment has caused unrest. (-2 happiness)", inline=False)
+        
+        # Add drive GIF
+        drive_gif = '<div class="tenor-gif-embed" data-postid="15651314952934037388" data-share-method="host" data-aspect-ratio="1.62745" data-width="100%"><a href="https://tenor.com/view/dess-as-asgore-driving-over-dess-with-his-remixed-theme-asgore-driving-over-dess-undertale-gif-15651314952934037388">Dess As GIF</a>from <a href="https://tenor.com/search/dess-gifs">Dess GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        
+        await ctx.send(drive_gif, embed=embed)
+
+    @commands.command(name='festival')
+    async def hold_festival(self, ctx):
+        """Hold a grand festival to greatly boost citizen happiness"""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # Check if enough resources for festival
+        festival_cost = {"gold": 200, "food": 100}
+        if not self.civ_manager.can_afford(user_id, festival_cost):
+            await ctx.send("❌ You need 200 gold and 100 food to hold a festival!")
+            return
+            
+        # Spend resources
+        self.civ_manager.spend_resources(user_id, festival_cost)
+        
+        # Large happiness increase
+        happiness_boost = 10
+        self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
+        
+        # Apply ideology bonuses
+        ideology = civ.get('ideology', '')
+        if ideology == 'theocracy':
+            happiness_boost = int(happiness_boost * 1.2)  # Divine celebration bonus
+            
+        embed = create_embed(
+            "🎉 Grand Festival",
+            f"Your civilization celebrates with a grand festival, boosting morale!",
+            guilded.Color.gold()
+        )
+        embed.add_field(name="Morale Boost", value=f"Citizens are overjoyed! (+{happiness_boost} happiness)", inline=False)
+        embed.add_field(name="Cost", value="🪙 200 Gold\n🌾 100 Food", inline=True)
+        
+        if ideology == 'theocracy':
+            embed.add_field(name="Ideology Bonus", value="Theocratic celebrations enhanced happiness!", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='cheer')
+    async def cheer_citizens(self, ctx):
+        """Spread cheer to boost citizen happiness"""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # Check if enough resources for cheer
+        cheer_cost = {"gold": 50}
+        if not self.civ_manager.can_afford(user_id, cheer_cost):
+            await ctx.send("❌ You need 50 gold to spread cheer!")
+            return
+            
+        # Spend resources
+        self.civ_manager.spend_resources(user_id, cheer_cost)
+        
+        # Moderate happiness increase
+        happiness_boost = 5
+        self.civ_manager.update_population(user_id, {"happiness": happiness_boost})
+        
+        # Apply ideology bonuses
+        ideology = civ.get('ideology', '')
+        if ideology == 'democracy':
+            happiness_boost = int(happiness_boost * 1.1)  # Democratic unity bonus
+            
+        embed = create_embed(
+            "😊 Spreading Cheer",
+            f"Your leaders spread cheer, uplifting your citizens!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="Morale Boost", value=f"Citizens are happier! (+{happiness_boost} happiness)", inline=False)
+        embed.add_field(name="Cost", value="🪙 50 Gold", inline=True)
+        
+        if ideology == 'democracy':
+            embed.add_field(name="Ideology Bonus", value="Democratic unity enhanced happiness!", inline=False)
             
         await ctx.send(embed=embed)
