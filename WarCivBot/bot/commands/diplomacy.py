@@ -4,6 +4,7 @@ from guilded.ext import commands
 import json
 import logging
 from datetime import datetime, timedelta
+import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,27 @@ class DiplomacyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
         self.pending_trades = {}  # Temp storage for pending trades {trade_id: details}
         self.pending_alliances = {}  # Temp storage for pending alliances {alliance_id: details}
+        
+        # Ensure messages table exists
+        self.create_messages_table()
+
+    def create_messages_table(self):
+        """Create the messages table if it doesn't exist"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id TEXT NOT NULL,
+                    recipient_id TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+        except sqlite3.Error as e:
+            logger.error(f"Error creating messages table: {e}")
 
     @commands.command(name='ally')
     async def propose_alliance(self, ctx, target: str = None, alliance_name: str = None):
@@ -514,13 +536,18 @@ class DiplomacyCommands(commands.Cog):
             return
             
         # Store the message in the database
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO messages (sender_id, recipient_id, message)
-            VALUES (?, ?, ?)
-        ''', (user_id, target_id, message))
-        conn.commit()
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO messages (sender_id, recipient_id, message)
+                VALUES (?, ?, ?)
+            ''', (user_id, target_id, message))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving message: {e}")
+            await ctx.send("❌ Failed to send message. Please try again.")
+            return
         
         # Send the diplomatic message
         embed = guilded.Embed(
@@ -556,48 +583,60 @@ class DiplomacyCommands(commands.Cog):
         for alliance_id, proposal in self.pending_alliances.items():
             if proposal["target_id"] == user_id and datetime.now() < proposal["expires"]:
                 proposer_civ = self.civ_manager.get_civilization(proposal["proposer_id"])
-                alliance_proposals.append(
-                    f"**Alliance ID**: {alliance_id}\n"
-                    f"From: **{proposer_civ['name']}**\n"
-                    f"Alliance Name: **{proposal['alliance_name']}**\n"
-                    f"Respond with: `.acceptally {alliance_id}` or `.rejectally {alliance_id}`\n"
-                    f"Expires: <t:{int(proposal['expires'].timestamp())}:R>"
-                )
+                if proposer_civ:
+                    alliance_proposals.append(
+                        f"**Alliance ID**: {alliance_id}\n"
+                        f"From: **{proposer_civ['name']}**\n"
+                        f"Alliance Name: **{proposal['alliance_name']}**\n"
+                        f"Respond with: `.acceptally {alliance_id}` or `.rejectally {alliance_id}`\n"
+                        f"Expires: <t:{int(proposal['expires'].timestamp())}:R>"
+                    )
         
         # Check pending trades
         trade_proposals = []
         for trade_id, trade in self.pending_trades.items():
             if trade["target_id"] == user_id and datetime.now() < trade["expires"]:
                 proposer_civ = self.civ_manager.get_civilization(trade["proposer_id"])
-                resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
-                trade_proposals.append(
-                    f"**Trade ID**: {trade_id}\n"
-                    f"From: **{proposer_civ['name']}**\n"
-                    f"Offers: {resource_icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
-                    f"Requests: {resource_icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
-                    f"Respond with: `.accepttrade {trade_id}` or `.rejecttrade {trade_id}`\n"
-                    f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
-                )
+                if proposer_civ:
+                    resource_icons = {"gold": "🪙", "food": "🌾", "wood": "🪵", "stone": "🪨"}
+                    trade_proposals.append(
+                        f"**Trade ID**: {trade_id}\n"
+                        f"From: **{proposer_civ['name']}**\n"
+                        f"Offers: {resource_icons[trade['offer_resource']]} {trade['offer_amount']} {trade['offer_resource'].capitalize()}\n"
+                        f"Requests: {resource_icons[trade['request_resource']]} {trade['request_amount']} {trade['request_resource'].capitalize()}\n"
+                        f"Respond with: `.accepttrade {trade_id}` or `.rejecttrade {trade_id}`\n"
+                        f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
+                    )
         
         # Check diplomatic messages
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT sender_id, message, timestamp FROM messages 
-            WHERE recipient_id = ? 
-            ORDER BY timestamp DESC 
-            LIMIT 10
-        ''', (user_id,))
-        messages = cursor.fetchall()
-        
         diplomatic_messages = []
-        for msg in messages:
-            sender_civ = self.civ_manager.get_civilization(msg['sender_id'])
-            diplomatic_messages.append(
-                f"**From**: {sender_civ['name']}\n"
-                f"**Message**: {msg['message']}\n"
-                f"**Received**: <t:{int(datetime.fromisoformat(msg['timestamp']).timestamp())}:R>"
-            )
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT sender_id, message, timestamp FROM messages 
+                WHERE recipient_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 10
+            ''', (user_id,))
+            messages = cursor.fetchall()
+            
+            for msg in messages:
+                sender_civ = self.civ_manager.get_civilization(msg['sender_id'])
+                if sender_civ:
+                    # Handle timestamp format (could be string or datetime)
+                    timestamp = msg['timestamp']
+                    if isinstance(timestamp, str):
+                        timestamp = datetime.fromisoformat(timestamp)
+                    
+                    diplomatic_messages.append(
+                        f"**From**: {sender_civ['name']}\n"
+                        f"**Message**: {msg['message']}\n"
+                        f"**Received**: <t:{int(timestamp.timestamp())}:R>"
+                    )
+        except Exception as e:
+            logger.error(f"Error fetching messages: {e}")
+            diplomatic_messages.append("⚠️ Could not load messages")
         
         # Add fields to embed
         embed.add_field(
