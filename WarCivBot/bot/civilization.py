@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 class CivilizationManager:
     def __init__(self, db: Database):
         self.db = db
-        
-        # Ideology modifiers
         self.ideology_modifiers = {
             "fascism": {
                 "soldier_training_speed": 1.25,
@@ -37,7 +35,6 @@ class CivilizationManager:
                 "soldier_upkeep": 0.0,
                 "spy_success": 0.80
             },
-            # NEW IDEOLOGY: Destruction
             "destruction": {
                 "combat_strength": 1.35,
                 "resource_production": 0.75,
@@ -45,7 +42,6 @@ class CivilizationManager:
                 "happiness_boost": 0.70,
                 "diplomacy_success": 0.50
             },
-            # NEW IDEOLOGY: Pacifist
             "pacifist": {
                 "happiness_boost": 1.35,
                 "population_growth": 1.25,
@@ -64,7 +60,7 @@ class CivilizationManager:
         """Get civilization data"""
         civ = self.db.get_civilization(user_id)
         if civ and 'employed' not in civ['population']:
-            civ['population']['employed'] = civ['population']['citizens'] // 2  # Start with 50% employment
+            civ['population']['employed'] = civ['population']['citizens'] // 2
             self.db.update_civilization(user_id, {"population": civ['population']})
         return civ
 
@@ -79,8 +75,6 @@ class CivilizationManager:
             return False
             
         resources = civ['resources']
-        
-        # Apply changes
         for resource, change in resource_changes.items():
             if resource in resources:
                 resources[resource] = max(0, resources[resource] + change)
@@ -94,15 +88,12 @@ class CivilizationManager:
             return False
             
         population = civ['population']
-        
-        # Apply changes with bounds checking
         for stat, change in population_changes.items():
             if stat in population:
                 if stat in ['happiness', 'hunger']:
                     population[stat] = max(0, min(100, population[stat] + change))
                 elif stat == 'citizens':
                     population['citizens'] = max(0, population['citizens'] + change)
-                    # Adjust employed if necessary
                     population['employed'] = min(population.get('employed', 0), population['citizens'])
                 else:
                     population[stat] = max(0, population[stat] + change)
@@ -110,19 +101,30 @@ class CivilizationManager:
         return self.db.update_civilization(user_id, {"population": population})
 
     def update_military(self, user_id: str, military_changes: Dict[str, int]) -> bool:
-        """Update civilization military stats"""
+        """Update civilization military stats, checking for tech level increase"""
         civ = self.get_civilization(user_id)
         if not civ:
             return False
             
         military = civ['military']
+        old_tech_level = military['tech_level']
         
-        # Apply changes
         for stat, change in military_changes.items():
             if stat in military:
-                military[stat] = max(0, military[stat] + change)
+                if stat == 'tech_level':
+                    military[stat] = min(10, max(1, military[stat] + change))  # Cap at 10
+                else:
+                    military[stat] = max(0, military[stat] + change)
         
-        return self.db.update_civilization(user_id, {"military": military})
+        new_tech_level = military['tech_level']
+        result = self.db.update_civilization(user_id, {"military": military})
+        
+        if result and new_tech_level > old_tech_level and new_tech_level <= 10:
+            self.db.generate_card_selection(user_id, new_tech_level)
+            self.db.log_event(user_id, "tech_advance", "Tech Level Increased",
+                            f"Reached tech level {new_tech_level}. New card selection available!")
+        
+        return result
 
     def update_employment(self, user_id: str, change: int) -> bool:
         """Update employed citizens"""
@@ -136,6 +138,19 @@ class CivilizationManager:
         population['employed'] = employed
         
         return self.db.update_civilization(user_id, {"population": population})
+
+    def update_territory(self, user_id: str, territory_changes: Dict[str, int]) -> bool:
+        """Update civilization territory stats"""
+        civ = self.get_civilization(user_id)
+        if not civ:
+            return False
+            
+        territory = civ['territory']
+        for stat, change in territory_changes.items():
+            if stat in territory:
+                territory[stat] = max(0, territory[stat] + change)
+        
+        return self.db.update_civilization(user_id, {"territory": territory})
 
     def get_employment_rate(self, user_id: str) -> float:
         """Get employment rate percentage"""
@@ -172,6 +187,37 @@ class CivilizationManager:
         hyper_items.remove(item)
         return self.db.update_civilization(user_id, {"hyper_items": hyper_items})
 
+    def apply_card_effect(self, user_id: str, card: Dict) -> bool:
+        """Apply the effect of a selected card"""
+        civ = self.get_civilization(user_id)
+        if not civ:
+            return False
+            
+        effect = card['effect']
+        card_type = card['type']
+        
+        if card_type == "bonus":
+            bonuses = civ['bonuses']
+            for key, value in effect.items():
+                bonuses[key] = bonuses.get(key, 0) + value
+            self.db.update_civilization(user_id, {"bonuses": bonuses})
+        
+        elif card_type == "one_time":
+            if "gold" in effect or "food" in effect or "stone" in effect or "wood" in effect:
+                self.update_resources(user_id, effect)
+            elif "soldiers" in effect or "spies" in effect or "tech_level" in effect:
+                self.update_military(user_id, effect)
+            elif "citizens" in effect or "happiness" in effect or "hunger" in effect:
+                self.update_population(user_id, effect)
+        
+        selected_cards = civ['selected_cards']
+        selected_cards.append(card['name'])
+        self.db.update_civilization(user_id, {"selected_cards": selected_cards})
+        
+        self.db.log_event(user_id, "card_selected", f"Card Selected: {card['name']}",
+                         card['description'], effect)
+        return True
+
     def calculate_resource_income(self, user_id: str) -> Dict[str, int]:
         """Calculate passive resource income"""
         civ = self.get_civilization(user_id)
@@ -181,31 +227,28 @@ class CivilizationManager:
         population = civ['population']
         territory = civ['territory']
         ideology = civ.get('ideology', '')
+        bonuses = civ['bonuses']
         employment_rate = self.get_employment_rate(user_id)
         employment_modifier = employment_rate / 100
         
-        # Base income calculations
         base_gold = int(population['citizens'] * 0.1 * (territory['land_size'] / 1000) * employment_modifier)
         base_food = int(population['citizens'] * 0.2 * employment_modifier)
         
-        # Apply ideology modifiers
+        resource_modifier = 1.0
         if ideology == 'communism':
-            base_gold = int(base_gold * self.ideology_modifiers['communism']['citizen_productivity'])
-            base_food = int(base_food * self.ideology_modifiers['communism']['citizen_productivity'])
+            resource_modifier *= self.ideology_modifiers['communism']['citizen_productivity']
         elif ideology == 'democracy':
-            base_gold = int(base_gold * self.ideology_modifiers['democracy']['trade_profit'])
-        # NEW: Destruction resource penalty
+            resource_modifier *= self.ideology_modifiers['democracy']['trade_profit']
         elif ideology == 'destruction':
-            resource_mod = self.ideology_modifiers['destruction']['resource_production']
-            base_gold = int(base_gold * resource_mod)
-            base_food = int(base_food * resource_mod)
-        # NEW: Pacifist trade bonus
+            resource_modifier *= self.ideology_modifiers['destruction']['resource_production']
         elif ideology == 'pacifist':
-            base_gold = int(base_gold * self.ideology_modifiers['pacifist']['trade_profit'])
-            
+            resource_modifier *= self.ideology_modifiers['pacifist']['trade_profit']
+        
+        resource_modifier *= (1 + bonuses.get('resource_production', 0) / 100)
+        
         return {
-            "gold": base_gold,
-            "food": base_food,
+            "gold": int(base_gold * resource_modifier),
+            "food": int(base_food * resource_modifier),
             "stone": random.randint(0, 5),
             "wood": random.randint(0, 5)
         }
@@ -220,16 +263,12 @@ class CivilizationManager:
         military = civ['military']
         ideology = civ.get('ideology', '')
         
-        # Population food consumption
         food_consumption = int(population['citizens'] * 0.3)
-        
-        # Military upkeep
         soldier_upkeep = military['soldiers'] * 2
         spy_upkeep = military['spies'] * 5
         
-        # Apply ideology modifiers
         if ideology == 'anarchy':
-            soldier_upkeep = 0  # No soldier upkeep in anarchy
+            soldier_upkeep = 0
             
         return {
             "food": food_consumption,
@@ -244,23 +283,26 @@ class CivilizationManager:
             
         population = civ['population']
         happiness = population['happiness']
+        bonuses = civ['bonuses']
         
-        # Low happiness effects
+        happiness_modifier = 1 + bonuses.get('happiness_boost', 0) / 100
+        happiness = int(happiness * happiness_modifier)
+        
         if happiness < 20:
-            # Chance of population revolt
             if random.random() < 0.1:
                 revolt_loss = int(population['citizens'] * 0.05)
                 self.update_population(user_id, {"citizens": -revolt_loss})
-                self.db.log_event(user_id, "revolt", "Population Revolt", 
+                self.db.log_event(user_id, "revolt", "Population Revolt",
                                 f"Low happiness caused {revolt_loss} citizens to leave!")
-                                
-        # High happiness effects
+        
         elif happiness > 80:
-            # Chance of population growth
-            if random.random() < 0.15:
-                growth = int(population['citizens'] * 0.03)
+            growth_rate = bonuses.get('population_growth', 0) / 100
+            if ideology == 'pacifist':
+                growth_rate += self.ideology_modifiers['pacifist']['population_growth'] - 1
+            if random.random() < (0.15 + growth_rate):
+                growth = int(population['citizens'] * (0.03 + growth_rate))
                 self.update_population(user_id, {"citizens": growth})
-                self.db.log_event(user_id, "growth", "Population Boom", 
+                self.db.log_event(user_id, "growth", "Population Boom",
                                 f"High happiness attracted {growth} new citizens!")
 
     def process_hunger(self, user_id: str):
@@ -272,22 +314,18 @@ class CivilizationManager:
         population = civ['population']
         resources = civ['resources']
         
-        # Calculate food needed
         food_needed = int(population['citizens'] * 0.2)
         
         if resources['food'] < food_needed:
-            # Not enough food - increase hunger
             hunger_increase = min(20, food_needed - resources['food'])
             self.update_population(user_id, {"hunger": hunger_increase})
             
-            # Severe hunger effects
             if population['hunger'] > 80:
                 starvation_loss = int(population['citizens'] * 0.02)
                 self.update_population(user_id, {"citizens": -starvation_loss, "happiness": -10})
-                self.db.log_event(user_id, "famine", "Famine Strikes", 
+                self.db.log_event(user_id, "famine", "Famine Strikes",
                                 f"Severe hunger caused {starvation_loss} citizens to perish!")
         else:
-            # Enough food - reduce hunger and consume food
             self.update_resources(user_id, {"food": -food_needed})
             if population['hunger'] > 0:
                 self.update_population(user_id, {"hunger": -5})
@@ -300,7 +338,11 @@ class CivilizationManager:
             
         ideology = civ['ideology']
         modifiers = self.ideology_modifiers.get(ideology, {})
-        return modifiers.get(modifier_type, 1.0)
+        base_modifier = modifiers.get(modifier_type, 1.0)
+        
+        if modifier_type in ['soldier_training_speed', 'combat_strength', 'trade_profit', 'population_growth']:
+            return base_modifier + (civ['bonuses'].get(modifier_type, 0) / 100)
+        return base_modifier
 
     def get_name_bonus(self, user_id: str, bonus_type: str) -> float:
         """Get name-based bonus"""
@@ -309,16 +351,12 @@ class CivilizationManager:
             return 0.0
             
         bonuses = civ.get('bonuses', {})
-        return bonuses.get(f"{bonus_type}_bonus", 0.0) / 100.0  # Convert percentage to decimal
+        return bonuses.get(f"{bonus_type}_bonus", 0.0) / 100.0
 
     def calculate_total_modifier(self, user_id: str, action_type: str) -> float:
         """Calculate total modifier for an action"""
         base_modifier = 1.0
-        
-        # Apply ideology modifier
         ideology_modifier = self.get_ideology_modifier(user_id, action_type)
-        
-        # Apply name bonuses
         name_bonus = 0.0
         if action_type == "luck":
             name_bonus = self.get_name_bonus(user_id, "luck")
@@ -334,7 +372,6 @@ class CivilizationManager:
             return False
             
         resources = civ['resources']
-        
         for resource, cost in costs.items():
             if resource in resources and resources[resource] < cost:
                 return False
@@ -346,7 +383,6 @@ class CivilizationManager:
         if not self.can_afford(user_id, costs):
             return False
             
-        # Convert costs to negative values for update_resources
         negative_costs = {resource: -cost for resource, cost in costs.items()}
         return self.update_resources(user_id, negative_costs)
 
@@ -360,8 +396,8 @@ class CivilizationManager:
         population = civ['population']
         military = civ['military']
         territory = civ['territory']
+        bonuses = civ['bonuses']
         
-        # Calculate power components
         resource_power = sum(resources.values()) // 10
         population_power = population['citizens'] * 2
         military_power = military['soldiers'] * 5 + military['spies'] * 10
@@ -369,7 +405,9 @@ class CivilizationManager:
         territory_power = territory['land_size'] // 100
         happiness_power = population['happiness']
         
-        total_power = (resource_power + population_power + military_power + 
+        defense_bonus = bonuses.get('defense_strength', 0)
+        total_power = (resource_power + population_power + military_power +
                       tech_power + territory_power + happiness_power)
         
+        total_power = int(total_power * (1 + defense_bonus / 100))
         return total_power
