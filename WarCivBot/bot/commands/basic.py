@@ -12,7 +12,7 @@ from bot.utils import format_number, get_ascii_art, create_embed
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges per user
+MAX_CONVERSATION_HISTORY = 30  # Keep last 5 exchanges per user
 CONVERSATION_TIMEOUT = 1800  # 30 minutes in seconds
 
 class BasicCommands(commands.Cog):
@@ -462,75 +462,112 @@ StoreCommands:
         
         await ctx.send(embed=embed)
 
-    @commands.command(name='warhelp')
+       @commands.command(name='warhelp')
     async def warbot_help_command(self, ctx, category: str = None):
-        """Display help information"""
+        """Display comprehensive help information"""
         embed = guilded.Embed(
-            title="🤖 NationBot Command Guide",
-            description="Master your civilization and dominate the world through strategy and cunning!",
+            title="🤖 NationBot Command Encyclopedia",
+            description="Every command available in NationBot. Use `.warhelp <category>` for specific help.\n"
+                        "Example: `.warhelp Military` or `.warhelp Economy`",
             color=0x1e90ff
         )
         
-        help_text = """
-**🏛️ CIVILIZATION BASICS**
-• `.start <name>` - Found your civilization
-• `.status` - View your empire's current state
-• `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy, destruction, pacifist)
+        # BASIC COMMANDS
+        basic_commands = """
+**🏛️ BASIC COMMANDS**
+• `.start <name>` - Found your civilization with a cinematic intro
+• `.status` - View your empire's complete status
+• `.ideology <type>` - Choose government (fascism/democracy/communism/theocracy/anarchy/destruction/pacifist)
+• `.warhelp` - Show this help menu
+• `@NationBot <question>` - Ask the AI assistant anything about the game
+"""
 
-**💰 ECONOMIC COMMANDS**
-• `.farm` - Farm food for your civilization
-• `.mine` - Mine stone and wood from your territory
-• `.fish` - Fish for food or occasionally find treasure
-• `.gather` - Gather random resources from your territory
-• `.tax` - Collect taxes from your citizens
-• `.invest` - Invest gold for delayed profit
-• `.lottery` - Gamble gold for a chance at the jackpot
+        # ECONOMY COMMANDS
+        economy_commands = """
+**💰 ECONOMY COMMANDS**
+• `.farm` - Farm food (5 min cooldown)
+• `.mine` - Mine stone and wood (5 min cooldown)
+• `.fish` - Fish for food or treasure (5 min cooldown)
+• `.gather` - Gather random resources (10 min cooldown)
+• `.harvest` - Large harvest (30 min cooldown)
+• `.tax` - Collect taxes from citizens
+• `.invest <amount>` - Invest gold for 2x return after 1 hour
+• `.lottery <amount>` - Gamble gold for jackpot chance
+• `.work` - Citizens work for immediate gold
+• `.drive` - Unemploy citizens to free them for other tasks
+• `.cheer` - Boost citizen happiness slightly
+• `.festival` - Grand festival for major happiness boost
+• `.raidcaravan` - Attack NPC merchants for loot
+"""
 
+        # MILITARY COMMANDS
+        military_commands = """
 **⚔️ MILITARY COMMANDS**
-• `.train <soldiers|spies> <amount>` - Train military units
-• `.declare @user` - Declare war formally
-• `.attack @user` - Launch military assault
+• `.train soldiers|spies <amount>` - Train military units
+• `.find` - Recruit wandering soldiers
+• `.declare @user` - Formally declare war
+• `.attack @user` - Launch direct attack
 • `.siege @user` - Lay siege to enemy territory
 • `.stealthbattle @user` - Covert military operation
-• `.find` - Search for wandering soldiers to recruit
-• `.cards` - Manage technology cards
+• `.cards` - View/manage technology cards
+• `.accept_peace @user` - Accept peace offer
+• `.peace @user` - Offer peace treaty
+"""
 
-**🕵️ ESPIONAGE COMMANDS**
-• `.spy @user` - Gather intelligence on enemies
-• `.sabotage @user` - Disrupt enemy operations
-• `.steal @user <resource>` - Steal resources covertly
-
-**🤝 DIPLOMATIC COMMANDS**
-• `.ally @user` - Form strategic alliance
-• `.break @user` - End alliance or peace
+        # DIPLOMACY COMMANDS
+        diplomacy_commands = """
+**🤝 DIPLOMACY COMMANDS**
+• `.ally @user` - Propose alliance
+• `.break @user` - End alliance/peace
 • `.mail @user <message>` - Send diplomatic message
 • `.send @user <resource> <amount>` - Gift resources
-• `.peace @user` - Offer peace treaty
-• `.accept_peace @user` - Accept peace offer
-
-**💎 HYPERITEMS & SPECIALS**
-• `.blackmarket` - Purchase random HyperItems
-• `.inventory` - View your HyperItems
-• `.propaganda @user` - Use Propaganda Kit to convert soldiers
-• `.nuke @user` - Launch nuclear attack (requires Warhead)
-• `.boosttech` - Instantly advance technology (requires Ancient Scroll)
-
-**ℹ️ INFORMATION**
-• `.warhelp` - Display this help menu
-• Ping me (@NationBot) for AI assistance with any game questions!
+• `.inbox` - Check pending proposals
+• `.acceptally @user` - Accept alliance
+• `.rejectally @user` - Reject alliance
+• `.trade @user <offer> <request>` - Propose trade
+• `.accepttrade @user` - Accept trade
+• `.rejecttrade @user` - Reject trade
+• `.coalition @alliance` - Form coalition against alliance
 """
+
+        # HYPERITEM COMMANDS
+        hyperitem_commands = """
+**💎 HYPERITEM COMMANDS**
+• `.blackmarket` - Buy random HyperItems
+• `.inventory` - View your HyperItems
+• `.backstab @user` - Use Dagger for assassination
+• `.bomb @user` - Use Missiles for attack
+• `.boosttech` - Use Ancient Scroll to advance tech
+• `.hiremercs` - Use Mercenary Contract for soldiers
+• `.luckystrike` - Use Lucky Charm for guaranteed success
+• `.megainvent` - Use Tech Core for multiple tech levels
+• `.mintgold` - Use Gold Mint for massive gold
+• `.nuke @user` - Nuclear attack (Warhead required)
+• `.obliterate @user` - Total destruction (HyperLaser)
+• `.propaganda @user` - Use Propaganda Kit to steal soldiers
+• `.shield` - Check Anti-Nuke Shield status
+• `.superharvest` - Use Harvest Engine for food
+• `.superspy @user` - Elite espionage (Spy Network)
+"""
+
+        # STORE COMMANDS
+        store_commands = """
+**🛒 STORE COMMANDS**
+• `.store` - View civilization upgrades
+• `.market` - Black Market information
+• `.buy <item>` - Purchase store upgrades
+"""
+
+        # Add all categories to embed
+        embed.add_field(name="Basic", value=basic_commands, inline=False)
+        embed.add_field(name="Economy", value=economy_commands, inline=False)
+        embed.add_field(name="Military", value=military_commands, inline=False)
+        embed.add_field(name="Diplomacy", value=diplomacy_commands, inline=False)
+        embed.add_field(name="HyperItems", value=hyperitem_commands, inline=False)
+        embed.add_field(name="Store", value=store_commands, inline=False)
         
-        embed.description = help_text
-        
-        embed.add_field(
-            name="🌟 Pro Tips",
-            value="• Maintain happiness to keep your civilization stable\n"
-                  "• Different ideologies provide unique bonuses/penalties\n"
-                  "• Form alliances for mutual protection and growth\n"
-                  "• Use HyperItems strategically for maximum impact\n"
-                  "• Balance resource production with military expansion",
-            inline=False
-        )
+        # Add pro tips footer
+        embed.set_footer(text="💡 Pro Tip: Combine strategies! Use HyperItems during wars, maintain happiness for productivity, and form strong alliances.")
         
         await ctx.send(embed=embed)
 
