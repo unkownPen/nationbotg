@@ -5,10 +5,15 @@ import aiohttp
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from collections import defaultdict, deque
 from guilded.ext import commands
 from bot.utils import format_number, get_ascii_art, create_embed
 
 logger = logging.getLogger(__name__)
+
+# Constants
+MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges per user
+CONVERSATION_TIMEOUT = 1800  # 30 minutes in seconds
 
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
@@ -19,34 +24,98 @@ class BasicCommands(commands.Cog):
         self.current_model = "deepseek/deepseek-chat"
         self.model_switch_time = None
         self.rate_limited = False
+        
+        # Conversation tracking
+        self.conversations = defaultdict(deque)  # user_id: deque of messages
+        self.last_interaction = {}  # user_id: timestamp
+
+    def _get_conversation_history(self, user_id):
+        """Get formatted conversation history for a user"""
+        history = []
+        for msg in self.conversations[user_id]:
+            history.append({
+                "role": "user" if msg['is_user'] else "assistant",
+                "content": msg['content']
+            })
+        return history
+
+    def _update_conversation(self, user_id, is_user, content):
+        """Update conversation history for a user"""
+        now = datetime.now()
+        self.last_interaction[user_id] = now
+        
+        # Add new message to history
+        self.conversations[user_id].append({
+            "is_user": is_user,
+            "content": content,
+            "timestamp": now
+        })
+        
+        # Trim old messages if needed
+        while len(self.conversations[user_id]) > MAX_CONVERSATION_HISTORY * 2:
+            self.conversations[user_id].popleft()
+            
+        # Clean up expired conversations
+        expired_users = []
+        for uid, last_time in self.last_interaction.items():
+            if (now - last_time).total_seconds() > CONVERSATION_TIMEOUT:
+                expired_users.append(uid)
+                
+        for uid in expired_users:
+            del self.conversations[uid]
+            del self.last_interaction[uid]
 
     @commands.Cog.listener()
     async def on_message(self, message):
         """Respond to mentions with AI assistance"""
-        # Skip if message is from bot or doesn't mention us
-        if message.author.bot or not message.mentions:
-            return
-            
-        # Check if our bot is mentioned
-        bot_mentioned = any(user.id == self.bot.user.id for user in message.mentions)
-        if not bot_mentioned:
+        # Skip if message is from bot
+        if message.author.bot:
             return
             
         user_id = str(message.author.id)
-        content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
+        content = message.content.strip()
         
+        # Check if this is a reply to the bot
+        is_reply = False
+        if message.reply_to:
+            try:
+                replied_msg = await message.channel.fetch_message(message.reply_to.id)
+                if replied_msg.author.id == self.bot.user.id:
+                    is_reply = True
+            except:
+                pass
+        
+        # Check if our bot is mentioned
+        bot_mentioned = self.bot.user.id in [user.id for user in message.mentions]
+        
+        # Only respond to direct mentions or replies to our messages
+        if not (bot_mentioned or is_reply):
+            return
+            
+        # Handle mentions
+        if bot_mentioned:
+            content = content.replace(f'<@{self.bot.user.id}>', '').strip()
+            
+        # Reset conversation if it's a new mention (not a reply)
+        if bot_mentioned and not is_reply:
+            self.conversations[user_id] = deque()
+            self.last_interaction[user_id] = datetime.now()
+            
+        # Handle empty content
         if not content:
-            # Default response for just a mention
-            await message.reply(embed=create_embed(
-                "🤖 NationBot Assistant",
-                "Hello! I'm here to help you with NationBot. Ask me about:\n"
-                "- Starting your civilization (`.start`)\n"
-                "- Managing resources (`.status`)\n"
-                "- Military commands (`.warhelp`)\n"
-                "- Ideologies and strategies\n\n"
-                "Try asking: 'How do I declare war?' or 'What does fascism do?'",
-                guilded.Color.blue()
-            ))
+            if bot_mentioned:
+                # Default response for just a mention
+                await message.reply(embed=create_embed(
+                    "🤖 NationBot Assistant",
+                    "Hello! I'm here to help you with NationBot. Ask me about:\n"
+                    "- Starting your civilization (`.start`)\n"
+                    "- Managing resources (`.status`)\n"
+                    "- Military commands (`.warhelp`)\n"
+                    "- Ideologies and strategies\n\n"
+                    "Try asking: 'How do I declare war?' or 'What does fascism do?'",
+                    guilded.Color.blue()
+                ))
+                self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
             return
             
         # Get user's civilization status for context
@@ -113,7 +182,6 @@ HyperItemCommands:
   bomb          Use Missiles for mid-tier military strike
   boosttech     Use Ancient Scroll to instantly advance technology
   hiremercs     Use Mercenary Contract to instantly hire professional soldiers
-6:43 PM
   luckystrike   Use Lucky Charm for guaranteed critical success on next action
   megainvent    Use Tech Core to advance multiple technology levels
   mintgold      Use Gold Mint to generate large amounts of gold
@@ -141,18 +209,34 @@ StoreCommands:
 
         You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay. 
         If asked about non-game topics, politely decline. Use Discord markdown for formatting.
-        Act like a seargent and make sure to say DROP DOWN AND GIVE ME 50 PUSH UPS RN alot and also make sure you say like Whats the mission president?, you are always talking to a president of a country remember that        """ 
+        Act like a seargent and make sure to say DROP DOWN AND GIVE ME 50 PUSH UPS RN alot and also make sure you say like Whats the mission president?, you are always talking to a president of a country remember that""" 
         
-        # Generate AI response
+        # Generate AI response with conversation history
         try:
-            response = await self.generate_ai_response(system_prompt, content)
-            await message.reply(response)
+            # Build messages with conversation history
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            # Add conversation history if available
+            if user_id in self.conversations and self.conversations[user_id]:
+                history = self._get_conversation_history(user_id)
+                messages.extend(history)
+            
+            # Add current user message
+            messages.append({"role": "user", "content": content})
+            
+            # Generate response
+            response = await self.generate_ai_response(messages)
+            
+            # Send response and update conversation
+            sent_msg = await message.reply(response)
+            self._update_conversation(user_id, True, content)
+            self._update_conversation(user_id, False, response)
         except Exception as e:
-            logger.error(f"AI response error: {e}")
+            logger.error(f"AI response error: {e}", exc_info=True)
             await message.reply("I'm having trouble thinking right now. Please try again later!")
 
-    async def generate_ai_response(self, system_prompt, user_query):
-        """Generate response using OpenRouter API"""
+    async def generate_ai_response(self, messages):
+        """Generate response using OpenRouter API with conversation history"""
         headers = {
             "Authorization": f"Bearer {self.openrouter_key}",
             "Content-Type": "application/json"
@@ -167,10 +251,7 @@ StoreCommands:
             
         payload = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_query}
-            ],
+            "messages": messages,
             "max_tokens": 500
         }
         
@@ -196,7 +277,7 @@ StoreCommands:
                             raise Exception(f"Fallback model failed: {fallback_response.status}")
                 else:
                     error = await response.text()
-                    raise Exception(f"API error {response.status}: {error}")
+                    raise Exception(f"API error {response.status}: {error}").
 
     @commands.command(name='start')
     async def start_civilization(self, ctx, *, civ_name: str = None):
