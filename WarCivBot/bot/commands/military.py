@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from bot.utils import format_number, create_embed, check_cooldown_decorator
 
-logger = logging.getLogger(__name__)  # Fixed logger initialization
+logger = logging.getLogger(__name__)
 
 class MilitaryCommands(commands.Cog):
     def __init__(self, bot):
@@ -16,30 +16,33 @@ class MilitaryCommands(commands.Cog):
 
     def create_tables(self):
         """Create necessary database tables"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wars (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                attacker_id TEXT NOT NULL,
-                defender_id TEXT NOT NULL,
-                war_type TEXT NOT NULL,
-                result TEXT NOT NULL DEFAULT 'ongoing',
-                declared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                ended_at TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS peace_offers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                offerer_id TEXT NOT NULL,
-                receiver_id TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                responded_at TIMESTAMP
-            )
-        ''')
-        conn.commit()
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS wars (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    attacker_id TEXT NOT NULL,
+                    defender_id TEXT NOT NULL,
+                    war_type TEXT NOT NULL,
+                    result TEXT NOT NULL DEFAULT 'ongoing',
+                    declared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ended_at TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS peace_offers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    offerer_id TEXT NOT NULL,
+                    receiver_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    responded_at TIMESTAMP
+                )
+            ''')
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error creating tables: {e}", exc_info=True)
 
     @commands.command(name='train')
     @check_cooldown_decorator(minutes=5)
@@ -177,7 +180,7 @@ class MilitaryCommands(commands.Cog):
             cursor.execute('''
                 INSERT INTO wars (attacker_id, defender_id, war_type, declared_at)
                 VALUES (?, ?, ?, ?)
-            ''', (user_id, target_id, 'declared', datetime.utcnow()))  # Fixed timestamp
+            ''', (user_id, target_id, 'declared', datetime.utcnow()))
             
             conn.commit()
             
@@ -193,7 +196,7 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, `.stealthbattle`, or `.cards` to gain advantages.", inline=False)
             
             await ctx.send(embed=embed)
-            await ctx.send(f"{target.mention} ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.name}) has declared war on your civilization!")
+            await ctx.send(f"{target.mention} ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.display_name}) has declared war on your civilization!")
                 
         except Exception as e:
             logger.error(f"Error declaring war: {e}", exc_info=True)
@@ -753,12 +756,12 @@ class MilitaryCommands(commands.Cog):
             
             embed = create_embed(
                 "🕊️ Peace Offer Sent!",
-                f"**{civ['name']}** has offered peace to **{target_civ['name']}**! They can accept with `.accept_peace @{ctx.author.name}`.",
+                f"**{civ['name']}** has offered peace to **{target_civ['name']}**! They can accept with `.accept_peace @{ctx.author.display_name}`.",
                 guilded.Color.green()
             )
             
             await ctx.send(embed=embed)
-            await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.name}` to accept!")
+            await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
                 
         except Exception as e:
             logger.error(f"Error in peace command: {e}", exc_info=True)
@@ -822,13 +825,13 @@ class MilitaryCommands(commands.Cog):
             cursor.execute('''
                 UPDATE wars SET result = 'peace', ended_at = ?
                 WHERE id = ?
-            ''', (datetime.utcnow(), war_id))  # Fixed timestamp
+            ''', (datetime.utcnow(), war_id))
             
             # Update peace offer status
             cursor.execute('''
                 UPDATE peace_offers SET status = 'accepted', responded_at = ?
                 WHERE id = ?
-            ''', (datetime.utcnow(), offer[0]))  # Fixed timestamp
+            ''', (datetime.utcnow(), offer[0]))
             
             conn.commit()
             
@@ -848,7 +851,7 @@ class MilitaryCommands(commands.Cog):
                               inline=False)
             
             await ctx.send(embed=embed)
-            await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.name}) has accepted your peace offer! The war is over.")
+            await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted your peace offer! The war is over.")
                 
             # Log events
             self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
