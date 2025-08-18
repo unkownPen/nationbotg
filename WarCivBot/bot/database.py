@@ -61,7 +61,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS cooldowns (
                 user_id TEXT,
                 command TEXT,
-                expires_at TIMESTAMP,
+                last_used_at TIMESTAMP,
                 PRIMARY KEY (user_id, command)
             )
         ''')
@@ -281,58 +281,43 @@ class Database:
             logger.error(f"Error updating civilization for user {user_id}: {e}")
             return False
 
-    def set_cooldown(self, user_id: str, command: str, duration_minutes: int) -> bool:
-        """Set a cooldown for a user command"""
+    def get_command_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
+        """Get the last used time for a command, or None if no cooldown"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            expires_at = datetime.now() + timedelta(minutes=duration_minutes)
+            cursor.execute('''
+                SELECT last_used_at FROM cooldowns 
+                WHERE user_id = ? AND command = ?
+            ''', (user_id, command))
+            
+            row = cursor.fetchone()
+            if row:
+                return datetime.fromisoformat(row['last_used_at'])
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting command cooldown: {e}")
+            return None
+
+    def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime) -> bool:
+        """Set the last used time for a command"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT OR REPLACE INTO cooldowns (user_id, command, expires_at)
+                INSERT OR REPLACE INTO cooldowns (user_id, command, last_used_at)
                 VALUES (?, ?, ?)
-            ''', (user_id, command, expires_at))
+            ''', (user_id, command, timestamp.isoformat()))
             
             conn.commit()
             return True
             
         except Exception as e:
-            logger.error(f"Error setting cooldown: {e}")
+            logger.error(f"Error setting command cooldown: {e}")
             return False
-
-    def check_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
-        """Check if user has cooldown for command. Returns expiry time if on cooldown, None otherwise"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT expires_at FROM cooldowns 
-                WHERE user_id = ? AND command = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (user_id, command))
-            
-            row = cursor.fetchone()
-            if row:
-                return datetime.fromisoformat(row['expires_at'])
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error checking cooldown: {e}")
-            return None
-
-    def clear_expired_cooldowns(self):
-        """Clear expired cooldowns from database"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('DELETE FROM cooldowns WHERE expires_at <= CURRENT_TIMESTAMP')
-            conn.commit()
-            logger.info(f"Cleared {cursor.rowcount} expired cooldowns")
-            
-        except Exception as e:
-            logger.error(f"Error clearing expired cooldowns: {e}")
 
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
         """Get all civilizations for leaderboards"""
@@ -666,9 +651,6 @@ class Database:
             # Delete expired messages
             cursor.execute('DELETE FROM messages WHERE expires_at <= CURRENT_TIMESTAMP')
             message_count = cursor.rowcount
-            
-            # Clear expired cooldowns
-            self.clear_expired_cooldowns()
             
             conn.commit()
             logger.info(f"Cleaned up expired requests: "
