@@ -5,15 +5,17 @@ import logging
 from datetime import datetime
 from bot.utils import format_number, create_embed, check_cooldown_decorator
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)  # Fixed logger initialization
 
 class MilitaryCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
+        self.create_tables()
 
-        # Create necessary tables
+    def create_tables(self):
+        """Create necessary database tables"""
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
@@ -175,7 +177,7 @@ class MilitaryCommands(commands.Cog):
             cursor.execute('''
                 INSERT INTO wars (attacker_id, defender_id, war_type, declared_at)
                 VALUES (?, ?, ?, ?)
-            ''', (user_id, target_id, 'declared', datetime.now()))
+            ''', (user_id, target_id, 'declared', datetime.utcnow()))  # Fixed timestamp
             
             conn.commit()
             
@@ -461,7 +463,7 @@ class MilitaryCommands(commands.Cog):
                         }
                         self.civ_manager.update_resources(target_id, extra_damage)
                         result_text += f" Your destructive spies caused extra chaos!"
-                    
+                
                 elif operation_type == 'theft':
                     # Steal resources
                     stolen = min(int(target_civ['resources']['gold'] * random.uniform(0.05, 0.15)), target_civ['resources']['gold'])
@@ -820,13 +822,13 @@ class MilitaryCommands(commands.Cog):
             cursor.execute('''
                 UPDATE wars SET result = 'peace', ended_at = ?
                 WHERE id = ?
-            ''', (datetime.now(), war_id))
+            ''', (datetime.utcnow(), war_id))  # Fixed timestamp
             
             # Update peace offer status
             cursor.execute('''
                 UPDATE peace_offers SET status = 'accepted', responded_at = ?
                 WHERE id = ?
-            ''', (datetime.now(), offer[0]))
+            ''', (datetime.utcnow(), offer[0]))  # Fixed timestamp
             
             conn.commit()
             
@@ -931,5 +933,5 @@ class MilitaryCommands(commands.Cog):
             logger.error("Error calculating military strength - missing data in civilization object")
             return 0
 
-def setup(bot):
-    bot.add_cog(MilitaryCommands(bot))
+async def setup(bot):
+    await bot.add_cog(MilitaryCommands(bot))
