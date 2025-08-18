@@ -3,7 +3,7 @@ import guilded
 from guilded.ext import commands
 import logging
 from datetime import datetime
-from bot.utils import format_number, create_embed
+from bot.utils import format_number, create_embed, check_cooldown_decorator
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class MilitaryCommands(commands.Cog):
         conn.commit()
 
     @commands.command(name='train')
+    @check_cooldown_decorator(minutes=5)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         if not unit_type:
@@ -72,12 +73,12 @@ class MilitaryCommands(commands.Cog):
             await ctx.send(f"❌ Not enough resources! Need {format_number(gold_cost)} gold and {format_number(food_cost)} food.")
             return
             
-        # Apply ideology modifier to training speed
+        # Apply ideology and card modifiers to training speed
         training_modifier = self.civ_manager.get_ideology_modifier(user_id, "soldier_training_speed")
         
         if training_modifier > 1.0:
             # Faster training - chance for bonus units
-            bonus_chance = (training_modifier - 1.0) * 2  # Convert to bonus chance
+            bonus_chance = (training_modifier - 1.0) * 2
             if random.random() < bonus_chance:
                 bonus_units = max(1, amount // 10)
                 amount += bonus_units
@@ -168,7 +169,7 @@ class MilitaryCommands(commands.Cog):
             conn.commit()
             
             # Log the declaration
-            self.db.log_event(user_id, "war_declaration", "War Declared", 
+            self.db.log_event(user_id, "war_declaration", "War Declared",
                             f"{civ['name']} has declared war on {target_civ['name']}!")
             
             embed = create_embed(
@@ -176,7 +177,7 @@ class MilitaryCommands(commands.Cog):
                 f"**{civ['name']}** has officially declared war on **{target_civ['name']}**!",
                 guilded.Color.red()
             )
-            embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, or `.stealthbattle` against this civilization.", inline=False)
+            embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, `.stealthbattle`, or `.cards` to gain advantages.", inline=False)
             
             await ctx.send(embed=embed)
             await ctx.send(f"<@{target_id}> ⚔️ **WAR DECLARED!** {civ['name']} (led by {ctx.author.name}) has declared war on your civilization!")
@@ -186,6 +187,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
+    @check_cooldown_decorator(minutes=15)
     async def attack_civilization(self, ctx, target: str = None):
         """Launch a direct attack on another civilization"""
         if not target:
@@ -250,10 +252,10 @@ class MilitaryCommands(commands.Cog):
         if target_civ.get('ideology') == 'fascism':
             defender_roll *= 1.1
             
-        # Destruction ideology bonus/penalty
+        # Destruction and pacifist ideology effects
         if civ.get('ideology') == 'destruction':
             attacker_roll *= 1.15  # More aggressive
-            defender_roll *= 0.9   # But less defensive
+            defender_roll *= 0.9   # Less defensive
         if target_civ.get('ideology') == 'pacifist':
             defender_roll *= 0.85  # Pacifists are worse at defense
             
@@ -262,17 +264,14 @@ class MilitaryCommands(commands.Cog):
         
         # Determine outcome
         if final_attacker_strength > final_defender_strength:
-            # Attacker wins
             victory_margin = final_attacker_strength / final_defender_strength
             await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin)
         else:
-            # Defender wins
             defeat_margin = final_defender_strength / final_attacker_strength
             await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
 
     async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process successful attack"""
-        # Calculate losses and gains
         attacker_losses = random.randint(2, 8)
         defender_losses = int(attacker_losses * margin)
         
@@ -305,11 +304,11 @@ class MilitaryCommands(commands.Cog):
             guilded.Color.green()
         )
         
-        embed.add_field(name="Battle Results", 
-                       value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers", 
+        embed.add_field(name="Battle Results",
+                       value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers",
                        inline=True)
         
-        spoils_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" 
+        spoils_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}"
                                for res, amt in spoils.items() if amt > 0])
         embed.add_field(name="Spoils of War", value=spoils_text, inline=True)
         embed.add_field(name="Territory Gained", value=f"🏞️ {format_number(territory_gained)} km²", inline=True)
@@ -318,8 +317,8 @@ class MilitaryCommands(commands.Cog):
         if attacker_civ.get('ideology') == 'destruction':
             extra_damage = int(defender_civ['resources']['gold'] * 0.05)
             self.civ_manager.update_resources(defender_id, {"gold": -extra_damage})
-            embed.add_field(name="Destruction Bonus", 
-                          value=f"Your destructive forces caused extra damage! (-{format_number(extra_damage)} enemy gold)", 
+            embed.add_field(name="Destruction Bonus",
+                          value=f"Your destructive forces caused extra damage! (-{format_number(extra_damage)} enemy gold)",
                           inline=False)
         
         await ctx.send(embed=embed)
@@ -328,12 +327,11 @@ class MilitaryCommands(commands.Cog):
         self.db.log_event(attacker_id, "victory", "Battle Victory", f"Defeated {defender_civ['name']} in battle!")
         self.db.log_event(defender_id, "defeat", "Battle Defeat", f"Defeated by {attacker_civ['name']} in battle.")
         
-        # Notify defender in the channel
+        # Notify defender
         await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
 
     async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process failed attack"""
-        # Calculate losses
         attacker_losses = int(random.randint(5, 15) * margin)
         defender_losses = random.randint(2, 5)
         
@@ -350,8 +348,8 @@ class MilitaryCommands(commands.Cog):
             guilded.Color.red()
         )
         
-        embed.add_field(name="Battle Results", 
-                       value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers", 
+        embed.add_field(name="Battle Results",
+                       value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers",
                        inline=True)
         embed.add_field(name="Consequences", value="Your people are demoralized! (-10 happiness)", inline=False)
         
@@ -359,8 +357,8 @@ class MilitaryCommands(commands.Cog):
         if defender_civ.get('ideology') == 'pacifist':
             peace_chance = random.random()
             if peace_chance > 0.7:
-                embed.add_field(name="Pacifist Appeal", 
-                              value="The defenders have offered a chance for peace through diplomacy! Use `.peace @user` to propose peace.", 
+                embed.add_field(name="Pacifist Appeal",
+                              value="The defenders have offered a chance for peace through diplomacy! Use `.peace @user` to propose peace.",
                               inline=False)
         
         await ctx.send(embed=embed)
@@ -369,10 +367,11 @@ class MilitaryCommands(commands.Cog):
         self.db.log_event(attacker_id, "defeat", "Battle Defeat", f"Defeated by {defender_civ['name']} in battle.")
         self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']}!")
         
-        # Notify defender in the channel
+        # Notify defender
         await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
 
     @commands.command(name='stealthbattle')
+    @check_cooldown_decorator(minutes=20)
     async def stealth_battle(self, ctx, target: str = None):
         """Conduct a spy-based stealth attack"""
         if not target:
@@ -410,7 +409,7 @@ class MilitaryCommands(commands.Cog):
         
         # Base success chance
         success_chance = 0.6 + (attacker_spy_power - defender_spy_power) / 100
-        success_chance = max(0.2, min(0.9, success_chance))  # Clamp between 20-90%
+        success_chance = max(0.2, min(0.9, success_chance))
         
         # Apply ideology modifiers
         if civ.get('ideology') == 'anarchy':
@@ -496,6 +495,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send(f"<@{target_id}> 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
 
     @commands.command(name='siege')
+    @check_cooldown_decorator(minutes=30)
     async def siege_city(self, ctx, target: str = None):
         """Lay siege to an enemy civilization"""
         if not target:
@@ -572,8 +572,8 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager.update_resources(target_id, negative_drain)
         
         # Happiness effects
-        self.civ_manager.update_population(target_id, {"happiness": -15})  # Being sieged is demoralizing
-        self.civ_manager.update_population(user_id, {"happiness": -5})  # Sieging is expensive
+        self.civ_manager.update_population(target_id, {"happiness": -15})
+        self.civ_manager.update_population(user_id, {"happiness": -5})
         
         embed = create_embed(
             "🏰 Siege in Progress",
@@ -581,7 +581,7 @@ class MilitaryCommands(commands.Cog):
             guilded.Color.orange()
         )
         
-        drain_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}" 
+        drain_text = "\n".join([f"{'🪙' if res == 'gold' else '🌾' if res == 'food' else '🪨' if res == 'stone' else '🪵'} {format_number(amt)} {res.capitalize()}"
                                for res, amt in resource_drain.items() if amt > 0])
         embed.add_field(name="Enemy Resources Drained", value=drain_text, inline=True)
         
@@ -595,8 +595,8 @@ class MilitaryCommands(commands.Cog):
                 "food": int(target_civ['resources']['food'] * 0.05)
             }
             self.civ_manager.update_resources(target_id, {k: -v for k, v in extra_damage.items()})
-            embed.add_field(name="Destruction Bonus", 
-                          value=f"Your destructive siege caused extra damage!\n🪙 {format_number(extra_damage['gold'])} Gold\n🌾 {format_number(extra_damage['food'])} Food", 
+            embed.add_field(name="Destruction Bonus",
+                          value=f"Your destructive siege caused extra damage!\n🪙 {format_number(extra_damage['gold'])} Gold\n🌾 {format_number(extra_damage['food'])} Food",
                           inline=False)
         
         await ctx.send(embed=embed)
@@ -605,10 +605,11 @@ class MilitaryCommands(commands.Cog):
         self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
         self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
         
-        # Notify defender in the channel
+        # Notify defender
         await ctx.send(f"<@{target_id}> 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
 
     @commands.command(name='find')
+    @check_cooldown_decorator(minutes=10)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         user_id = str(ctx.author.id)
@@ -619,7 +620,7 @@ class MilitaryCommands(commands.Cog):
             return
             
         # Base chance and amount
-        base_chance = 0.5  # 50% chance
+        base_chance = 0.5
         min_soldiers = 5
         max_soldiers = 20
         
@@ -628,8 +629,8 @@ class MilitaryCommands(commands.Cog):
             base_chance *= 1.9  # Pacifists are more likely
             max_soldiers = 15  # Smaller groups
         elif civ.get('ideology') == 'destruction':
-            base_chance *= 0.75  # less likely but more groups
-            max_soldiers = 30  # Larger groups
+            base_chance *= 0.75  # Less likely but larger groups
+            max_soldiers = 30
             min_soldiers = 10
             
         # Happiness modifier
@@ -650,7 +651,7 @@ class MilitaryCommands(commands.Cog):
             
             embed = create_embed(
                 "🔍 Soldiers Found!",
-                f"You've discovered {soldiers_found} wandering soldiers who have joined your army!" + 
+                f"You've discovered {soldiers_found} wandering soldiers who have joined your army!" +
                 (f" (including {bonus} coerced by your destructive reputation)" if bonus else ""),
                 guilded.Color.green()
             )
@@ -666,8 +667,8 @@ class MilitaryCommands(commands.Cog):
             )
             
             if civ.get('ideology') == 'destruction':
-                embed.add_field(name="Destruction Backfire", 
-                              value="Your reputation scared away potential recruits.", 
+                embed.add_field(name="Destruction Backfire",
+                              value="Your reputation scared away potential recruits.",
                               inline=False)
         
         await ctx.send(embed=embed)
@@ -752,6 +753,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to send peace offer. Try again later.")
 
     @commands.command(name='accept_peace')
+    @check_cooldown_decorator(minutes=5)
     async def accept_peace(self, ctx, target: str = None):
         """Accept a peace offer from another civilization"""
         if not target:
@@ -837,8 +839,8 @@ class MilitaryCommands(commands.Cog):
             )
             
             if civ.get('ideology') == 'pacifist' or offerer_civ.get('ideology') == 'pacifist':
-                embed.add_field(name="Pacifist Influence", 
-                              value="The peace movement was strengthened by pacifist ideals!", 
+                embed.add_field(name="Pacifist Influence",
+                              value="The peace movement was strengthened by pacifist ideals!",
                               inline=False)
             
             await ctx.send(embed=embed)
@@ -852,19 +854,71 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error accepting peace: {e}")
             await ctx.send("❌ Failed to accept peace. Try again later.")
 
+    @commands.command(name='cards')
+    @check_cooldown_decorator(minutes=5)
+    async def manage_cards(self, ctx, card_name: str = None):
+        """View or select a card for the current tech level"""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        tech_level = civ['military']['tech_level']
+        
+        if tech_level > 10:
+            await ctx.send("❌ You have reached the maximum tech level (10). No more cards available!")
+            return
+            
+        card_selection = self.db.get_card_selection(user_id, tech_level)
+        
+        if not card_selection:
+            await ctx.send(f"❌ No card selection available for tech level {tech_level}. You may have already chosen a card or need to advance your tech level.")
+            return
+            
+        if card_name:
+            # Attempt to select a card
+            selected_card = self.db.select_card(user_id, tech_level, card_name)
+            if not selected_card:
+                await ctx.send(f"❌ Invalid card name '{card_name}'. Use `.cards` to see available options.")
+                return
+                
+            # Apply the card effect
+            self.civ_manager.apply_card_effect(user_id, selected_card)
+            
+            embed = create_embed(
+                "🎴 Card Selected!",
+                f"You have chosen **{selected_card['name']}**: {selected_card['description']}",
+                guilded.Color.gold()
+            )
+            self.db.log_event(user_id, "card_selected", f"Card Selected: {selected_card['name']}",
+                            selected_card['description'], selected_card['effect'])
+            await ctx.send(embed=embed)
+        else:
+            # Display available cards
+            embed = create_embed(
+                f"🎴 Tech Level {tech_level} Cards",
+                "Choose a card using `.cards <card_name>`",
+                guilded.Color.blue()
+            )
+            cards_text = "\n".join([f"**{card['name']}**: {card['description']}" for card in card_selection['available_cards']])
+            embed.add_field(name="Available Cards", value=cards_text, inline=False)
+            await ctx.send(embed=embed)
+
     def _calculate_military_strength(self, civ):
         """Calculate total military strength of a civilization"""
         soldiers = civ['military']['soldiers']
         spies = civ['military']['spies']
         tech_level = civ['military']['tech_level']
+        bonuses = civ.get('bonuses', {})
         
         base_strength = soldiers * 10 + spies * 5
         tech_bonus = tech_level * 50
-        
-        # Territory defensive bonus
         territory_bonus = civ['territory']['land_size'] / 100
+        defense_bonus = bonuses.get('defense_strength', 0) / 100
         
-        return base_strength + tech_bonus + territory_bonus
+        return (base_strength + tech_bonus + territory_bonus) * (1 + defense_bonus)
 
 def setup(bot):
     bot.add_cog(MilitaryCommands(bot))
