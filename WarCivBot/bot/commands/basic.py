@@ -1,8 +1,11 @@
 import random
 import guilded
-from guilded.ext import commands
-from datetime import datetime
+import os
+import aiohttp
+import asyncio
 import logging
+from datetime import datetime, timedelta
+from guilded.ext import commands
 from bot.utils import format_number, get_ascii_art, create_embed
 
 logger = logging.getLogger(__name__)
@@ -12,6 +15,130 @@ class BasicCommands(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.civ_manager = bot.civ_manager
+        self.openrouter_key = os.getenv('OPENROUTER')
+        self.current_model = "deepseek/deepseek-chat"
+        self.model_switch_time = None
+        self.rate_limited = False
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Respond to mentions with AI assistance"""
+        if message.author.bot or not self.bot.user.mentioned_in(message):
+            return
+            
+        user_id = str(message.author.id)
+        content = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
+        
+        if not content:
+            # Default response for just a mention
+            await message.reply(embed=create_embed(
+                "🤖 NationBot Assistant",
+                "Hello! I'm here to help you with NationBot. Ask me about:\n"
+                "- Starting your civilization (`.start`)\n"
+                "- Managing resources (`.status`)\n"
+                "- Military commands (`.warhelp`)\n"
+                "- Ideologies and strategies\n\n"
+                "Try asking: 'How do I declare war?' or 'What does fascism do?'",
+                guilded.Color.blue()
+            ))
+            return
+            
+        # Get user's civilization status for context
+        civ = self.civ_manager.get_civilization(user_id)
+        civ_status = ""
+        if civ:
+            civ_status = (
+                f"Player's Civilization: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
+                f"Resources: 🪙{format_number(civ['resources']['gold'])} "
+                f"🌾{format_number(civ['resources']['food'])} "
+                f"🪨{format_number(civ['resources']['stone'])} "
+                f"🪵{format_number(civ['resources']['wood'])}\n"
+                f"Military: ⚔️{format_number(civ['military']['soldiers'])} "
+                f"🕵️{format_number(civ['military']['spies'])}\n"
+            )
+        
+        # Prepare system prompt
+        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation Discord game. 
+        Players build civilizations, manage resources, wage wars, and form alliances. 
+        Your role is to help players understand game mechanics and strategies.
+
+        {civ_status}
+        Key Game Concepts:
+        - Resources: gold, food, stone, wood
+        - Military: soldiers, spies, tech_level
+        - Population: citizens, happiness, hunger
+        - Territory: land_size
+        - Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist
+
+        Common Commands:
+        - .start <name>: Begin your civilization
+        - .status: View your civilization
+        - .ideology <type>: Choose government type
+        - .train <soldiers|spies> <amount>: Train military
+        - .attack @user: Attack another player
+        - .declare @user: Declare war
+        - .peace @user: Offer peace
+        - .find: Search for soldiers
+        - .cards: Manage tech cards
+
+        You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay. 
+        If asked about non-game topics, politely decline. Use Discord markdown for formatting.
+        """
+        
+        # Generate AI response
+        try:
+            response = await self.generate_ai_response(system_prompt, content)
+            await message.reply(response)
+        except Exception as e:
+            logger.error(f"AI response error: {e}")
+            await message.reply("I'm having trouble thinking right now. Please try again later!")
+
+    async def generate_ai_response(self, system_prompt, user_query):
+        """Generate response using OpenRouter API"""
+        headers = {
+            "Authorization": f"Bearer {self.openrouter_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Check if we need to switch models due to rate limiting
+        if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
+            model = "moonshotai/kimi-k2:free"
+        else:
+            model = self.current_model
+            self.rate_limited = False
+            
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            "max_tokens": 500
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://openrouter.ai/api/v1/chat/completions", 
+                                   headers=headers, json=payload) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data['choices'][0]['message']['content']
+                elif response.status == 429:  # Rate limited
+                    self.rate_limited = True
+                    self.model_switch_time = datetime.now() + timedelta(hours=24)
+                    logger.warning("Rate limited! Switching to fallback model for 24 hours")
+                    
+                    # Retry with fallback model
+                    payload["model"] = "moonshotai/kimi-k2:free"
+                    async with session.post("https://openrouter.ai/api/v1/chat/completions", 
+                                          headers=headers, json=payload) as fallback_response:
+                        if fallback_response.status == 200:
+                            data = await fallback_response.json()
+                            return data['choices'][0]['message']['content']
+                        else:
+                            raise Exception(f"Fallback model failed: {fallback_response.status}")
+                else:
+                    error = await response.text()
+                    raise Exception(f"API error {response.status}: {error}")
 
     @commands.command(name='start')
     async def start_civilization(self, ctx, *, civ_name: str = None):
@@ -199,90 +326,74 @@ class BasicCommands(commands.Cog):
     @commands.command(name='warhelp')
     async def warbot_help_command(self, ctx, category: str = None):
         """Display help information"""
-        if not category:
-            embed = guilded.Embed(
-                title="🤖 WarBot Command Guide",
-                description="Master your civilization and dominate the world through strategy and cunning!",
-                color=0x1e90ff
-            )
-            
-            help_text = """
+        embed = guilded.Embed(
+            title="🤖 NationBot Command Guide",
+            description="Master your civilization and dominate the world through strategy and cunning!",
+            color=0x1e90ff
+        )
+        
+        help_text = """
 **🏛️ CIVILIZATION BASICS**
 • `.start <name>` - Found your civilization
 • `.status` - View your empire's current state
 • `.ideology <type>` - Choose government (fascism, democracy, communism, theocracy, anarchy, destruction, pacifist)
 
-**💰 ECONOMIC EMPIRE**
-  drill         Extract rare minerals with advanced drilling
-  farm          Farm food for your civilization
-  fish          Fish for food or occasionally find treasure
-  gather        Gather random resources from your territory
-  harvest       Large harvest with longer cooldown
-  invest        Invest gold for delayed profit
-  lottery       Gamble gold for a chance at the jackpot
-  mine          Mine stone and wood from your territory
-  raidcaravan   Raid NPC merchant caravans for loot
-  tax           Collect taxes from your citizens
-  
-**⚔️ MILITARY CONQUEST**
-• `.attack <user>` - Launch military assault
-• `.train <type> <amount>` - Train soldiers or spies
-• `.declare <user>` - Declare war formally
-• `.siege <user>` - Lay siege to enemy territory
-• `.stealthbattle <user>` - Covert military operation
+**💰 ECONOMIC COMMANDS**
+• `.farm` - Farm food for your civilization
+• `.mine` - Mine stone and wood from your territory
+• `.fish` - Fish for food or occasionally find treasure
+• `.gather` - Gather random resources from your territory
+• `.tax` - Collect taxes from your citizens
+• `.invest` - Invest gold for delayed profit
+• `.lottery` - Gamble gold for a chance at the jackpot
 
-**🕵️ SHADOW OPERATIONS**
-• `.spy <user>` - Gather intelligence on enemies
-• `.sabotage <user>` - Disrupt enemy operations
-• `.hack <user>` - Cyber warfare attacks
-• `.steal <user> <resource>` - Steal resources covertly
-• `.superspy <user>` - Elite espionage mission
+**⚔️ MILITARY COMMANDS**
+• `.train <soldiers|spies> <amount>` - Train military units
+• `.declare @user` - Declare war formally
+• `.attack @user` - Launch military assault
+• `.siege @user` - Lay siege to enemy territory
+• `.stealthbattle @user` - Covert military operation
+• `.find` - Search for wandering soldiers to recruit
+• `.cards` - Manage technology cards
 
-**🤝 DIPLOMATIC RELATIONS**
-• `.ally <user>` - Form strategic alliance
-• `.break <user>` - End alliance or peace
-• `.coalition <name>` - Create multi-nation alliance
-• `.mail <user> <message>` - Send diplomatic message
-• `.send <user> <resource> <amount>` - Gift resources
+**🕵️ ESPIONAGE COMMANDS**
+• `.spy @user` - Gather intelligence on enemies
+• `.sabotage @user` - Disrupt enemy operations
+• `.steal @user <resource>` - Steal resources covertly
 
-**🏪 MARKETPLACE**
- blackmarket   Enter the black market to purchase random HyperItems
-  inventory     View your HyperItems and store upgrades
-  market        Display information about the Black Market
-  store         View the civilization store and purchase upgrades
-  
-**🎁 HYPERITEMS & ULTIMATE POWER**
-• backstab      Use Dagger for assassination attempt
-  bomb          Use Missiles for mid-tier military strike
-  boosttech     Use Ancient Scroll to instantly advance technology
-  hiremercs     Use Mercenary Contract to instantly hire professional soldiers
-  luckystrike   Use Lucky Charm for guaranteed critical success on next action
-  megainvent    Use Tech Core to advance multiple technology levels
-  mintgold      Use Gold Mint to generate large amounts of gold
-  nuke          Launch a devastating nuclear attack (Nuclear Warhead required)
-  obliterate    Completely obliterate a civilization (HyperLaser required)
-  propaganda    Use Propaganda Kit to steal enemy soldiers
-  shield        Display Anti-Nuke Shield status
-  superharvest  Use Harvest Engine for massive food production
-  superspy      Use Spy Network for elite espionage mission
-  
-**📊 INFORMATION**
+**🤝 DIPLOMATIC COMMANDS**
+• `.ally @user` - Form strategic alliance
+• `.break @user` - End alliance or peace
+• `.mail @user <message>` - Send diplomatic message
+• `.send @user <resource> <amount>` - Gift resources
+• `.peace @user` - Offer peace treaty
+• `.accept_peace @user` - Accept peace offer
+
+**💎 HYPERITEMS & SPECIALS**
+• `.blackmarket` - Purchase random HyperItems
+• `.inventory` - View your HyperItems
+• `.propaganda @user` - Use Propaganda Kit to convert soldiers
+• `.nuke @user` - Launch nuclear attack (requires Warhead)
+• `.boosttech` - Instantly advance technology (requires Ancient Scroll)
+
+**ℹ️ INFORMATION**
 • `.warhelp` - Display this help menu
-• Web Dashboard available at your server's port 5000
+• Ping me (@NationBot) for AI assistance with any game questions!
 """
-            
-            embed.description += help_text
-            
-            embed.add_field(
-                name="🌟 Pro Tips",
-                value="• Choose your ideology wisely - each has unique bonuses\n• HyperItems are rare but extremely powerful\n• Maintain happiness to keep your civilization stable\n• Form alliances for mutual protection and growth",
-                inline=False
-            )
-            
-            await ctx.send(embed=embed)
-        else:
-            # Category-specific help would be implemented here
-            await ctx.send(f"Detailed help for category '{category}' coming soon!")
+        
+        embed.description = help_text
+        
+        embed.add_field(
+            name="🌟 Pro Tips",
+            value="• Maintain happiness to keep your civilization stable\n"
+                  "• Different ideologies provide unique bonuses/penalties\n"
+                  "• Form alliances for mutual protection and growth\n"
+                  "• Use HyperItems strategically for maximum impact\n"
+                  "• Balance resource production with military expansion",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(BasicCommands(bot))
