@@ -231,10 +231,10 @@ class EconomyCommands(commands.Cog):
             
         embed.add_field(name="Resources Extracted", value=result_text, inline=False)
         
-        # Add mining GIF
-        mine_gif = '<div class="tenor-gif-embed" data-postid="21889516" data-share-method="host" data-aspect-ratio="1" data-width="100%"><a href="https://tenor.com/view/minecraft-mining-loop-diamonds-gold-gif-21889516">Minecraft Mining GIF</a>from <a href="https://tenor.com/search/minecraft-gifs">Minecraft GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        # Add mining GIF URL
+        mine_gif = 'https://media.tenor.com/9W0oJK5k7pYAAAAC/minecraft-mining.gif'
         
-        await ctx.send(mine_gif, embed=embed)
+        await ctx.send(content=mine_gif, embed=embed)
 
     @commands.command(name='harvest')
     async def harvest_food(self, ctx):
@@ -309,10 +309,10 @@ class EconomyCommands(commands.Cog):
         if bonus_text:
             embed.add_field(name="Lucky Strike!", value=bonus_text, inline=False)
             
-        # Add drilling GIF
-        drill_gif = '<div class="tenor-gif-embed" data-postid="16917706" data-share-method="host" data-aspect-ratio="2" data-width="100%"><a href="https://tenor.com/view/thunderbirds-mole-drill-tunnel-gif-16917706">Thunderbirds Mole GIF</a>from <a href="https://tenor.com/search/thunderbirds-gifs">Thunderbirds GIFs</a></div> <script type="text/javascript" async src="https://tenor.com/embed.js"></script>'
+        # Add drilling GIF URL
+        drill_gif = 'https://media.tenor.com/3F2q8X5e3xAAAAAC/thunderbirds-mole.gif'
         
-        await ctx.send(drill_gif, embed=embed)
+        await ctx.send(content=drill_gif, embed=embed)
 
     @commands.command(name='fish')
     @check_cooldown_decorator(minutes=1)
