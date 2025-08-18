@@ -12,7 +12,7 @@ from bot.utils import format_number, get_ascii_art, create_embed
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CONVERSATION_HISTORY = 30  # Keep last 5 exchanges per user
+MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges per user
 CONVERSATION_TIMEOUT = 1800  # 30 minutes in seconds
 
 class BasicCommands(commands.Cog):
@@ -274,13 +274,14 @@ StoreCommands:
                             data = await fallback_response.json()
                             return data['choices'][0]['message']['content']
                         else:
-                            raise Exception(f"Fallback model failed: {fallback_response.status}")
+                            error_text = await fallback_response.text()
+                            raise Exception(f"Fallback model failed: {fallback_response.status} - {error_text}")
                 else:
                     error = await response.text()
                     raise Exception(f"API error {response.status}: {error}")
 
     @commands.command(name='start')
-    async def start_civilization(self, ctx, *, civ_name: str = None):
+    async def start_civilization(self, ctx, civ_name: str = None):
         """Start a new civilization with a cinematic intro"""
         if not civ_name:
             await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
@@ -462,7 +463,7 @@ StoreCommands:
         
         await ctx.send(embed=embed)
 
-       @commands.command(name='warhelp')
+    @commands.command(name='warhelp')
     async def warbot_help_command(self, ctx, category: str = None):
         """Display comprehensive help information"""
         embed = guilded.Embed(
