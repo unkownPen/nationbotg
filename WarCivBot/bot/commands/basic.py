@@ -277,7 +277,7 @@ StoreCommands:
                             raise Exception(f"Fallback model failed: {fallback_response.status}")
                 else:
                     error = await response.text()
-                    raise Exception(f"API error {response.status}: {error}").
+                    raise Exception(f"API error {response.status}: {error}")
 
     @commands.command(name='start')
     async def start_civilization(self, ctx, *, civ_name: str = None):
