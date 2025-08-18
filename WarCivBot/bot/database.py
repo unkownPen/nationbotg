@@ -20,10 +20,8 @@ class Database:
         def cleanup_task():
             logger.info("Running scheduled cleanup of expired requests...")
             self.cleanup_expired_requests()
-            # Reschedule after 24 hours
             threading.Timer(86400, cleanup_task).start()
         
-        # First run in 1 minute then every 24 hours
         threading.Timer(60, cleanup_task).start()
         logger.info("Scheduled cleanup task initialized")
 
@@ -51,6 +49,7 @@ class Database:
                 territory TEXT NOT NULL,
                 hyper_items TEXT NOT NULL DEFAULT '[]',
                 bonuses TEXT NOT NULL DEFAULT '{}',
+                selected_cards TEXT NOT NULL DEFAULT '[]',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -63,6 +62,18 @@ class Database:
                 command TEXT,
                 last_used_at TIMESTAMP,
                 PRIMARY KEY (user_id, command)
+            )
+        ''')
+        
+        # Cards table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cards (
+                user_id TEXT,
+                tech_level INTEGER,
+                available_cards TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'selected'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, tech_level)
             )
         ''')
         
@@ -161,7 +172,6 @@ class Database:
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization"""
         try:
-            # Default starting values
             default_resources = {
                 "gold": 500,
                 "food": 300,
@@ -169,7 +179,6 @@ class Database:
                 "wood": 100
             }
             
-            # Apply bonus resources
             if bonus_resources:
                 for resource, amount in bonus_resources.items():
                     if resource in default_resources:
@@ -178,7 +187,8 @@ class Database:
             default_population = {
                 "citizens": 100 + bonus_resources.get('population', 0),
                 "happiness": 50 + bonus_resources.get('happiness', 0),
-                "hunger": 0
+                "hunger": 0,
+                "employed": 50
             }
             
             default_military = {
@@ -193,14 +203,15 @@ class Database:
             
             hyper_items = [hyper_item] if hyper_item else []
             bonuses = bonuses or {}
+            selected_cards = []
             
             conn = self.get_connection()
             cursor = conn.cursor()
             
             cursor.execute('''
                 INSERT INTO civilizations 
-                (user_id, name, resources, population, military, territory, hyper_items, bonuses)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id, name,
                 json.dumps(default_resources),
@@ -208,8 +219,12 @@ class Database:
                 json.dumps(default_military),
                 json.dumps(default_territory),
                 json.dumps(hyper_items),
-                json.dumps(bonuses)
+                json.dumps(bonuses),
+                json.dumps(selected_cards)
             ))
+            
+            # Create initial card selection for tech level 1
+            self.generate_card_selection(user_id, 1)
             
             conn.commit()
             logger.info(f"Created civilization '{name}' for user {user_id}")
@@ -234,7 +249,6 @@ class Database:
             if not row:
                 return None
             
-            # Convert row to dict and parse JSON fields
             civ = dict(row)
             civ['resources'] = json.loads(civ['resources'])
             civ['population'] = json.loads(civ['population'])
@@ -242,6 +256,7 @@ class Database:
             civ['territory'] = json.loads(civ['territory'])
             civ['hyper_items'] = json.loads(civ['hyper_items'])
             civ['bonuses'] = json.loads(civ['bonuses'])
+            civ['selected_cards'] = json.loads(civ['selected_cards'])
             
             return civ
             
@@ -255,19 +270,17 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Build update query dynamically
             set_clauses = []
             values = []
             
             for field, value in updates.items():
-                if field in ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses']:
+                if field in ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses', 'selected_cards']:
                     set_clauses.append(f"{field} = ?")
                     values.append(json.dumps(value))
                 else:
                     set_clauses.append(f"{field} = ?")
                     values.append(value)
             
-            # Add last_active update
             set_clauses.append("last_active = CURRENT_TIMESTAMP")
             values.append(user_id)
             
@@ -319,6 +332,91 @@ class Database:
             logger.error(f"Error setting command cooldown: {e}")
             return False
 
+    def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
+        """Generate 5 random cards for a tech level"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Define card pool (expanded for variety)
+            card_pool = [
+                {"name": "Resource Boost", "type": "bonus", "effect": {"resource_production": 10}, "description": "+10% resource production"},
+                {"name": "Military Training", "type": "bonus", "effect": {"soldier_training_speed": 15}, "description": "+15% soldier training speed"},
+                {"name": "Trade Advantage", "type": "bonus", "effect": {"trade_profit": 10}, "description": "+10% trade profit"},
+                {"name": "Population Surge", "type": "bonus", "effect": {"population_growth": 10}, "description": "+10% population growth"},
+                {"name": "Tech Breakthrough", "type": "one_time", "effect": {"tech_level": 1}, "description": "+1 tech level (max 10)"},
+                {"name": "Gold Cache", "type": "one_time", "effect": {"gold": 500}, "description": "Gain 500 gold"},
+                {"name": "Food Reserves", "type": "one_time", "effect": {"food": 300}, "description": "Gain 300 food"},
+                {"name": "Mercenary Band", "type": "one_time", "effect": {"soldiers": 20}, "description": "Recruit 20 soldiers"},
+                {"name": "Spy Network", "type": "one_time", "effect": {"spies": 5}, "description": "Recruit 5 spies"},
+                {"name": "Fortification", "type": "bonus", "effect": {"defense_strength": 15}, "description": "+15% defense strength"}
+            ]
+            
+            # Select 5 random cards
+            available_cards = random.sample(card_pool, 5)
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO cards (user_id, tech_level, available_cards, status)
+                VALUES (?, ?, ?, ?)
+            ''', (user_id, tech_level, json.dumps(available_cards), 'pending'))
+            
+            conn.commit()
+            logger.info(f"Generated card selection for user {user_id} at tech level {tech_level}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error generating card selection: {e}")
+            return False
+
+    def get_card_selection(self, user_id: str, tech_level: int) -> Optional[Dict]:
+        """Get available cards for a tech level"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM cards 
+                WHERE user_id = ? AND tech_level = ? AND status = 'pending'
+            ''', (user_id, tech_level))
+            
+            row = cursor.fetchone()
+            if row:
+                card_data = dict(row)
+                card_data['available_cards'] = json.loads(card_data['available_cards'])
+                return card_data
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting card selection for user {user_id}: {e}")
+            return None
+
+    def select_card(self, user_id: str, tech_level: int, card_name: str) -> Optional[Dict]:
+        """Select a card and mark it as chosen"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            card_selection = self.get_card_selection(user_id, tech_level)
+            if not card_selection:
+                return None
+                
+            selected_card = next((card for card in card_selection['available_cards'] if card['name'].lower() == card_name.lower()), None)
+            if not selected_card:
+                return None
+                
+            cursor.execute('''
+                UPDATE cards SET status = 'selected'
+                WHERE user_id = ? AND tech_level = ?
+            ''', (user_id, tech_level))
+            
+            conn.commit()
+            logger.info(f"User {user_id} selected card '{card_name}' at tech level {tech_level}")
+            return selected_card
+            
+        except Exception as e:
+            logger.error(f"Error selecting card for user {user_id}: {e}")
+            return None
+
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
         """Get all civilizations for leaderboards"""
         try:
@@ -337,6 +435,7 @@ class Database:
                 civ['territory'] = json.loads(civ['territory'])
                 civ['hyper_items'] = json.loads(civ['hyper_items'])
                 civ['bonuses'] = json.loads(civ['bonuses'])
+                civ['selected_cards'] = json.loads(civ['selected_cards'])
                 civilizations.append(civ)
             
             return civilizations
@@ -411,7 +510,6 @@ class Database:
             logger.error(f"Error getting recent events: {e}")
             return []
 
-    # NEW METHODS FOR REQUESTS AND MESSAGES =====================================
     def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
         """Create a new trade request"""
         try:
@@ -588,7 +686,6 @@ class Database:
             logger.error(f"Error deleting message: {e}")
             return False
 
-    # ALLIANCE MANAGEMENT ======================================================
     def get_alliance(self, alliance_id: int) -> Optional[Dict]:
         """Get alliance data by ID"""
         try:
@@ -614,7 +711,7 @@ class Database:
                 return False
             
             if user_id in alliance['members']:
-                return True  # Already a member
+                return True
             
             members = alliance['members'] + [user_id]
             join_requests = [uid for uid in alliance['join_requests'] if uid != user_id]
@@ -633,22 +730,18 @@ class Database:
             logger.error(f"Error adding alliance member: {e}")
             return False
 
-    # CLEANUP METHOD ============================================================
     def cleanup_expired_requests(self):
         """Automatically remove expired requests (runs daily)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # Delete expired trade requests
             cursor.execute('DELETE FROM trade_requests WHERE expires_at <= CURRENT_TIMESTAMP')
             trade_count = cursor.rowcount
             
-            # Delete expired alliance invites
             cursor.execute('DELETE FROM alliance_invitations WHERE expires_at <= CURRENT_TIMESTAMP')
             invite_count = cursor.rowcount
             
-            # Delete expired messages
             cursor.execute('DELETE FROM messages WHERE expires_at <= CURRENT_TIMESTAMP')
             message_count = cursor.rowcount
             
@@ -662,7 +755,6 @@ class Database:
             logger.error(f"Error during cleanup: {e}")
             return False
 
-    # UTILITY METHODS ==========================================================
     def close_connections(self):
         """Close all database connections (for shutdown)"""
         if hasattr(self.local, 'connection'):
@@ -674,46 +766,3 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
-# Example usage
-if __name__ == "__main__":
-    db = Database()
-    
-    # Create test civilization
-    db.create_civilization("user123", "Athena Republic", 
-                          bonus_resources={"gold": 100, "population": 50})
-    
-    # Create trade request
-    db.create_trade_request(
-        sender_id="user123",
-        recipient_id="user456",
-        offer={"gold": 100, "wood": 200},
-        request={"stone": 150}
-    )
-    
-    # Create alliance invite
-    db.create_alliance_invite(
-        alliance_id=1,
-        sender_id="user789",
-        recipient_id="user123"
-    )
-    
-    # Send message
-    db.send_message(
-        sender_id="user456",
-        recipient_id="user123",
-        message="Let's form an alliance against Sparta!"
-    )
-    
-    # Retrieve data
-    print("Trade requests for user123:", db.get_trade_requests("user123"))
-    print("Alliance invites for user123:", db.get_alliance_invites("user123"))
-    print("Messages for user123:", db.get_messages("user123"))
-    
-    # Simulate cleanup after expiration
-    time.sleep(2)  # Allow time for initial inserts
-    print("Running cleanup...")
-    db.cleanup_expired_requests()
-    
-    # Close connections
-    db.close_connections()
