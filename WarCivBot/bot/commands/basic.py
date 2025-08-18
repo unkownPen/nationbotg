@@ -20,7 +20,7 @@ class BasicCommands(commands.Cog):
         self.model_switch_time = None
         self.rate_limited = False
 
-       @commands.Cog.listener()
+    @commands.Cog.listener()
     async def on_message(self, message):
         """Respond to mentions with AI assistance"""
         # Skip if message is from bot or doesn't mention us
@@ -98,7 +98,7 @@ class BasicCommands(commands.Cog):
         except Exception as e:
             logger.error(f"AI response error: {e}")
             await message.reply("I'm having trouble thinking right now. Please try again later!")
-            
+
     async def generate_ai_response(self, system_prompt, user_query):
         """Generate response using OpenRouter API"""
         headers = {
