@@ -329,9 +329,25 @@ class Database:
             logger.error(f"Error getting command cooldown: {e}")
             return None
 
-    def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime) -> bool:
+    def check_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
+        """Check if command is on cooldown - returns expiry time if on cooldown, None if available"""
+        try:
+            last_used = self.get_command_cooldown(user_id, command)
+            if last_used:
+                # Return the last used time - your utils.py will calculate if it's expired
+                return last_used
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error checking command cooldown: {e}")
+            return None
+
+    def set_command_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
         """Set the last used time for a command"""
         try:
+            if timestamp is None:
+                timestamp = datetime.utcnow()
+                
             conn = self.get_connection()
             cursor = conn.cursor()
             
@@ -346,6 +362,10 @@ class Database:
         except Exception as e:
             logger.error(f"Error setting command cooldown: {e}")
             return False
+
+    def update_cooldown(self, user_id: str, command: str, timestamp: datetime = None) -> bool:
+        """Update cooldown - alias for set_command_cooldown for compatibility"""
+        return self.set_command_cooldown(user_id, command, timestamp)
 
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         """Generate 5 random cards for a tech level"""
@@ -1134,6 +1154,9 @@ class Database:
 
 # Initialize logging
 logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
