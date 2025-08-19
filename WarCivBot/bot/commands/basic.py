@@ -1,85 +1,77 @@
 """
 BasicCommands Cog for WarBot
-
-Provides core civilization commands:
-- .start - Found a new civilization
-- .ideology - Choose government type
-- .status - View civilization status
-- .warhelp - Display command manual
+Handles core civilization commands, save system, and command cooldowns
 """
 
 import os
 import random
 import logging
 from datetime import datetime, timedelta
-from collections import defaultdict, deque
+from typing import Optional
 
 import guilded
 from guilded.ext import commands
 
 from bot.utils import format_number, get_ascii_art, create_embed
+from bot.saves import SaveManager
 
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CONVERSATION_HISTORY = 5
-CONVERSATION_TIMEOUT = 1800  # 30 minutes
-DEFAULT_AI_MODEL = "deepseek/deepseek-chat"
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
 DEFAULT_IDEOLOGIES = [
-    "fascism", "democracy", "communism", "socialism", 
-    "theocracy", "anarchy", "monarchy", "terrorism", "pacifist"
+    "fascism", "democracy", "communism", "theocracy", "anarchy", 
+    "capitalism", "monarchy", "pacifist"
 ]
+
+IDEOLOGY_DESCRIPTIONS = {
+    "fascism": "⚔️ +25% soldier training, -15% diplomacy, -10% luck",
+    "democracy": "🗳️ +20% happiness, +10% trade, -15% training",
+    "communism": "🏭 +10% productivity, -10% tech speed",
+    "theocracy": "⛪ +15% propaganda, +5% happiness, -10% tech",
+    "anarchy": "💥 2x events, 0 upkeep, -20% spy success",
+    "capitalism": "💰 +35% trade, +25% tax, +20% production, -15% military costs",
+    "monarchy": "👑 +20% diplomacy, +25% tax, -10% productivity",
+    "pacifist": "🕊️ +35% happiness, +25% growth, -60% combat"
+}
 
 class BasicCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.db = getattr(bot, "db", None)
         self.civ_manager = getattr(bot, "civ_manager", None)
-        
-        # AI chat settings
-        self.openrouter_key = os.getenv("OPENROUTER")
-        self.current_model = os.getenv("AI_MODEL", DEFAULT_AI_MODEL)
-        self.rate_limited = False
-        self.model_switch_time = None
-        
-        # Conversation tracking
-        self.conversations = defaultdict(deque)
-        self.last_interaction = {}
+        self.save_manager = SaveManager(self.db)
 
-    def _get_utc_time(self) -> str:
+    def _get_utc_timestamp(self) -> str:
         """Get current UTC time in standard format"""
         return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-    def _format_embed(self, title: str, desc: str, color=0x00FF00) -> guilded.Embed:
-        """Create a standard embed with footer"""
+    def _format_embed(self, title: str, description: str, color=0x00FF00) -> guilded.Embed:
+        """Create a standard embed with UTC timestamp"""
         embed = guilded.Embed(
             title=title,
-            description=desc,
+            description=description,
             color=color
         )
-        embed.set_footer(text=f"UTC: {self._get_utc_time()}")
+        embed.set_footer(text=f"UTC: {self._get_utc_timestamp()}")
         return embed
 
     @commands.command(name="start")
     async def start_civilization(self, ctx, *, name: str = None):
         """Found a new civilization"""
         try:
-            # Validate input
             if not name:
                 await ctx.send(
                     embed=self._format_embed(
                         "❌ Missing Name",
-                        "ATTENTION PRESIDENT! You must provide a name: `.start <name>`",
+                        "PRESIDENT! You must provide a name: `.start <name>`",
                         color=0xFF0000
                     )
                 )
                 return
 
             user_id = str(ctx.author.id)
-            
-            # Check for existing civilization
+
+            # Check existing civilization
             if existing := await self.civ_manager.get_civilization(user_id):
                 await ctx.send(
                     embed=self._format_embed(
@@ -92,7 +84,7 @@ class BasicCommands(commands.Cog):
 
             # Get cinematic intro
             intro = get_ascii_art("civilization_start")
-            
+
             # Random founding event
             founding_events = [
                 ("🏛️ **Golden Dawn**: Ancient gold deposits discovered!", {"gold": 200}),
@@ -102,20 +94,20 @@ class BasicCommands(commands.Cog):
                 ("⚡ **Lightning Strike**: Divine fortune!", {"gold": 100, "happiness": 20})
             ]
             event_text, bonus_resources = random.choice(founding_events)
-            
+
             # Name-based bonuses
             name_bonuses = {}
             special_message = ""
             name_lower = name.lower()
-            
+
             if "ink" in name_lower:
                 name_bonuses["luck_bonus"] = 5
-                special_message = "🖋️ The pen will never forget your work. (+5% luck)"
+                special_message = "🖋️ *The pen will never forget your work.* (+5% luck)"
             elif "pen" in name_lower:
                 name_bonuses["diplomacy_bonus"] = 5
-                special_message = "🖋️ The pen is mightier than the sword. (+5% diplomacy)"
+                special_message = "🖋️ *The pen is mightier than the sword.* (+5% diplomacy)"
 
-            # Random HyperItem (5% chance)
+            # HyperItem chance (5%)
             hyper_item = None
             if random.random() < 0.05:
                 hyper_item = random.choice([
@@ -161,7 +153,7 @@ class BasicCommands(commands.Cog):
             await ctx.send(
                 embed=self._format_embed(
                     "❌ Command Error",
-                    "ATTENTION PRESIDENT! Failed to create civilization. Please try again.",
+                    "ATTENTION PRESIDENT! Failed to create civilization. Try again.",
                     color=0xFF0000
                 )
             )
@@ -171,28 +163,15 @@ class BasicCommands(commands.Cog):
         """Choose civilization ideology"""
         try:
             if ideology_type is None:
-                # Show ideology list
-                descriptions = {
-                    "fascism": "+25% soldier training, -15% diplomacy, -10% luck",
-                    "democracy": "+20% happiness, +10% trade, -15% training",
-                    "communism": "+10% productivity, -10% tech speed",
-                    "socialism": "+15% happiness, +20% productivity, -10% military",
-                    "theocracy": "+15% propaganda, +5% happiness, -10% tech",
-                    "anarchy": "2x random events, 0 upkeep, -20% spy success",
-                    "monarchy": "+20% diplomacy, +25% tax, -10% productivity",
-                    "terrorism": "+40% sabotage, +30% spy, -40% happiness",
-                    "pacifist": "+35% happiness, +25% growth, -60% combat"
-                }
-
                 embed = self._format_embed(
                     "🏛️ Choose Your Ideology",
                     "Select your government type:"
                 )
 
-                for name, desc in descriptions.items():
+                for ideology in DEFAULT_IDEOLOGIES:
                     embed.add_field(
-                        name=name.capitalize(),
-                        value=desc,
+                        name=ideology.capitalize(),
+                        value=IDEOLOGY_DESCRIPTIONS[ideology],
                         inline=False
                     )
 
@@ -245,22 +224,11 @@ class BasicCommands(commands.Cog):
                 raise Exception("Failed to set ideology")
 
             # Success message
-            desc_map = {
-                "fascism": "⚔️ Strong military, poor diplomacy",
-                "democracy": "🗳️ Happy population and trade",
-                "communism": "🏭 Increased productivity",
-                "socialism": "✊ Balanced growth and welfare",
-                "theocracy": "⛪ Divine authority and propaganda",
-                "anarchy": "💥 Chaotic but efficient",
-                "monarchy": "👑 Diplomatic prestige and taxes",
-                "terrorism": "💣 Sabotage-focused",
-                "pacifist": "🕊️ Peace and prosperity"
-            }
-
             embed = self._format_embed(
                 f"🏛️ Ideology Set: {choice.capitalize()}",
-                desc_map.get(choice, "")
+                IDEOLOGY_DESCRIPTIONS[choice]
             )
+            
             embed.add_field(
                 name="Orders",
                 value="DROP AND GIVE ME 50, PRESIDENT! Check `.status` for updates.",
@@ -355,13 +323,126 @@ class BasicCommands(commands.Cog):
                 )
             )
 
+    @commands.command(name="save")
+    async def save_civilization_state(self, ctx, slot: int = None, *, name: str = None):
+        """Save civilization to slot (1-5)"""
+        try:
+            if slot is None:
+                # Show available slots
+                saves = await self.save_manager.list_saves(str(ctx.author.id))
+                
+                embed = self._format_embed(
+                    "💾 Save Slots",
+                    "Use `.save <1-5> [name]` to save your civilization."
+                )
+                
+                for save in saves:
+                    if save["saved_at"]:
+                        embed.add_field(
+                            name=f"Slot {save['slot']}: {save['name']}",
+                            value=(
+                                f"Civilization: {save['civilization_name']}\n"
+                                f"Ideology: {save['ideology']}\n"
+                                f"Saved: {save['saved_at']}"
+                            ),
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=f"Slot {save['slot']}: Empty",
+                            value="Available",
+                            inline=False
+                        )
+                        
+                await ctx.send(embed=embed)
+                return
+                
+            # Validate slot
+            if not 1 <= slot <= 5:
+                await ctx.send(
+                    embed=self._format_embed(
+                        "❌ Invalid Slot",
+                        "PRESIDENT! Choose a slot between 1 and 5.",
+                        color=0xFF0000
+                    )
+                )
+                return
+                
+            # Save civilization
+            if await self.save_manager.save_civilization(str(ctx.author.id), slot, name):
+                await ctx.send(
+                    embed=self._format_embed(
+                        "💾 Civilization Saved",
+                        f"Your civilization has been saved to slot {slot}!"
+                    )
+                )
+            else:
+                await ctx.send(
+                    embed=self._format_embed(
+                        "❌ Save Failed",
+                        "PRESIDENT! Failed to save civilization.",
+                        color=0xFF0000
+                    )
+                )
+                
+        except Exception as e:
+            logger.exception("Error in save command")
+            await ctx.send(
+                embed=self._format_embed(
+                    "❌ Command Error",
+                    "PRESIDENT! An error occurred while saving.",
+                    color=0xFF0000
+                )
+            )
+
+    @commands.command(name="load")
+    async def load_civilization_state(self, ctx, slot: int):
+        """Load civilization from save slot"""
+        try:
+            if not 1 <= slot <= 5:
+                await ctx.send(
+                    embed=self._format_embed(
+                        "❌ Invalid Slot",
+                        "PRESIDENT! Choose a slot between 1 and 5.",
+                        color=0xFF0000
+                    )
+                )
+                return
+                
+            # Load civilization
+            if await self.save_manager.load_civilization(str(ctx.author.id), slot):
+                await ctx.send(
+                    embed=self._format_embed(
+                        "📥 Civilization Loaded",
+                        f"Your civilization has been restored from slot {slot}!"
+                    )
+                )
+            else:
+                await ctx.send(
+                    embed=self._format_embed(
+                        "❌ Load Failed",
+                        "PRESIDENT! Failed to load from that slot.",
+                        color=0xFF0000
+                    )
+                )
+                
+        except Exception as e:
+            logger.exception("Error in load command")
+            await ctx.send(
+                embed=self._format_embed(
+                    "❌ Command Error",
+                    "PRESIDENT! An error occurred while loading.",
+                    color=0xFF0000
+                )
+            )
+
     @commands.command(name="warhelp")
     async def warbot_help(self, ctx, category: str = None):
         """Display help manual"""
         try:
             embed = self._format_embed(
                 "🤖 WARBOT MANUAL",
-                "Use `.warhelp <category>` for details. Example: `.warhelp Military`"
+                "Use `.warhelp <category>` for details."
             )
 
             embed.add_field(
@@ -370,7 +451,9 @@ class BasicCommands(commands.Cog):
                     "`.start <name>` - Found civilization\n"
                     "`.status` - View status\n"
                     "`.ideology <type>` - Set government\n"
-                    "`@WarBot <question>` - Ask NationGPT"
+                    "`.save [1-5]` - Save civilization\n"
+                    "`.load <1-5>` - Load save\n"
+                    "`@WarBot` - Ask NationGPT"
                 ),
                 inline=False
             )
@@ -402,9 +485,9 @@ class BasicCommands(commands.Cog):
             embed.add_field(
                 name="🎁 HyperItems",
                 value=(
-                    "Powerful special items:\n"
+                    "Special items from black market:\n"
                     "• Lucky Charm - Critical hits\n"
-                    "• Nuclear Warhead - Mass damage\n" 
+                    "• Nuclear Warhead - Mass damage\n"
                     "• Propaganda Kit - Convert troops"
                 ),
                 inline=False
@@ -421,7 +504,6 @@ class BasicCommands(commands.Cog):
                 inline=False
             )
 
-            embed.set_footer(text="DROP AND GIVE ME 50 WHILE READING, PRESIDENT!")
             await ctx.send(embed=embed)
 
         except Exception as e:
@@ -435,4 +517,5 @@ class BasicCommands(commands.Cog):
             )
 
 async def setup(bot):
+    """Add cog to bot"""
     await bot.add_cog(BasicCommands(bot))
