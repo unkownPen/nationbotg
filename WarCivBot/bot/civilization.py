@@ -11,46 +11,63 @@ class CivilizationManager:
     def __init__(self, db: Database):
         self.db = db
         self.ideology_modifiers = {
-            "fascism": {
-                "soldier_training_speed": 1.25,
-                "diplomacy_success": 0.85,
-                "luck_modifier": 0.90
-            },
-            "democracy": {
-                "happiness_boost": 1.20,
-                "trade_profit": 1.10,
-                "soldier_training_speed": 0.85
-            },
-            "communism": {
-                "citizen_productivity": 1.10,
-                "tech_speed": 0.90
-            },
-            "theocracy": {
-                "propaganda_success": 1.15,
-                "happiness_boost": 1.05,
-                "tech_speed": 0.90
-            },
-            "anarchy": {
-                "random_event_frequency": 2.0,
-                "soldier_upkeep": 0.0,
-                "spy_success": 0.80
-            },
-            "destruction": {
-                "combat_strength": 1.35,
-                "resource_production": 0.75,
-                "soldier_training_speed": 1.40,
-                "happiness_boost": 0.70,
-                "diplomacy_success": 0.50
-            },
-            "pacifist": {
-                "happiness_boost": 1.35,
-                "population_growth": 1.25,
-                "trade_profit": 1.20,
-                "soldier_training_speed": 0.40,
-                "combat_strength": 0.60,
-                "diplomacy_success": 1.25
-            }
-        }
+    "fascism": {
+        "soldier_training_speed": 1.25,
+        "diplomacy_success": 0.85,
+        "luck_modifier": 0.90,
+        "color": "#8B0000"  # Dark red
+    },
+    "democracy": {
+        "happiness_boost": 1.20,
+        "trade_profit": 1.10,
+        "soldier_training_speed": 0.85,
+        "color": "#006400"  # Dark green
+    },
+    "communism": {
+        "citizen_productivity": 1.10,
+        "tech_speed": 0.90,
+        "color": "#FF4500"  # Red-orange 
+    },
+    "socialism": {
+        "happiness_boost": 1.15,
+        "citizen_productivity": 1.20,
+        "military_efficiency": 0.90,
+        "color": "#FFD700"  # Gold
+    },
+    "theocracy": {
+        "propaganda_success": 1.15,
+        "happiness_boost": 1.05,
+        "tech_speed": 0.90,
+        "color": "#4B0082"  # Indigo
+    },
+    "anarchy": {
+        "random_event_frequency": 2.0,
+        "soldier_upkeep": 0.0, 
+        "spy_success": 0.80,
+        "color": "#8B4513"  # Saddle brown
+    },
+    "monarchy": {
+        "diplomacy_success": 1.20,
+        "tax_efficiency": 1.25,
+        "citizen_productivity": 0.90,
+        "color": "#FFD700"  # Golden yellow
+    },
+    "terrorism": {
+        "sabotage_success": 1.40,
+        "spy_success": 1.30,
+        "happiness_modifier": 0.60,
+        "color": "#800000"  # Maroon
+    },
+    "pacifist": {
+        "happiness_boost": 1.35,
+        "population_growth": 1.25,
+        "trade_profit": 1.20,
+        "soldier_training_speed": 0.40,
+        "combat_strength": 0.60,
+        "diplomacy_success": 1.25,
+        "color": "#40E0D0"  # Turquoise
+    }
+}
 
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization"""
