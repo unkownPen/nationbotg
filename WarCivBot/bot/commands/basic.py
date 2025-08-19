@@ -1,7 +1,7 @@
 # basic.py
 """
 BasicCommands Cog for WarBot
-Handles core civilization commands, save system, and command cooldowns
+Handles core civilization commands
 """
 
 import os
@@ -40,7 +40,6 @@ class BasicCommands(commands.Cog):
         self.bot = bot
         self.db = getattr(bot, "db", None)
         self.civ_manager = getattr(bot, "civ_manager", None)
-        self.save_manager = SaveManager(self.db)
         if self.db is None or self.civ_manager is None:
             logger.error("DB or Civ Manager not initialized! Check bot setup.")
 
@@ -57,10 +56,6 @@ class BasicCommands(commands.Cog):
         )
         embed.set_footer(text=f"UTC: {self._get_utc_timestamp()}")
         return embed
-
-    async def _auto_save(self, user_id: str):
-        """Auto-save to special slot 0"""
-        await self.save_manager.save_civilization(user_id, 0, "Auto Save")
 
     @commands.command(name="start")
     async def start_civilization(self, ctx, *, name: str = None):
@@ -140,8 +135,6 @@ class BasicCommands(commands.Cog):
                 hyper_item=hyper_item
             ):
                 raise Exception("Failed to create civilization")
-
-            await self._auto_save(user_id)  # Auto-save after create
 
             # Success embed
             embed = self._format_embed(
@@ -242,8 +235,6 @@ class BasicCommands(commands.Cog):
             if not await self.civ_manager.set_ideology(user_id, choice):
                 raise Exception("Failed to set ideology")
 
-            await self._auto_save(user_id)  # Auto-save after set
-
             # Success message
             embed = self._format_embed(
                 f"🏛️ Ideology Set: {choice.capitalize()}",
@@ -282,8 +273,6 @@ class BasicCommands(commands.Cog):
                     )
                 )
                 return
-
-            await self._auto_save(user_id)  # Auto-save on status check, as civ "grows"
 
             ide = civ.get("ideology", "None").capitalize()
             embed = self._format_embed(
@@ -346,120 +335,6 @@ class BasicCommands(commands.Cog):
                 )
             )
 
-    @commands.command(name="save")
-    async def save_civilization_state(self, ctx, slot: int = None, *, name: str = None):
-        """Save civilization to slot (0-5, 0 is auto)"""
-        try:
-            if slot is None:
-                # Show available slots, including auto (0)
-                saves = await self.save_manager.list_saves(str(ctx.author.id))
-                
-                embed = self._format_embed(
-                    "💾 Save Slots",
-                    "Use `.save <0-5> [name]` to save your civilization. Slot 0 is auto-updating!"
-                )
-                
-                for save in saves:
-                    slot_num = save.get('slot', 0)
-                    if save["saved_at"]:
-                        embed.add_field(
-                            name=f"Slot {slot_num}: {save['name']}",
-                            value=(
-                                f"Civilization: {save['civilization_name']}\n"
-                                f"Ideology: {save['ideology']}\n"
-                                f"Saved: {save['saved_at']}"
-                            ),
-                            inline=False
-                        )
-                    else:
-                        embed.add_field(
-                            name=f"Slot {slot_num}: Empty",
-                            value="Available",
-                            inline=False
-                        )
-                        
-                await ctx.send(embed=embed)
-                return
-                
-            # Validate slot
-            if not 0 <= slot <= 5:
-                await ctx.send(
-                    embed=self._format_embed(
-                        "❌ Invalid Slot",
-                        "PRESIDENT! Choose a slot between 0 and 5.",
-                        color=0xFF0000
-                    )
-                )
-                return
-                
-            # Save civilization
-            if await self.save_manager.save_civilization(str(ctx.author.id), slot, name):
-                await ctx.send(
-                    embed=self._format_embed(
-                        "💾 Civilization Saved",
-                        f"Your civilization has been saved to slot {slot}!"
-                    )
-                )
-            else:
-                await ctx.send(
-                    embed=self._format_embed(
-                        "❌ Save Failed",
-                        "PRESIDENT! Failed to save civilization.",
-                        color=0xFF0000
-                    )
-                )
-                
-        except Exception as e:
-            logger.exception("Error in save command")
-            await ctx.send(
-                embed=self._format_embed(
-                    "❌ Command Error",
-                    "PRESIDENT! An error occurred while saving.",
-                    color=0xFF0000
-                )
-            )
-
-    @commands.command(name="load")
-    async def load_civilization_state(self, ctx, slot: int):
-        """Load civilization from save slot"""
-        try:
-            if not 0 <= slot <= 5:
-                await ctx.send(
-                    embed=self._format_embed(
-                        "❌ Invalid Slot",
-                        "PRESIDENT! Choose a slot between 0 and 5.",
-                        color=0xFF0000
-                    )
-                )
-                return
-                
-            # Load civilization
-            if await self.save_manager.load_civilization(str(ctx.author.id), slot):
-                await ctx.send(
-                    embed=self._format_embed(
-                        "📥 Civilization Loaded",
-                        f"Your civilization has been restored from slot {slot}!"
-                    )
-                )
-            else:
-                await ctx.send(
-                    embed=self._format_embed(
-                        "❌ Load Failed",
-                        "PRESIDENT! Failed to load from that slot.",
-                        color=0xFF0000
-                    )
-                )
-                
-        except Exception as e:
-            logger.exception("Error in load command")
-            await ctx.send(
-                embed=self._format_embed(
-                    "❌ Command Error",
-                    "PRESIDENT! An error occurred while loading.",
-                    color=0xFF0000
-                )
-            )
-
     @commands.command(name="warhelp")
     async def warbot_help(self, ctx, category: str = None):
         """Display help manual"""
@@ -475,8 +350,6 @@ class BasicCommands(commands.Cog):
                     "`.start <name>` - Found civilization\n"
                     "`.status` - View status\n"
                     "`.ideology <type>` - Set government\n"
-                    "`.save [0-5]` - Save civilization\n"
-                    "`.load <0-5>` - Load save\n"
                     "`@WarBot` - Ask NationGPT"
                 ),
                 inline=False
