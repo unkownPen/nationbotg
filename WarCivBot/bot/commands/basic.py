@@ -1,3 +1,4 @@
+# basic.py
 """
 BasicCommands Cog for WarBot
 Handles core civilization commands, save system, and command cooldowns
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Constants
 DEFAULT_IDEOLOGIES = [
     "fascism", "democracy", "communism", "theocracy", "anarchy", 
-    "capitalism", "monarchy", "pacifist"
+    "capitalism", "monarchy", "pacifist", "terrorism", "destructionism"
 ]
 
 IDEOLOGY_DESCRIPTIONS = {
@@ -31,7 +32,9 @@ IDEOLOGY_DESCRIPTIONS = {
     "anarchy": "💥 2x events, 0 upkeep, -20% spy success",
     "capitalism": "💰 +35% trade, +25% tax, +20% production, -15% military costs",
     "monarchy": "👑 +20% diplomacy, +25% tax, -10% productivity",
-    "pacifist": "🕊️ +35% happiness, +25% growth, -60% combat"
+    "pacifist": "🕊️ +35% happiness, +25% growth, -60% combat",
+    "terrorism": "💣 +30% sabotage, +20% fear, -25% diplomacy, -15% happiness",
+    "destructionism": "🔥 +40% destruction power, +15% resource loot, -20% own resources, -10% growth"
 }
 
 class BasicCommands(commands.Cog):
@@ -40,6 +43,8 @@ class BasicCommands(commands.Cog):
         self.db = getattr(bot, "db", None)
         self.civ_manager = getattr(bot, "civ_manager", None)
         self.save_manager = SaveManager(self.db)
+        if self.db is None or self.civ_manager is None:
+            logger.error("DB or Civ Manager not initialized! Check bot setup.")
 
     def _get_utc_timestamp(self) -> str:
         """Get current UTC time in standard format"""
@@ -54,6 +59,10 @@ class BasicCommands(commands.Cog):
         )
         embed.set_footer(text=f"UTC: {self._get_utc_timestamp()}")
         return embed
+
+    async def _auto_save(self, user_id: str):
+        """Auto-save to special slot 0"""
+        await self.save_manager.save_civilization(user_id, 0, "Auto Save")
 
     @commands.command(name="start")
     async def start_civilization(self, ctx, *, name: str = None):
@@ -77,6 +86,16 @@ class BasicCommands(commands.Cog):
                     embed=self._format_embed(
                         "❌ Civilization Exists",
                         f"PRESIDENT! You already command {existing['name']}! Use `.status` to view it.",
+                        color=0xFF0000
+                    )
+                )
+                return
+
+            if self.civ_manager is None:
+                await ctx.send(
+                    embed=self._format_embed(
+                        "❌ System Error",
+                        "PRESIDENT! Civ manager not ready. Contact high command.",
                         color=0xFF0000
                     )
                 )
@@ -123,6 +142,8 @@ class BasicCommands(commands.Cog):
                 hyper_item=hyper_item
             ):
                 raise Exception("Failed to create civilization")
+
+            await self._auto_save(user_id)  # Auto-save after create
 
             # Success embed
             embed = self._format_embed(
@@ -223,6 +244,8 @@ class BasicCommands(commands.Cog):
             if not await self.civ_manager.set_ideology(user_id, choice):
                 raise Exception("Failed to set ideology")
 
+            await self._auto_save(user_id)  # Auto-save after set
+
             # Success message
             embed = self._format_embed(
                 f"🏛️ Ideology Set: {choice.capitalize()}",
@@ -261,6 +284,8 @@ class BasicCommands(commands.Cog):
                     )
                 )
                 return
+
+            await self._auto_save(user_id)  # Auto-save on status check, as civ "grows"
 
             ide = civ.get("ideology", "None").capitalize()
             embed = self._format_embed(
@@ -325,21 +350,22 @@ class BasicCommands(commands.Cog):
 
     @commands.command(name="save")
     async def save_civilization_state(self, ctx, slot: int = None, *, name: str = None):
-        """Save civilization to slot (1-5)"""
+        """Save civilization to slot (0-5, 0 is auto)"""
         try:
             if slot is None:
-                # Show available slots
+                # Show available slots, including auto (0)
                 saves = await self.save_manager.list_saves(str(ctx.author.id))
                 
                 embed = self._format_embed(
                     "💾 Save Slots",
-                    "Use `.save <1-5> [name]` to save your civilization."
+                    "Use `.save <0-5> [name]` to save your civilization. Slot 0 is auto-updating!"
                 )
                 
                 for save in saves:
+                    slot_num = save.get('slot', 0)
                     if save["saved_at"]:
                         embed.add_field(
-                            name=f"Slot {save['slot']}: {save['name']}",
+                            name=f"Slot {slot_num}: {save['name']}",
                             value=(
                                 f"Civilization: {save['civilization_name']}\n"
                                 f"Ideology: {save['ideology']}\n"
@@ -349,7 +375,7 @@ class BasicCommands(commands.Cog):
                         )
                     else:
                         embed.add_field(
-                            name=f"Slot {save['slot']}: Empty",
+                            name=f"Slot {slot_num}: Empty",
                             value="Available",
                             inline=False
                         )
@@ -358,11 +384,11 @@ class BasicCommands(commands.Cog):
                 return
                 
             # Validate slot
-            if not 1 <= slot <= 5:
+            if not 0 <= slot <= 5:
                 await ctx.send(
                     embed=self._format_embed(
                         "❌ Invalid Slot",
-                        "PRESIDENT! Choose a slot between 1 and 5.",
+                        "PRESIDENT! Choose a slot between 0 and 5.",
                         color=0xFF0000
                     )
                 )
@@ -399,11 +425,11 @@ class BasicCommands(commands.Cog):
     async def load_civilization_state(self, ctx, slot: int):
         """Load civilization from save slot"""
         try:
-            if not 1 <= slot <= 5:
+            if not 0 <= slot <= 5:
                 await ctx.send(
                     embed=self._format_embed(
                         "❌ Invalid Slot",
-                        "PRESIDENT! Choose a slot between 1 and 5.",
+                        "PRESIDENT! Choose a slot between 0 and 5.",
                         color=0xFF0000
                     )
                 )
@@ -451,8 +477,8 @@ class BasicCommands(commands.Cog):
                     "`.start <name>` - Found civilization\n"
                     "`.status` - View status\n"
                     "`.ideology <type>` - Set government\n"
-                    "`.save [1-5]` - Save civilization\n"
-                    "`.load <1-5>` - Load save\n"
+                    "`.save [0-5]` - Save civilization\n"
+                    "`.load <0-5>` - Load save\n"
                     "`@WarBot` - Ask NationGPT"
                 ),
                 inline=False
