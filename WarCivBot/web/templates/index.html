@@ -3,532 +3,414 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WarBot - Civilization Dashboard</title>
+    <title>WarBot Control Center</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    
     <style>
         :root {
             --primary-dark: #1a1a1a;
             --secondary-dark: #2d2d2d;
             --accent-green: #4CAF50;
             --accent-blue: #2196F3;
+            --accent-red: #f44336;
+            --accent-gold: #ffd700;
             --text-light: #ffffff;
-            --card-hover-transform: translateY(-5px);
+            --bg-gradient: linear-gradient(135deg, var(--primary-dark), var(--secondary-dark));
         }
 
-        body {
-            background-color: #f8f9fa;
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-        }
-
-        .navbar {
-            background: linear-gradient(135deg, var(--primary-dark), var(--secondary-dark));
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            padding: 1rem 0;
-        }
-
-        .navbar-brand {
-            font-size: 1.5rem;
-            font-weight: 600;
-        }
-
-        .card {
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-            transition: all 0.3s ease;
-            overflow: hidden;
-        }
-
-        .card:hover {
-            transform: var(--card-hover-transform);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-        }
-
-        .card-header {
-            background: linear-gradient(135deg, var(--primary-dark), var(--secondary-dark));
-            color: var(--text-light);
-            border-bottom: none;
-            padding: 1.25rem;
-            font-weight: 600;
-        }
-
-        .stat-card {
-            background: linear-gradient(165deg, #ffffff, #f8f9fa);
-            border: none;
-            border-radius: 15px;
-            padding: 1.5rem;
-        }
-
-        .stat-icon {
-            font-size: 2.5rem;
-            background: linear-gradient(135deg, var(--accent-green), var(--accent-blue));
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 1rem;
-        }
-
-        .ideology-badge {
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-            font-size: 0.85rem;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
-            display: inline-block;
-            margin: 4px;
-        }
-
-        .ideology-fascism { background-color: #8B0000; color: white; }
-        .ideology-democracy { background-color: #006400; color: white; }
-        .ideology-communism { background-color: #FF4500; color: white; }
-        .ideology-socialism { background-color: #FFD700; color: black; }
-        .ideology-theocracy { background-color: #4B0082; color: white; }
-        .ideology-anarchy { background-color: #8B4513; color: white; }
-        .ideology-monarchy { background-color: #FFD700; color: black; }
-        .ideology-terrorism { background-color: #800000; color: white; }
-        .ideology-pacifist { background-color: #40E0D0; color: black; }
-
-        .ideology-badge:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-        }
-
-        .event-timeline {
-            max-height: 600px;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(0,0,0,0.2) transparent;
-            padding: 1rem;
-        }
-
-        .event-item {
-            padding: 1.25rem;
-            border-left: 4px solid var(--accent-green);
-            margin: 1rem 0;
-            background: white;
-            border-radius: 0 10px 10px 0;
-            transition: all 0.3s ease;
-        }
-
-        .event-item:hover {
-            transform: translateX(5px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-
-        .event-icon {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .event-title {
-            font-weight: 600;
-            color: var(--primary-dark);
-            margin-bottom: 0.5rem;
-        }
-
-        .event-description {
-            color: #666;
-            font-size: 0.9rem;
-        }
-
-        .event-meta {
-            font-size: 0.8rem;
-            color: #888;
-            margin-top: 0.5rem;
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .table {
-            margin-bottom: 0;
-        }
-
-        .table-dark {
-            background: linear-gradient(135deg, var(--primary-dark), var(--secondary-dark));
-        }
-
-        .table-hover tbody tr {
-            transition: all 0.2s ease;
-        }
-
-        .table-hover tbody tr:hover {
-            background-color: rgba(0,0,0,0.02);
-            transform: scale(1.01);
-        }
-
-        footer {
-            background: linear-gradient(135deg, var(--primary-dark), var(--secondary-dark));
-            color: var(--text-light);
-            padding: 1.5rem 0;
-            margin-top: 3rem;
-        }
-
-        /* Custom scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
-
-        /* Animation for stats */
-        @keyframes countUp {
-            from { transform: translateY(10px); opacity: 0; }
+        /* Core Animations */
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
 
-        .stat-card .card-title {
-            animation: countUp 0.5s ease-out forwards;
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
 
-        /* Loading animation */
-        .loading {
-            position: fixed;
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+
+        @keyframes androidRipple {
+            0% { transform: scale(0); opacity: 0.4; }
+            100% { transform: scale(2.5); opacity: 0; }
+        }
+
+        @keyframes borderGlow {
+            0% { box-shadow: 0 0 5px var(--accent-blue); }
+            50% { box-shadow: 0 0 20px var(--accent-blue); }
+            100% { box-shadow: 0 0 5px var(--accent-blue); }
+        }
+
+        body {
+            background: #121212;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: var(--text-light);
+            line-height: 1.6;
+        }
+
+        /* Navigation & Header */
+        .navbar {
+            background: var(--bg-gradient);
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.3);
+            animation: slideIn 0.5s ease-out;
+        }
+
+        .nav-link {
+            position: relative;
+            transition: all 0.3s ease;
+            margin: 0 10px;
+        }
+
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--accent-blue);
+            transition: width 0.3s ease;
+        }
+
+        .nav-link:hover::after {
+            width: 100%;
+        }
+
+        /* Dashboard Cards */
+        .dashboard-card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+
+        .dashboard-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: 0.5s;
+        }
+
+        .dashboard-card:hover::before {
+            left: 100%;
+        }
+
+        /* Resource Display */
+        .resource-item {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+            padding: 10px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .resource-item:hover {
+            background: rgba(255,255,255,0.08);
+            transform: translateX(10px);
+        }
+
+        .resource-icon {
+            font-size: 1.5rem;
+            margin-right: 15px;
+            color: var(--accent-gold);
+            animation: float 3s ease-in-out infinite;
+        }
+
+        /* Battle Log */
+        .battle-log {
+            height: 300px;
+            overflow-y: auto;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .battle-entry {
+            padding: 10px;
+            margin: 5px 0;
+            border-left: 3px solid var(--accent-red);
+            background: rgba(255,255,255,0.02);
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        /* Military Status */
+        .military-stat {
+            text-align: center;
+            padding: 20px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.03);
+            margin: 10px 0;
+            transition: all 0.3s ease;
+        }
+
+        .military-stat:hover {
+            background: rgba(255,255,255,0.08);
+            transform: scale(1.05);
+        }
+
+        /* Research Tree */
+        .research-tree {
+            position: relative;
+            padding: 20px;
+        }
+
+        .research-node {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: var(--bg-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            animation: pulse 2s infinite;
+        }
+
+        .research-node:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px var(--accent-blue);
+        }
+
+        /* Ideology Banner */
+        .ideology-banner {
+            background: linear-gradient(45deg, var(--accent-blue), var(--accent-green));
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ideology-banner::after {
+            content: '';
+            position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 3px;
-            background: linear-gradient(to right, var(--accent-green), var(--accent-blue));
-            animation: loading 2s infinite;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent, rgba(255,255,255,0.1));
+            animation: shimmer 2s infinite;
         }
 
-        @keyframes loading {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
+        /* Resource Production */
+        .production-meter {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .production-progress {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-green), var(--accent-blue));
+            width: 0%;
+            transition: width 1s linear;
+            animation: borderGlow 2s infinite;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-gradient);
+            padding: 2rem 0;
+            margin-top: 3rem;
+            text-align: center;
+        }
+
+        /* Time Display */
+        .time-display {
+            font-family: 'Courier New', monospace;
+            font-size: 1.2rem;
+            color: var(--accent-gold);
+            text-align: right;
+            animation: fadeIn 1s ease-out;
+        }
+
+        /* User Badge */
+        .user-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 15px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            margin: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .user-badge img {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        /* Utilities */
+        .shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite;
+        }
+
+        .floating {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--accent-blue);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-green);
         }
     </style>
 </head>
 <body>
-    <!-- Loading bar -->
-    <div class="loading"></div>
-
-    <!-- Navigation -->
-    <nav class="navbar navbar-dark">
-        <div class="container-fluid">
-            <span class="navbar-brand mb-0 h1">
-                <i class="fas fa-crown"></i> WarBot - Command Center
-            </span>
-            <div class="navbar-text">
-                <i class="fas fa-globe"></i> Live Intelligence Dashboard
+    <!-- Header & Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#"><i class="fas fa-chess-rook"></i> WarBot Control</a>
+            <div class="time-display">2025-08-19 10:34:20 UTC</div>
+            <div class="user-badge">
+                <i class="fas fa-user-circle"></i>
+                <span>Pen-123</span>
             </div>
         </div>
     </nav>
 
-    <div class="container-fluid mt-4">
-        {% if error %}
-        <div class="alert alert-danger alert-dismissible fade show" role="alert">
-            <i class="fas fa-exclamation-triangle"></i> {{ error }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-        </div>
-        {% endif %}
-
-        <!-- Statistics Overview -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <h2><i class="fas fa-chart-line"></i> Global Intelligence Report</h2>
-            </div>
-        </div>
-        
-        <!-- Stats Cards -->
-        <div class="row mb-4">
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-city stat-icon"></i>
-                        <h5 class="card-title">{{ stats.get('total_civilizations', 0) }}</h5>
-                        <p class="card-text">Nations</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-users stat-icon"></i>
-                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_population', 0)) }}</h5>
-                        <p class="card-text">Citizens</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-coins stat-icon"></i>
-                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_resources', 0)) }}</h5>
-                        <p class="card-text">Resources</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-swords stat-icon"></i>
-                        <h5 class="card-title">{{ stats.get('active_wars', 0) }}</h5>
-                        <p class="card-text">Active Wars</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-handshake stat-icon"></i>
-                        <h5 class="card-title">{{ stats.get('total_alliances', 0) }}</h5>
-                        <p class="card-text">Alliances</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card">
-                    <div class="card-body text-center">
-                        <i class="fas fa-smile stat-icon"></i>
-                        <h5 class="card-title">{{ "%.1f"|format(stats.get('average_happiness', 0)) }}%</h5>
-                        <p class="card-text">Avg Happiness</p>
-                    </div>
-                </div>
-            </div>
+    <!-- Main Content -->
+    <div class="container mt-4">
+        <!-- Ideology Banner -->
+        <div class="ideology-banner">
+            <h2><i class="fas fa-crown"></i> Democracy</h2>
+            <p>+20% happiness, +10% trade profit, -15% soldier training</p>
         </div>
 
+        <!-- Resources Section -->
         <div class="row">
-            <!-- Top Civilizations -->
-            <div class="col-lg-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-trophy"></i> Power Rankings</h4>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead class="table-dark">
-                                    <tr>
-                                        <th>Rank</th>
-                                        <th>Nation</th>
-                                        <th>Power</th>
-                                        <th>Ideology</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for civ in top_civs[:10] %}
-                                    <tr>
-                                        <td>
-                                            {% if loop.index == 1 %}
-                                                <i class="fas fa-crown text-warning"></i> #{{ loop.index }}
-                                            {% elif loop.index == 2 %}
-                                                <i class="fas fa-medal text-secondary"></i> #{{ loop.index }}
-                                            {% elif loop.index == 3 %}
-                                                <i class="fas fa-medal" style="color: #CD7F32;"></i> #{{ loop.index }}
-                                            {% else %}
-                                                #{{ loop.index }}
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            <strong>{{ civ.rank_emoji }} {{ civ.name }}</strong>
-                                            <br><small class="text-muted">{{ civ.rank }}</small>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-primary">{{ "{:,}".format(civ.power_score) }}</span>
-                                        </td>
-                                        <td>
-                                            <span class="ideology-badge ideology-{{ civ.ideology.lower() }}">
-                                                {{ civ.ideology.title() }}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">
-                                                {{ civ.happiness_emoji }} {{ civ.happiness_status }}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                    {% if not top_civs %}
-                                    <tr>
-                                        <td colspan="5" class="text-center text-muted">
-                                            <i class="fas fa-city"></i> No nations found
-                                        </td>
-                                    </tr>
-                                    {% endif %}
-                                </tbody>
-                            </table>
+            <div class="col-md-6">
+                <div class="dashboard-card">
+                    <h3><i class="fas fa-coins"></i> Resources</h3>
+                    <div class="resource-item">
+                        <i class="fas fa-coins resource-icon"></i>
+                        <div>
+                            <h4>Gold</h4>
+                            <div class="production-meter">
+                                <div class="production-progress" style="width: 75%"></div>
+                            </div>
                         </div>
                     </div>
+                    <!-- Add more resources -->
                 </div>
             </div>
 
-            <!-- Recent Events -->
-            <div class="col-lg-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h4><i class="fas fa-newspaper"></i> War Room Updates</h4>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="event-timeline">
-                            {% for event in recent_events[:15] %}
-                            <div class="event-item">
-                                <div class="event-icon">{{ event.event_icon }}</div>
-                                <div class="event-content">
-                                    <div class="event-title">{{ event.title }}</div>
-                                    <div class="event-description">{{ event.description }}</div>
-                                    <div class="event-meta">
-                                        <span class="event-civ">{{ event.civilization }}</span>
-                                        <span class="event-time">{{ event.time_ago }}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            {% endfor %}
-                            {% if not recent_events %}
-                            <div class="text-center text-muted p-4">
-                                <i class="fas fa-calendar-times"></i> No recent events
-                            </div>
-                            {% endif %}
-                        </div>
+            <!-- Military Status -->
+            <div class="col-md-6">
+                <div class="dashboard-card">
+                    <h3><i class="fas fa-shield-alt"></i> Military</h3>
+                    <div class="military-stat">
+                        <i class="fas fa-users"></i>
+                        <h4>Army Size</h4>
+                        <p>500 Troops</p>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Additional Statistics Row -->
-        <div class="row">
-            <!-- Ideology Distribution -->
-            <div class="col-lg-4 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-chart-pie"></i> Global Ideologies</h5>
-                    </div>
-                    <div class="card-body">
-                        {% for ideology, count in stats.get('ideology_distribution', {}).items() %}
-                        <div class="ideology-stat mb-3">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-{{ ideology.lower() }}">
-                                    {{ ideology.title() }}
-                                </span>
-                                <span class="badge bg-secondary">{{ count }}</span>
-                            </div>
-                        </div>
-                        {% endfor %}
-                        {% if not stats.get('ideology_distribution') %}
-                        <div class="text-center text-muted">
-                            <i class="fas fa-balance-scale"></i> No ideology data
-                        </div>
-                        {% endif %}
-                    </div>
+        <!-- Battle Log -->
+        <div class="dashboard-card">
+            <h3><i class="fas fa-history"></i> Recent Events</h3>
+            <div class="battle-log">
+                <div class="battle-entry">
+                    <span class="timestamp">10:30:15</span>
+                    <span class="event-text">Resource production increased by 15%</span>
                 </div>
-            </div>
-
-            <!-- Alliance Information -->
-            <div class="col-lg-8 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-handshake"></i> Active Alliances</h5>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead class="table-dark">
-                                    <tr>
-                                        <th>Alliance Name</th>
-                                        <th>Members</th>
-                                        <th>Active Wars</th>
-                                        <th>Founded</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for alliance in alliances %}
-                                    <tr>
-                                        <td>
-                                            <strong>{{ alliance.name }}</strong>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-info">{{ alliance.member_count }} members</span>
-                                            <br>
-                                            <small class="text-muted">
-                                                {{ alliance.member_names[:3]|join(", ") }}
-                                                {% if alliance.member_names|length > 3 %}
-                                                    and {{ alliance.member_names|length - 3 }} more
-                                                {% endif %}
-                                            </small>
-                                        </td>
-                                        <td>
-                                            {% if alliance.active_wars > 0 %}
-                                                <span class="badge bg-danger">{{ alliance.active_wars }}</span>
-                                            {% else %}
-                                                <span class="badge bg-success">Peaceful</span>
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            <small class="text-muted">{{ alliance.created_at[:10] }}</small>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                    {% if not alliances %}
-                                    <tr>
-                                        <td colspan="4" class="text-center text-muted">
-                                            <i class="fas fa-handshake"></i> No active alliances
-                                        </td>
-                                    </tr>
-                                    {% endif %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
+                <!-- Add more entries -->
             </div>
         </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="text-center py-3">
+    <footer>
         <div class="container">
-            <p class="mb-1">
-                <i class="fas fa-robot"></i> WarBot Command Center | 
-                Last Update: <span id="lastUpdate">2025-08-19 10:07:58 UTC</span>
-            </p>
-            <small class="text-muted">Refreshes automatically every 5 minutes</small>
+            <p>WarBot Control Center &copy; 2025</p>
         </div>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Auto-refresh the page every 5 minutes
-        setTimeout(function() {
-            window.location.reload();
-        }, 300000);
+        // Update production meters
+        document.querySelectorAll('.production-progress').forEach(meter => {
+            setInterval(() => {
+                const currentWidth = parseInt(meter.style.width) || 0;
+                meter.style.width = `${(currentWidth + 1) % 100}%`;
+            }, 100);
+        });
 
-        // Update last updated timestamp
-        function updateTimestamp() {
+        // Add ripple effect to cards
+        document.querySelectorAll('.dashboard-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                const ripple = document.createElement('div');
+                ripple.className = 'ripple';
+                const rect = this.getBoundingClientRect();
+                ripple.style.left = `${e.clientX - rect.left}px`;
+                ripple.style.top = `${e.clientY - rect.top}px`;
+                this.appendChild(ripple);
+                setTimeout(() => ripple.remove(), 1000);
+            });
+        });
+
+        // Update time display
+        setInterval(() => {
             const now = new Date();
-            const timestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-            document.getElementById('lastUpdate').textContent = timestamp;
-        }
-        
-        // Update timestamp on load
-        updateTimestamp();
-        
-        // Update timestamp every minute
-        setInterval(updateTimestamp, 60000);
+            const timeString = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+            document.querySelector('.time-display').textContent = timeString;
+        }, 1000);
 
-        // Remove loading bar after page loads
-        window.addEventListener('load', function() {
-            document.querySelector('.loading').style.display = 'none';
+        // Initialize tooltips
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
         });
     </script>
 </body>
