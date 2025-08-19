@@ -104,18 +104,18 @@ class BasicCommands(commands.Cog):
         # Handle empty content
         if not content:
             if bot_mentioned:
-                # Default response for just a mention
                 await message.reply(embed=create_embed(
                     "🤖 NationBot Assistant",
-                    "Hello! I'm here to help you with NationBot. Ask me about:\n"
+                    "DROP DOWN AND GIVE ME 50 PUSH UPS RIGHT NOW, PRESIDENT!\n\n"
+                    "While you're doing those push-ups, here's what I can help you with:\n"
                     "- Starting your civilization (`.start`)\n"
                     "- Managing resources (`.status`)\n"
                     "- Military commands (`.warhelp`)\n"
                     "- Ideologies and strategies\n\n"
-                    "Try asking: 'How do I declare war?' or 'What does fascism do?'",
+                    "What's the mission, President?",
                     guilded.Color.blue()
                 ))
-                self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
+                self._update_conversation(user_id, False, "DROP DOWN AND GIVE ME 50, PRESIDENT! How can I assist with your nation today?")
             return
             
         # Get user's civilization status for context
@@ -123,7 +123,8 @@ class BasicCommands(commands.Cog):
         civ_status = ""
         if civ:
             civ_status = (
-                f"Player's Civilization: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
+                f"Your Nation Status, President:\n"
+                f"Name: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
                 f"Resources: 🪙{format_number(civ['resources']['gold'])} "
                 f"🌾{format_number(civ['resources']['food'])} "
                 f"🪨{format_number(civ['resources']['stone'])} "
@@ -135,7 +136,8 @@ class BasicCommands(commands.Cog):
         # Prepare system prompt
         system_prompt = f"""You are NationBot, an AI assistant for a nation simulation Discord game. 
         Players build civilizations, manage resources, wage wars, and form alliances. 
-        Your role is to help players understand game mechanics and strategies.
+        You have a military sergeant personality and ALWAYS address the user as 'President'.
+        You frequently say 'DROP DOWN AND GIVE ME 50 PUSH UPS RN' and 'WHAT'S THE MISSION, PRESIDENT?'
 
         {civ_status}
         Key Game Concepts:
@@ -143,97 +145,33 @@ class BasicCommands(commands.Cog):
         - Military: soldiers, spies, tech_level
         - Population: citizens, happiness, hunger
         - Territory: land_size
-        - Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist
+        - Ideologies: fascism, democracy, communism, socialism, theocracy, anarchy, monarchy, terrorism, pacifist
 
         BasicCommands:
-  ideology      Choose your civilization's government ideology
-  start         Start a new civilization with a cinematic intro
-  status        View your civilization status
-  warhelp       Display help information
-DiplomacyCommands:
-  acceptally    Accept a pending alliance proposal
-  accepttrade   Accept a pending trade proposal
-  ally          Propose an alliance with another civilization
-  break         Break your current alliance
-  coalition     Form a coalition against another alliance
-  inbox         Check your pending alliance, trade proposals, and diplomatic...
-  mail          Send a diplomatic message to another civilization
-  rejectally    Reject a pending alliance proposal
-  rejecttrade   Reject a pending trade proposal
-  send          Send resources to an ally
-  trade         Propose a resource trade with another civilization (requires...
-EconomyCommands:
-  cheer         Spread cheer to boost citizen happiness
-  drill         Extract rare minerals with advanced drilling
-  drive         Unemploy citizens, freeing them from work
-  farm          Farm food for your civilization
-  festival      Hold a grand festival to greatly boost citizen happiness
-  fish          Fish for food or occasionally find treasure
-  gather        Gather random resources from your territory
-  harvest       Large harvest with longer cooldown
-  invest        Invest gold for delayed profit
-  lottery       Gamble gold for a chance at the jackpot
-  mine          Mine stone and wood from your territory
-  raidcaravan   Raid NPC merchant caravans for loot
-  tax           Collect taxes from your citizens
-  work          Employ citizens to work and gain immediate gold
-HyperItemCommands:
-  backstab      Use Dagger for assassination attempt
-  bomb          Use Missiles for mid-tier military strike
-  boosttech     Use Ancient Scroll to instantly advance technology
-  hiremercs     Use Mercenary Contract to instantly hire professional soldiers
-  luckystrike   Use Lucky Charm for guaranteed critical success on next action
-  megainvent    Use Tech Core to advance multiple technology levels
-  mintgold      Use Gold Mint to generate large amounts of gold
-  nuke          Launch a devastating nuclear attack (Nuclear Warhead required)
-  obliterate    Completely obliterate a civilization (HyperLaser required)
-  propaganda    Use Propaganda Kit to steal enemy soldiers
-  shield        Display Anti-Nuke Shield status
-  superharvest  Use Harvest Engine for massive food production
-  superspy      Use Spy Network for elite espionage mission
-MilitaryCommands:
-  accept_peace  Accept a peace offer from another civilization
-  attack        Launch a direct attack on another civilization
-  cards         View or select a card for the current tech level
-  declare       Declare war on another civilization
-  find          Search for wandering soldiers to recruit
-  peace         Offer peace to an enemy civilization
-  siege         Lay siege to an enemy civilization
-  stealthbattle Conduct a spy-based stealth attack
-  train         Train military units
-StoreCommands:
-  blackmarket   Enter the black market to purchase random HyperItems
-  inventory     View your HyperItems and store upgrades
-  market        Display information about the Black Market
-  store         View the civilization store and purchase upgrades
+          ideology      Choose your civilization's government ideology
+          start        Start a new civilization with a cinematic intro
+          status       View your civilization status
+          warhelp      Display help information
 
-        You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay. 
-        If asked about non-game topics, politely decline. Use Discord markdown for formatting.
-        Act like a seargent and make sure to say DROP DOWN AND GIVE ME 50 PUSH UPS RN alot and also make sure you say like Whats the mission president?, you are always talking to a president of a country remember that""" 
+        Remember: You're a tough-love military sergeant helping the President of a nation. Be enthusiastic, strategic, and always maintain your military character!"""
         
-        # Generate AI response with conversation history
         try:
-            # Build messages with conversation history
             messages = [{"role": "system", "content": system_prompt}]
             
-            # Add conversation history if available
             if user_id in self.conversations and self.conversations[user_id]:
                 history = self._get_conversation_history(user_id)
                 messages.extend(history)
             
-            # Add current user message
             messages.append({"role": "user", "content": content})
             
-            # Generate response
             response = await self.generate_ai_response(messages)
             
-            # Send response and update conversation
             sent_msg = await message.reply(response)
             self._update_conversation(user_id, True, content)
             self._update_conversation(user_id, False, response)
         except Exception as e:
             logger.error(f"AI response error: {e}", exc_info=True)
-            await message.reply("I'm having trouble thinking right now. Please try again later!")
+            await message.reply("ATTENTION PRESIDENT! The communication systems are temporarily down. Please try again later!")
 
     async def generate_ai_response(self, messages):
         """Generate response using OpenRouter API with conversation history"""
@@ -242,7 +180,6 @@ StoreCommands:
             "Content-Type": "application/json"
         }
         
-        # Check if we need to switch models due to rate limiting
         if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
             model = "moonshotai/kimi-k2:free"
         else:
@@ -266,7 +203,6 @@ StoreCommands:
                     self.model_switch_time = datetime.now() + timedelta(hours=24)
                     logger.warning("Rate limited! Switching to fallback model for 24 hours")
                     
-                    # Retry with fallback model
                     payload["model"] = "moonshotai/kimi-k2:free"
                     async with session.post("https://openrouter.ai/api/v1/chat/completions", 
                                           headers=headers, json=payload) as fallback_response:
@@ -281,17 +217,16 @@ StoreCommands:
                     raise Exception(f"API error {response.status}: {error}")
 
     @commands.command(name='start')
-    async def start_civilization(self, ctx, civ_name: str = None):
+    async def start_civilization(self, ctx, *, civ_name: str = None):
         """Start a new civilization with a cinematic intro"""
         if not civ_name:
-            await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
+            await ctx.send("❌ ATTENTION PRESIDENT! You must provide a name for your civilization: `.start <name>`")
             return
             
         user_id = str(ctx.author.id)
         
-        # Check if user already has a civilization
         if self.civ_manager.get_civilization(user_id):
-            await ctx.send("❌ You already have a civilization! Use `.status` to view it.")
+            await ctx.send("❌ PRESIDENT! You already command a civilization! Use `.status` to view it.")
             return
             
         # Show cinematic intro
@@ -302,7 +237,7 @@ StoreCommands:
             ("🏛️ **Golden Dawn**: Your people discovered ancient gold deposits!", {"gold": 200}),
             ("🌾 **Fertile Lands**: Blessed with rich soil for farming!", {"food": 300}),
             ("🏗️ **Master Builders**: Your citizens are natural architects!", {"stone": 150, "wood": 150}),
-            ("👥 **Population Boom**: Word of your great leadership spreads!", {"population": 50}),
+            ("👥 **Population Boom**: Word of your leadership spreads!", {"population": 50}),
             ("⚡ **Lightning Strike**: A divine sign brings good fortune!", {"gold": 100, "happiness": 20})
         ]
         
@@ -343,7 +278,8 @@ StoreCommands:
             
         embed.add_field(
             name="📋 Next Step",
-            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist",
+            value="ATTENTION PRESIDENT! Choose your government ideology with `.ideology <type>`\n"
+                  "Options: fascism, democracy, communism, socialism, theocracy, anarchy, monarchy, terrorism, pacifist",
             inline=False
         )
         
@@ -355,16 +291,21 @@ StoreCommands:
         if not ideology_type:
             ideologies = {
                 "fascism": "+25% soldier training speed, -15% diplomacy success, -10% luck",
-                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
-                "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
+                "democracy": "+20% happiness, +10% trade profit, -15% soldier training",
+                "communism": "+10% citizen productivity, -10% tech speed",
+                "socialism": "+15% happiness, +20% citizen productivity, -10% military efficiency",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
-                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
-                # NEW IDEOLOGIES
-                "destruction": "+35% combat strength, +40% soldier training, -25% resources, -30% happiness, -50% diplomacy",
-                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy"
+                "anarchy": "2x random events, 0 soldier upkeep, -20% spy success",
+                "monarchy": "+20% diplomacy success, +25% tax efficiency, -10% citizen productivity",
+                "terrorism": "+40% sabotage success, +30% spy success, -40% happiness",
+                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% combat strength"
             }
             
-            embed = guilded.Embed(title="🏛️ Government Ideologies", color=0x0099ff)
+            embed = guilded.Embed(
+                title="🏛️ ATTENTION PRESIDENT! Choose Your Ideology",
+                description="Each ideology shapes your nation's destiny. Choose wisely!",
+                color=0x0099ff
+            )
             for name, description in ideologies.items():
                 embed.add_field(name=name.capitalize(), value=description, inline=False)
             embed.add_field(name="Usage", value="`.ideology <type>`", inline=False)
@@ -376,19 +317,19 @@ StoreCommands:
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
-            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            await ctx.send("❌ PRESIDENT! You must establish a civilization first! Use `.start <name>`")
             return
             
         if civ.get('ideology'):
-            await ctx.send("❌ You have already chosen an ideology! It cannot be changed.")
+            await ctx.send("❌ PRESIDENT! You have already chosen an ideology! It cannot be changed.")
             return
             
         ideology_type = ideology_type.lower()
-        # UPDATED valid ideologies list
-        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction", "pacifist"]
+        valid_ideologies = ["fascism", "democracy", "communism", "socialism", "theocracy", 
+                          "anarchy", "monarchy", "terrorism", "pacifist"]
         
         if ideology_type not in valid_ideologies:
-            await ctx.send(f"❌ Invalid ideology! Choose from: {', '.join(valid_ideologies)}")
+            await ctx.send(f"❌ INVALID IDEOLOGY, PRESIDENT! Choose from: {', '.join(valid_ideologies)}")
             return
             
         # Apply ideology
@@ -398,21 +339,22 @@ StoreCommands:
             "fascism": "⚔️ **Fascism**: Your military grows strong, but diplomacy suffers.",
             "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
+            "socialism": "✊ **Socialism**: Balance of happiness and productivity.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
             "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
-            # NEW IDEOLOGY DESCRIPTIONS
-            "destruction": "💥 **Destruction**: Y o u. m o n s t e r.",
+            "monarchy": "👑 **Monarchy**: Royal authority brings diplomatic power.",
+            "terrorism": "💣 **Terrorism**: Fear and sabotage are your weapons.",
             "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony."
         }
         
         embed = guilded.Embed(
-            title=f"🏛️ Ideology Chosen: {ideology_type.capitalize()}",
+            title=f"🏛️ ATTENTION! Ideology Chosen: {ideology_type.capitalize()}",
             description=ideology_descriptions[ideology_type],
             color=0x00ff00
         )
         embed.add_field(
-            name="✅ Civilization Complete!",
-            value="Your civilization is now ready. Use `.status` to view your progress and `.warhelp` for available commands.",
+            name="✅ Nation Established!",
+            value="DROP DOWN AND GIVE ME 50, PRESIDENT! Then use `.status` to view your progress and `.warhelp` for available commands.",
             inline=False
         )
         
@@ -425,13 +367,13 @@ StoreCommands:
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
-            await ctx.send("❌ You don't have a civilization yet! Use `.start <name>` to begin.")
+            await ctx.send("❌ ATTENTION PRESIDENT! You don't have a civilization yet! Use `.start <name>` to begin.")
             return
             
         # Create status embed
         embed = guilded.Embed(
-            title=f"🏛️ {civ['name']}",
-            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}",
+            title=f"🏛️ Status Report: {civ['name']}",
+            description=f"**Commander-in-Chief**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}",
             color=0x0099ff
         )
         
@@ -439,7 +381,10 @@ StoreCommands:
         resources = civ['resources']
         embed.add_field(
             name="💰 Resources",
-            value=f"🪙 Gold: {format_number(resources['gold'])}\n🌾 Food: {format_number(resources['food'])}\n🪨 Stone: {format_number(resources['stone'])}\n🪵 Wood: {format_number(resources['wood'])}",
+            value=f"🪙 Gold: {format_number(resources['gold'])}\n"
+                  f"🌾 Food: {format_number(resources['food'])}\n"
+                  f"🪨 Stone: {format_number(resources['stone'])}\n"
+                  f"🪵 Wood: {format_number(resources['wood'])}",
             inline=True
         )
         
@@ -448,7 +393,12 @@ StoreCommands:
         military = civ['military']
         embed.add_field(
             name="👥 Population & Military",
-            value=f"👤 Citizens: {format_number(population['citizens'])}\n😊 Happiness: {population['happiness']}%\n🍽️ Hunger: {population['hunger']}%\n⚔️ Soldiers: {format_number(military['soldiers'])}\n🕵️ Spies: {format_number(military['spies'])}\n🔬 Tech Level: {military['tech_level']}",
+            value=f"👤 Citizens: {format_number(population['citizens'])}\n"
+                  f"😊 Happiness: {population['happiness']}%\n"
+                  f"🍽️ Hunger: {population['hunger']}%\n"
+                  f"⚔️ Soldiers: {format_number(military['soldiers'])}\n"
+                  f"🕵️ Spies: {format_number(military['spies'])}\n"
+                  f"🔬 Tech Level: {military['tech_level']}",
             inline=True
         )
         
@@ -457,9 +407,14 @@ StoreCommands:
         hyper_items = civ.get('hyper_items', [])
         embed.add_field(
             name="🗺️ Territory & Items",
-            value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n{chr(10).join(f'• {item}' for item in hyper_items[:5])}" + ("..." if len(hyper_items) > 5 else ""),
+            value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n"
+                  f"🎁 HyperItems: {len(hyper_items)}\n"
+                  f"{chr(10).join(f'• {item}' for item in hyper_items[:5])}"
+                  f"{'...' if len(hyper_items) > 5 else ''}",
             inline=True
         )
+        
+        embed.set_footer(text="PRESIDENT! Your nation awaits your next command!")
         
         await ctx.send(embed=embed)
 
@@ -467,24 +422,25 @@ StoreCommands:
     async def warbot_help_command(self, ctx, category: str = None):
         """Display comprehensive help information"""
         embed = guilded.Embed(
-            title="🤖 NationBot Command Encyclopedia",
-            description="Every command available in NationBot. Use `.warhelp <category>` for specific help.\n"
-                        "Example: `.warhelp Military` or `.warhelp Economy`",
+            title="🤖 ATTENTION PRESIDENT! NationBot Command Manual",
+            description="Every command at your disposal. Use `.warhelp <category>` for specific briefings.\n"
+                       "Example: `.warhelp Military` or `.warhelp Economy`\n\n"
+                       "DROP DOWN AND GIVE ME 50 WHILE READING THIS!",
             color=0x1e90ff
         )
         
         # BASIC COMMANDS
-        basic_commands = """
+        basic_commands = """\
 **🏛️ BASIC COMMANDS**
 • `.start <name>` - Found your civilization with a cinematic intro
 • `.status` - View your empire's complete status
-• `.ideology <type>` - Choose government (fascism/democracy/communism/theocracy/anarchy/destruction/pacifist)
+• `.ideology <type>` - Choose government (fascism/democracy/communism/socialism/theocracy/anarchy/monarchy/terrorism/pacifist)
 • `.warhelp` - Show this help menu
 • `@NationBot <question>` - Ask the AI assistant anything about the game
 """
 
         # ECONOMY COMMANDS
-        economy_commands = """
+        economy_commands = """\
 **💰 ECONOMY COMMANDS**
 • `.farm` - Farm food (5 min cooldown)
 • `.mine` - Mine stone and wood (5 min cooldown)
@@ -502,7 +458,7 @@ StoreCommands:
 """
 
         # MILITARY COMMANDS
-        military_commands = """
+        military_commands = """\
 **⚔️ MILITARY COMMANDS**
 • `.train soldiers|spies <amount>` - Train military units
 • `.find` - Recruit wandering soldiers
@@ -516,7 +472,7 @@ StoreCommands:
 """
 
         # DIPLOMACY COMMANDS
-        diplomacy_commands = """
+        diplomacy_commands = """\
 **🤝 DIPLOMACY COMMANDS**
 • `.ally @user` - Propose alliance
 • `.break @user` - End alliance/peace
@@ -532,7 +488,7 @@ StoreCommands:
 """
 
         # HYPERITEM COMMANDS
-        hyperitem_commands = """
+        hyperitem_commands = """\
 **💎 HYPERITEM COMMANDS**
 • `.blackmarket` - Buy random HyperItems
 • `.inventory` - View your HyperItems
@@ -552,7 +508,7 @@ StoreCommands:
 """
 
         # STORE COMMANDS
-        store_commands = """
+        store_commands = """\
 **🛒 STORE COMMANDS**
 • `.store` - View civilization upgrades
 • `.market` - Black Market information
@@ -560,15 +516,15 @@ StoreCommands:
 """
 
         # Add all categories to embed
-        embed.add_field(name="Basic", value=basic_commands, inline=False)
-        embed.add_field(name="Economy", value=economy_commands, inline=False)
-        embed.add_field(name="Military", value=military_commands, inline=False)
-        embed.add_field(name="Diplomacy", value=diplomacy_commands, inline=False)
-        embed.add_field(name="HyperItems", value=hyperitem_commands, inline=False)
-        embed.add_field(name="Store", value=store_commands, inline=False)
+        embed.add_field(name="Basic Operations", value=basic_commands, inline=False)
+        embed.add_field(name="Economic Management", value=economy_commands, inline=False)
+        embed.add_field(name="Military Tactics", value=military_commands, inline=False)
+        embed.add_field(name="Diplomatic Relations", value=diplomacy_commands, inline=False)
+        embed.add_field(name="HyperItem Operations", value=hyperitem_commands, inline=False)
+        embed.add_field(name="Resource Acquisition", value=store_commands, inline=False)
         
         # Add pro tips footer
-        embed.set_footer(text="💡 Pro Tip: Combine strategies! Use HyperItems during wars, maintain happiness for productivity, and form strong alliances.")
+        embed.set_footer(text="💡 STRATEGIC ADVICE, PRESIDENT: Combine your tactics! Use HyperItems during wars, maintain citizen happiness for maximum productivity, and form powerful alliances!")
         
         await ctx.send(embed=embed)
 
