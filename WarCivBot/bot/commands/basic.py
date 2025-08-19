@@ -14,8 +14,6 @@ import guilded
 from guilded.ext import commands
 
 from bot.utils import format_number, get_ascii_art, create_embed
-from bot.saves import SaveManager
-
 logger = logging.getLogger(__name__)
 
 # Constants
