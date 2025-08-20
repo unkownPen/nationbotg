@@ -11,63 +11,77 @@ class CivilizationManager:
     def __init__(self, db: Database):
         self.db = db
         self.ideology_modifiers = {
-    "fascism": {
-        "soldier_training_speed": 1.25,
-        "diplomacy_success": 0.85,
-        "luck_modifier": 0.90,
-        "color": "#8B0000"  # Dark red
-    },
-    "democracy": {
-        "happiness_boost": 1.20,
-        "trade_profit": 1.10,
-        "soldier_training_speed": 0.85,
-        "color": "#006400"  # Dark green
-    },
-    "communism": {
-        "citizen_productivity": 1.10,
-        "tech_speed": 0.90,
-        "color": "#FF4500"  # Red-orange 
-    },
-    "socialism": {
-        "happiness_boost": 1.15,
-        "citizen_productivity": 1.20,
-        "military_efficiency": 0.90,
-        "color": "#FFD700"  # Gold
-    },
-    "theocracy": {
-        "propaganda_success": 1.15,
-        "happiness_boost": 1.05,
-        "tech_speed": 0.90,
-        "color": "#4B0082"  # Indigo
-    },
-    "anarchy": {
-        "random_event_frequency": 2.0,
-        "soldier_upkeep": 0.0, 
-        "spy_success": 0.80,
-        "color": "#8B4513"  # Saddle brown
-    },
-    "monarchy": {
-        "diplomacy_success": 1.20,
-        "tax_efficiency": 1.25,
-        "citizen_productivity": 0.90,
-        "color": "#FFD700"  # Golden yellow
-    },
-    "terrorism": {
-        "sabotage_success": 1.40,
-        "spy_success": 1.30,
-        "happiness_modifier": 0.60,
-        "color": "#800000"  # Maroon
-    },
-    "pacifist": {
-        "happiness_boost": 1.35,
-        "population_growth": 1.25,
-        "trade_profit": 1.20,
-        "soldier_training_speed": 0.40,
-        "combat_strength": 0.60,
-        "diplomacy_success": 1.25,
-        "color": "#40E0D0"  # Turquoise
-    }
-}
+            "fascism": {
+                "soldier_training_speed": 1.25,
+                "diplomacy_success": 0.85,
+                "luck_modifier": 0.90,
+                "color": "#8B0000"  # Dark red
+            },
+            "democracy": {
+                "happiness_boost": 1.20,
+                "trade_profit": 1.10,
+                "soldier_training_speed": 0.85,
+                "color": "#006400"  # Dark green
+            },
+            "communism": {
+                "citizen_productivity": 1.10,
+                "tech_speed": 0.90,
+                "color": "#FF4500"  # Red-orange 
+            },
+            "socialism": {
+                "happiness_boost": 1.15,
+                "citizen_productivity": 1.20,
+                "military_efficiency": 0.90,
+                "color": "#FFD700"  # Gold
+            },
+            "theocracy": {
+                "propaganda_success": 1.15,
+                "happiness_boost": 1.05,
+                "tech_speed": 0.90,
+                "color": "#4B0082"  # Indigo
+            },
+            "anarchy": {
+                "random_event_frequency": 2.0,
+                "soldier_upkeep": 0.0, 
+                "spy_success": 0.80,
+                "color": "#8B4513"  # Saddle brown
+            },
+            "capitalism": {
+                "trade_profit": 1.35,
+                "tax_efficiency": 1.25,
+                "citizen_productivity": 1.20,
+                "soldier_upkeep": 0.85,
+                "color": "#0066CC"  # Blue
+            },
+            "monarchy": {
+                "diplomacy_success": 1.20,
+                "tax_efficiency": 1.25,
+                "citizen_productivity": 0.90,
+                "color": "#FFD700"  # Golden yellow
+            },
+            "terrorism": {
+                "sabotage_success": 1.40,
+                "spy_success": 1.30,
+                "happiness_modifier": 0.60,
+                "color": "#800000"  # Maroon
+            },
+            "pacifist": {
+                "happiness_boost": 1.35,
+                "population_growth": 1.25,
+                "trade_profit": 1.20,
+                "soldier_training_speed": 0.40,
+                "combat_strength": 0.60,
+                "diplomacy_success": 1.25,
+                "color": "#40E0D0"  # Turquoise
+            },
+            "destructionism": {
+                "combat_strength": 1.40,
+                "resource_loot": 1.15,
+                "citizen_productivity": 0.80,
+                "population_growth": 0.90,
+                "color": "#FF0000"  # Red
+            }
+        }
 
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization"""
@@ -256,10 +270,12 @@ class CivilizationManager:
             resource_modifier *= self.ideology_modifiers['communism']['citizen_productivity']
         elif ideology == 'democracy':
             resource_modifier *= self.ideology_modifiers['democracy']['trade_profit']
-        elif ideology == 'destruction':
-            resource_modifier *= self.ideology_modifiers['destruction']['resource_production']
+        elif ideology == 'destructionism':
+            resource_modifier *= self.ideology_modifiers['destructionism']['citizen_productivity']
         elif ideology == 'pacifist':
             resource_modifier *= self.ideology_modifiers['pacifist']['trade_profit']
+        elif ideology == 'capitalism':
+            resource_modifier *= self.ideology_modifiers['capitalism']['citizen_productivity']
         
         resource_modifier *= (1 + bonuses.get('resource_production', 0) / 100)
         
@@ -284,8 +300,11 @@ class CivilizationManager:
         soldier_upkeep = military['soldiers'] * 2
         spy_upkeep = military['spies'] * 5
         
+        # Apply ideology modifiers
         if ideology == 'anarchy':
             soldier_upkeep = 0
+        elif ideology == 'capitalism':
+            soldier_upkeep *= self.ideology_modifiers['capitalism']['soldier_upkeep']
             
         return {
             "food": food_consumption,
@@ -314,8 +333,13 @@ class CivilizationManager:
         
         elif happiness > 80:
             growth_rate = bonuses.get('population_growth', 0) / 100
+            ideology = civ.get('ideology', '')
+            
             if ideology == 'pacifist':
                 growth_rate += self.ideology_modifiers['pacifist']['population_growth'] - 1
+            elif ideology == 'destructionism':
+                growth_rate *= self.ideology_modifiers['destructionism']['population_growth']
+                
             if random.random() < (0.15 + growth_rate):
                 growth = int(population['citizens'] * (0.03 + growth_rate))
                 self.update_population(user_id, {"citizens": growth})
