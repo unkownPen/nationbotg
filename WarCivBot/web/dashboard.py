@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 from datetime import datetime, timedelta
+import threading
 
 # Add the parent directory to the path so we can import bot modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -19,25 +20,59 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'warbot-dashboard-secre
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize database connection
-db = None
-civ_manager = None
+# Thread-local storage for database connections
+thread_local = threading.local()
 
-def initialize_services():
-    """Lazy initialization of services to improve startup time"""
-    global db, civ_manager
-    if db is None:
-        db = Database()
-    if civ_manager is None:
-        civ_manager = CivilizationManager(db)
-    return db, civ_manager
+def get_db():
+    """Get thread-local database connection"""
+    if not hasattr(thread_local, 'db'):
+        thread_local.db = Database()
+    return thread_local.db
+
+def get_civ_manager():
+    """Get thread-local civilization manager"""
+    if not hasattr(thread_local, 'civ_manager'):
+        thread_local.civ_manager = CivilizationManager(get_db())
+    return thread_local.civ_manager
+
+# Add custom template filters
+@app.template_filter('strftime')
+def strftime_filter(value, format='%Y-%m-%d %H:%M:%S'):
+    """Custom filter to format datetime objects"""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return value
+    return value.strftime(format)
+
+@app.template_filter('time_ago')
+def time_ago_filter(value):
+    """Custom filter to show relative time"""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return value
+    
+    now = datetime.now()
+    diff = now - value
+    
+    if diff.days > 0:
+        return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+    elif diff.seconds >= 3600:
+        hours = diff.seconds // 3600
+        return f"{hours} hour{'s' if hours > 1 else ''} ago"
+    elif diff.seconds >= 60:
+        minutes = diff.seconds // 60
+        return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+    else:
+        return "Just now"
 
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
     try:
-        db, civ_manager = initialize_services()
-        
         # Get statistics
         stats = get_dashboard_stats()
         
@@ -54,7 +89,8 @@ def dashboard():
                              stats=stats,
                              top_civs=top_civs,
                              recent_events=recent_events,
-                             alliances=alliances)
+                             alliances=alliances,
+                             current_time=datetime.utcnow())
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return render_template('index.html', 
@@ -62,6 +98,7 @@ def dashboard():
                              top_civs=[], 
                              recent_events=[], 
                              alliances=[],
+                             current_time=datetime.utcnow(),
                              error="Dashboard temporarily unavailable")
 
 @app.route('/api/stats')
@@ -120,7 +157,8 @@ def health_check():
 def get_dashboard_stats():
     """Get overall dashboard statistics"""
     try:
-        db, civ_manager = initialize_services()
+        db = get_db()
+        civ_manager = get_civ_manager()
         civilizations = db.get_all_civilizations()
         
         if not civilizations:
@@ -181,7 +219,8 @@ def get_dashboard_stats():
 def get_top_civilizations(limit=10):
     """Get top civilizations by power score"""
     try:
-        db, civ_manager = initialize_services()
+        db = get_db()
+        civ_manager = get_civ_manager()
         civilizations = db.get_all_civilizations()
         
         # Calculate power scores and sort
@@ -221,7 +260,7 @@ def get_top_civilizations(limit=10):
 def get_recent_events(limit=20):
     """Get recent events with formatting"""
     try:
-        db, civ_manager = initialize_services()
+        db = get_db()
         events = db.get_recent_events(limit)
         
         formatted_events = []
@@ -253,7 +292,8 @@ def get_recent_events(limit=20):
 def get_alliance_info():
     """Get alliance information"""
     try:
-        db, civ_manager = initialize_services()
+        db = get_db()
+        civ_manager = get_civ_manager()
         conn = db.get_connection()
         cursor = conn.cursor()
         
@@ -298,7 +338,8 @@ def get_alliance_info():
 def get_leaderboard_by_category(category, limit=20):
     """Get leaderboard for specific category"""
     try:
-        db, civ_manager = initialize_services()
+        db = get_db()
+        civ_manager = get_civ_manager()
         civilizations = db.get_all_civilizations()
         
         leaderboard = []
@@ -385,6 +426,7 @@ def not_found(error):
                          top_civs=[], 
                          recent_events=[], 
                          alliances=[],
+                         current_time=datetime.utcnow(),
                          error="Page not found"), 404
 
 @app.errorhandler(500)
@@ -394,6 +436,7 @@ def internal_error(error):
                          top_civs=[], 
                          recent_events=[], 
                          alliances=[],
+                         current_time=datetime.utcnow(),
                          error="Internal server error"), 500
 
 if __name__ == '__main__':
