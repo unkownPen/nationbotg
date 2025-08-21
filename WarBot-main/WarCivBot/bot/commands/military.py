@@ -44,6 +44,34 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error creating tables: {e}", exc_info=True)
 
+    def _extract_user_id(self, input_str: str) -> str:
+        """Extract user ID from mention string or return as-is if already an ID"""
+        # If it's a mention like <@mpGYeq9d>
+        if input_str.startswith('<@') and input_str.endswith('>'):
+            return input_str[2:-1]  # Remove <@ and >
+        
+        # If it's already a user ID format (alphanumeric)
+        if input_str.isalnum() and len(input_str) >= 6:
+            return input_str
+            
+        return None
+
+    async def _get_member_from_mention(self, ctx, mention: str):
+        """Try to get a member object from a mention"""
+        try:
+            # Try to convert using Guilded's converter first
+            converter = commands.MemberConverter()
+            return await converter.convert(ctx, mention)
+        except commands.MemberNotFound:
+            # If that fails, try to extract ID and fetch manually
+            user_id = self._extract_user_id(mention)
+            if user_id:
+                try:
+                    return await ctx.guild.fetch_member(user_id)
+                except:
+                    return None
+            return None
+
     @commands.command(name='train')
     @check_cooldown_decorator(minutes=5)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
@@ -138,10 +166,10 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred while training units. Please try again.")
 
     @commands.command(name='declare')
-    async def declare_war(self, ctx, target: guilded.Member = None):
+    async def declare_war(self, ctx, target_mention: str = None):
         """Declare war on another civilization"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("⚔️ **Declaration of War**\nUsage: `.declare @user`\nNote: War must be declared before attacking!")
                 return
                 
@@ -150,6 +178,12 @@ class MilitaryCommands(commands.Cog):
             
             if not civ:
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+            
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             target_id = str(target.id)
@@ -204,10 +238,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='attack')
     @check_cooldown_decorator(minutes=15)
-    async def attack_civilization(self, ctx, target: guilded.Member = None):
+    async def attack_civilization(self, ctx, target_mention: str = None):
         """Launch a direct attack on another civilization"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first!")
                 return
                 
@@ -220,6 +254,12 @@ class MilitaryCommands(commands.Cog):
                 
             if civ['military']['soldiers'] < 10:
                 await ctx.send("❌ You need at least 10 soldiers to launch an attack!")
+                return
+                
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             target_id = str(target.id)
@@ -342,8 +382,11 @@ class MilitaryCommands(commands.Cog):
             self.db.log_event(attacker_id, "victory", "Battle Victory", f"Defeated {defender_civ['name']} in battle!")
             self.db.log_event(defender_id, "defeat", "Battle Defeat", f"Defeated by {attacker_civ['name']} in battle.")
             
-            # Notify defender
-            await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
+            # Try to mention the defender
+            try:
+                await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
+            except:
+                await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
 
         except Exception as e:
             logger.error(f"Error processing attack victory: {e}", exc_info=True)
@@ -387,8 +430,11 @@ class MilitaryCommands(commands.Cog):
             self.db.log_event(attacker_id, "defeat", "Battle Defeat", f"Defeated by {defender_civ['name']} in battle.")
             self.db.log_event(defender_id, "victory", "Battle Victory", f"Successfully defended against {attacker_civ['name']}!")
             
-            # Notify defender
-            await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
+            # Try to mention the defender
+            try:
+                await ctx.send(f"<@{defender_id}> ⚔️ Your civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
+            except:
+                await ctx.send(f"⚔️ The civilization **{defender_civ['name']}** successfully defended against **{attacker_civ['name']}**!")
 
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
@@ -396,10 +442,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='stealthbattle')
     @check_cooldown_decorator(minutes=20)
-    async def stealth_battle(self, ctx, target: guilded.Member = None):
+    async def stealth_battle(self, ctx, target_mention: str = None):
         """Conduct a spy-based stealth attack"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("🕵️ **Stealth Battle**\nUsage: `.stealthbattle @user`\nUses spies instead of soldiers for covert operations.")
                 return
                 
@@ -412,6 +458,12 @@ class MilitaryCommands(commands.Cog):
                 
             if civ['military']['spies'] < 3:
                 await ctx.send("❌ You need at least 3 spies to conduct stealth operations!")
+                return
+                
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             target_id = str(target.id)
@@ -494,7 +546,12 @@ class MilitaryCommands(commands.Cog):
                     embed.add_field(name="Casualties", value=f"Lost {spy_losses} spies during the operation", inline=False)
                     
                 await ctx.send(embed=embed)
-                await ctx.send(f"{target.mention} 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
+                
+                # Try to mention the target
+                try:
+                    await ctx.send(f"{target.mention} 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
+                except:
+                    await ctx.send(f"🕵️ The civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
                 
             else:
                 # Stealth mission fails
@@ -508,7 +565,12 @@ class MilitaryCommands(commands.Cog):
                 )
                 
                 await ctx.send(embed=embed)
-                await ctx.send(f"{target.mention} 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
+                
+                # Try to mention the target
+                try:
+                    await ctx.send(f"{target.mention} 🔍 Your intelligence network detected and thwarted a stealth attack from **{civ['name']}**!")
+                except:
+                    await ctx.send(f"🔍 The intelligence network of **{target_civ['name']}** detected and thwarted a stealth attack from **{civ['name']}**!")
 
         except Exception as e:
             logger.error(f"Error in stealthbattle command: {e}", exc_info=True)
@@ -516,10 +578,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='siege')
     @check_cooldown_decorator(minutes=30)
-    async def siege_city(self, ctx, target: guilded.Member = None):
+    async def siege_city(self, ctx, target_mention: str = None):
         """Lay siege to an enemy civilization"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("🏰 **Siege Warfare**\nUsage: `.siege @user`\nDrains enemy resources over time but requires large army.")
                 return
                 
@@ -532,6 +594,12 @@ class MilitaryCommands(commands.Cog):
                 
             if civ['military']['soldiers'] < 50:
                 await ctx.send("❌ You need at least 50 soldiers to lay siege!")
+                return
+                
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             target_id = str(target.id)
@@ -618,8 +686,11 @@ class MilitaryCommands(commands.Cog):
             self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
             self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
             
-            # Notify defender
-            await ctx.send(f"{target.mention} 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
+            # Try to mention the target
+            try:
+                await ctx.send(f"{target.mention} 🏰 Your civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
+            except:
+                await ctx.send(f"🏰 The civilization **{target_civ['name']}** is under siege by **{civ['name']}**!")
 
         except Exception as e:
             logger.error(f"Error in siege command: {e}", exc_info=True)
@@ -696,10 +767,10 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred while searching for soldiers. Please try again later.")
 
     @commands.command(name='peace')
-    async def make_peace(self, ctx, target: guilded.Member = None):
+    async def make_peace(self, ctx, target_mention: str = None):
         """Offer peace to an enemy civilization"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace @user`\nSend a peace offer to end a war. They can accept with `.accept_peace @you`.")
                 return
                 
@@ -708,6 +779,12 @@ class MilitaryCommands(commands.Cog):
             
             if not civ:
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+                
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             target_id = str(target.id)
@@ -763,7 +840,12 @@ class MilitaryCommands(commands.Cog):
             )
             
             await ctx.send(embed=embed)
-            await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
+            
+            # Try to mention the target
+            try:
+                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
+            except:
+                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
                 
         except Exception as e:
             logger.error(f"Error in peace command: {e}", exc_info=True)
@@ -771,10 +853,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='accept_peace')
     @check_cooldown_decorator(minutes=5)
-    async def accept_peace(self, ctx, target: guilded.Member = None):
+    async def accept_peace(self, ctx, target_mention: str = None):
         """Accept a peace offer from another civilization"""
         try:
-            if not target:
+            if not target_mention:
                 await ctx.send("🕊️ **Accept Peace**\nUsage: `.accept_peace @user`\nAccept a pending peace offer to end the war.")
                 return
                 
@@ -783,6 +865,12 @@ class MilitaryCommands(commands.Cog):
             
             if not civ:
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+                
+            # Try to get the member from the mention
+            target = await self._get_member_from_mention(ctx, target_mention)
+            if not target:
+                await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
                 return
                 
             offerer_id = str(target.id)
@@ -855,7 +943,12 @@ class MilitaryCommands(commands.Cog):
                               inline=False)
             
             await ctx.send(embed=embed)
-            await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted your peace offer! The war is over.")
+            
+            # Try to mention the target
+            try:
+                await ctx.send(f"{target.mention} 🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted your peace offer! The war is over.")
+            except:
+                await ctx.send(f"🕊️ **Peace Accepted!** {civ['name']} (led by {ctx.author.display_name}) has accepted the peace offer! The war is over.")
                 
             # Log events
             self.db.log_event(user_id, "peace_accepted", "Peace Accepted", f"Accepted peace with {offerer_civ['name']}")
@@ -923,12 +1016,18 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred while managing cards. Please try again.")
 
     @commands.command(name='debug_military')
-    async def debug_military(self, ctx, target: guilded.Member = None):
+    async def debug_military(self, ctx, target_mention: str = None):
         """Debug command to check military and user data"""
         try:
             user_id = str(ctx.author.id)
             
-            if target:
+            if target_mention:
+                # Try to get the member from the mention
+                target = await self._get_member_from_mention(ctx, target_mention)
+                if not target:
+                    await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
+                    return
+                    
                 target_id = str(target.id)
                 await ctx.send(f"🔍 Debug Info:\n- Author ID: {user_id}\n- Target ID: {target_id}\n- Target Mention: {target.mention}")
                 
