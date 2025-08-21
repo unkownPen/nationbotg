@@ -17,30 +17,30 @@ class MilitaryCommands(commands.Cog):
     def create_tables(self):
         """Create necessary database tables"""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS wars (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    attacker_id TEXT NOT NULL,
-                    defender_id TEXT NOT NULL,
-                    war_type TEXT NOT NULL,
-                    result TEXT NOT NULL DEFAULT 'ongoing',
-                    declared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ended_at TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS peace_offers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    offerer_id TEXT NOT NULL,
-                    receiver_id TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    responded_at TIMESTAMP
-                )
-            ''')
-            conn.commit()
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS wars (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        attacker_id TEXT NOT NULL,
+                        defender_id TEXT NOT NULL,
+                        war_type TEXT NOT NULL,
+                        result TEXT NOT NULL DEFAULT 'ongoing',
+                        declared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ended_at TIMESTAMP
+                    )
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS peace_offers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        offerer_id TEXT NOT NULL,
+                        receiver_id TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        responded_at TIMESTAMP
+                    )
+                ''')
+                conn.commit()
         except Exception as e:
             logger.error(f"Error creating tables: {e}", exc_info=True)
 
@@ -164,25 +164,25 @@ class MilitaryCommands(commands.Cog):
                 return
                 
             # Check if war is already ongoing
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT id FROM wars 
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (user_id, target_id, target_id, user_id))
-            
-            if cursor.fetchone():
-                await ctx.send("❌ You're already at war with this civilization!")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id FROM wars 
+                    WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    AND result = 'ongoing'
+                ''', (user_id, target_id, target_id, user_id))
                 
-            # Store war declaration in database
-            cursor.execute('''
-                INSERT INTO wars (attacker_id, defender_id, war_type, declared_at)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, target_id, 'declared', datetime.utcnow()))
-            
-            conn.commit()
+                if cursor.fetchone():
+                    await ctx.send("❌ You're already at war with this civilization!")
+                    return
+                    
+                # Store war declaration in database
+                cursor.execute('''
+                    INSERT INTO wars (attacker_id, defender_id, war_type, declared_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, target_id, 'declared', datetime.utcnow()))
+                
+                conn.commit()
             
             # Log the declaration
             self.db.log_event(user_id, "war_declaration", "War Declared",
@@ -234,20 +234,20 @@ class MilitaryCommands(commands.Cog):
                 return
                 
             # Check if war is declared
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT id FROM wars 
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (user_id, target_id, target_id, user_id))
-            
-            war = cursor.fetchone()
-            if not war:
-                await ctx.send("❌ You must declare war first! Use `.declare @user`")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
                 
+                cursor.execute('''
+                    SELECT id FROM wars 
+                    WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    AND result = 'ongoing'
+                ''', (user_id, target_id, target_id, user_id))
+                
+                war = cursor.fetchone()
+                if not war:
+                    await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                    return
+                    
             # Calculate battle strength
             attacker_strength = self._calculate_military_strength(civ)
             defender_strength = self._calculate_military_strength(target_civ)
@@ -541,20 +541,20 @@ class MilitaryCommands(commands.Cog):
                 return
                 
             # Check war declaration
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT id FROM wars 
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (user_id, target_id, target_id, user_id))
-            
-            war = cursor.fetchone()
-            if not war:
-                await ctx.send("❌ You must declare war first! Use `.declare @user`")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
                 
+                cursor.execute('''
+                    SELECT id FROM wars 
+                    WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    AND result = 'ongoing'
+                ''', (user_id, target_id, target_id, user_id))
+                
+                war = cursor.fetchone()
+                if not war:
+                    await ctx.send("❌ You must declare war first! Use `.declare @user`")
+                    return
+                    
             # Calculate siege effectiveness
             siege_power = civ['military']['soldiers'] + civ['military']['tech_level'] * 10
             defender_resistance = target_civ['military']['soldiers'] + target_civ['territory']['land_size'] / 100
@@ -722,37 +722,39 @@ class MilitaryCommands(commands.Cog):
                 return
                 
             # Check if at war
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT id FROM wars 
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (user_id, target_id, target_id, user_id))
-            
-            war = cursor.fetchone()
-            if not war:
-                await ctx.send("❌ You're not at war with this civilization!")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT id FROM wars 
+                    WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    AND result = 'ongoing'
+                ''', (user_id, target_id, target_id, user_id))
+                
+                war = cursor.fetchone()
+                if not war:
+                    await ctx.send("❌ You're not at war with this civilization!")
+                    return
 
             # Check if there's already a pending offer
-            cursor.execute('''
-                SELECT COUNT(*) FROM peace_offers 
-                WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
-            ''', (user_id, target_id))
-            
-            if cursor.fetchone()[0] > 0:
-                await ctx.send("❌ You already have a pending peace offer to this civilization!")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT COUNT(*) FROM peace_offers 
+                    WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
+                ''', (user_id, target_id))
                 
-            # Store the peace offer
-            cursor.execute('''
-                INSERT INTO peace_offers (offerer_id, receiver_id)
-                VALUES (?, ?)
-            ''', (user_id, target_id))
-            
-            conn.commit()
+                if cursor.fetchone()[0] > 0:
+                    await ctx.send("❌ You already have a pending peace offer to this civilization!")
+                    return
+                    
+                # Store the peace offer
+                cursor.execute('''
+                    INSERT INTO peace_offers (offerer_id, receiver_id)
+                    VALUES (?, ?)
+                ''', (user_id, target_id))
+                
+                conn.commit()
             
             embed = create_embed(
                 "🕊️ Peace Offer Sent!",
@@ -795,45 +797,47 @@ class MilitaryCommands(commands.Cog):
                 return
                 
             # Check if at war
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT id FROM wars 
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (user_id, offerer_id, offerer_id, user_id))
-            
-            war = cursor.fetchone()
-            if not war:
-                await ctx.send("❌ You're not at war with this civilization!")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
                 
+                cursor.execute('''
+                    SELECT id FROM wars 
+                    WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                    AND result = 'ongoing'
+                ''', (user_id, offerer_id, offerer_id, user_id))
+                
+                war = cursor.fetchone()
+                if not war:
+                    await ctx.send("❌ You're not at war with this civilization!")
+                    return
+                    
             # Check for pending offer from the offerer to this user
-            cursor.execute('''
-                SELECT id FROM peace_offers 
-                WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
-            ''', (offerer_id, user_id))
-            
-            offer = cursor.fetchone()
-            if not offer:
-                await ctx.send("❌ No pending peace offer from this civilization!")
-                return
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id FROM peace_offers 
+                    WHERE offerer_id = ? AND receiver_id = ? AND status = 'pending'
+                ''', (offerer_id, user_id))
                 
-            # Accept the peace
-            war_id = war[0]
-            cursor.execute('''
-                UPDATE wars SET result = 'peace', ended_at = ?
-                WHERE id = ?
-            ''', (datetime.utcnow(), war_id))
-            
-            # Update peace offer status
-            cursor.execute('''
-                UPDATE peace_offers SET status = 'accepted', responded_at = ?
-                WHERE id = ?
-            ''', (datetime.utcnow(), offer[0]))
-            
-            conn.commit()
+                offer = cursor.fetchone()
+                if not offer:
+                    await ctx.send("❌ No pending peace offer from this civilization!")
+                    return
+                    
+                # Accept the peace
+                war_id = war[0]
+                cursor.execute('''
+                    UPDATE wars SET result = 'peace', ended_at = ?
+                    WHERE id = ?
+                ''', (datetime.utcnow(), war_id))
+                
+                # Update peace offer status
+                cursor.execute('''
+                    UPDATE peace_offers SET status = 'accepted', responded_at = ?
+                    WHERE id = ?
+                ''', (datetime.utcnow(), offer[0]))
+                
+                conn.commit()
             
             # Happiness boost for both
             self.civ_manager.update_population(user_id, {"happiness": 15})
@@ -918,6 +922,49 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error in cards command: {e}", exc_info=True)
             await ctx.send("❌ An error occurred while managing cards. Please try again.")
 
+    @commands.command(name='debug_military')
+    async def debug_military(self, ctx, target: guilded.Member = None):
+        """Debug command to check military and user data"""
+        try:
+            user_id = str(ctx.author.id)
+            
+            if target:
+                target_id = str(target.id)
+                await ctx.send(f"🔍 Debug Info:\n- Author ID: {user_id}\n- Target ID: {target_id}\n- Target Mention: {target.mention}")
+                
+                # Check if target has a civilization
+                target_civ = self.civ_manager.get_civilization(target_id)
+                if target_civ:
+                    await ctx.send(f"✅ Target civilization found: {target_civ['name']}")
+                else:
+                    await ctx.send("❌ Target does not have a civilization")
+                    
+                # Check if war exists between users
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT * FROM wars 
+                        WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
+                        AND result = 'ongoing'
+                    ''', (user_id, target_id, target_id, user_id))
+                    
+                    war = cursor.fetchone()
+                    if war:
+                        await ctx.send(f"⚔️ War exists between users: {war}")
+                    else:
+                        await ctx.send("❌ No ongoing war between these users")
+            else:
+                # Just show own data
+                civ = self.civ_manager.get_civilization(user_id)
+                if civ:
+                    await ctx.send(f"✅ Your civilization: {civ['name']}\n- Soldiers: {civ['military']['soldiers']}\n- Spies: {civ['military']['spies']}")
+                else:
+                    await ctx.send("❌ You don't have a civilization")
+                    
+        except Exception as e:
+            logger.error(f"Error in debug command: {e}", exc_info=True)
+            await ctx.send(f"❌ Debug error: {e}")
+
     def _calculate_military_strength(self, civ):
         """Calculate total military strength of a civilization"""
         try:
@@ -932,8 +979,11 @@ class MilitaryCommands(commands.Cog):
             defense_bonus = bonuses.get('defense_strength', 0) / 100
             
             return (base_strength + tech_bonus + territory_bonus) * (1 + defense_bonus)
-        except KeyError:
-            logger.error("Error calculating military strength - missing data in civilization object")
+        except KeyError as e:
+            logger.error(f"Error calculating military strength - missing key {e}", exc_info=True)
+            return 0
+        except Exception as e:
+            logger.error(f"Error calculating military strength: {e}", exc_info=True)
             return 0
 
 async def setup(bot):
