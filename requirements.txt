@@ -1,5 +1,0 @@
-guilded.py
-Flask
-aiohttp
-SQLAlchemy
-websockets
