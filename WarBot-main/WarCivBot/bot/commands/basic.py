@@ -77,7 +77,7 @@ class BasicCommands(commands.Cog):
         
         # Check if this is a reply to the bot
         is_reply = False
-        if message.reply_to:
+        if message.replied_to:
             try:
                 replied_msg = await message.channel.fetch_message(message.reply_to.id)
                 if replied_msg.author.id == self.bot.user.id:
