@@ -150,7 +150,7 @@ class MilitaryCommands(commands.Cog):
         return None
 
     @commands.command(name='train')
-    @check_cooldown_decorator(minutes=5)
+    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         try:
@@ -318,7 +318,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
-    @check_cooldown_decorator(minutes=15)
+    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target_mention: str = None):
         """Launch a direct attack on another civilization"""
         try:
@@ -539,7 +539,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred processing the battle results.")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=20)
+    @check_cooldown_decorator(minutes=2)
     async def stealth_battle(self, ctx, target_mention: str = None):
         """Conduct a spy-based stealth attack"""
         try:
@@ -675,7 +675,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred during the stealth operation. Please try again later.")
 
     @commands.command(name='siege')
-    @check_cooldown_decorator(minutes=30)
+    @check_cooldown_decorator(minutes=4)
     async def siege_city(self, ctx, target_mention: str = None):
         """Lay siege to an enemy civilization"""
         try:
@@ -795,7 +795,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ An error occurred during the siege. Please try again later.")
 
     @commands.command(name='find')
-    @check_cooldown_decorator(minutes=10)
+    @check_cooldown_decorator(minutes=2)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         try:
@@ -950,7 +950,6 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to send peace offer. Try again later.")
 
     @commands.command(name='accept_peace')
-    @check_cooldown_decorator(minutes=5)
     async def accept_peace(self, ctx, target_mention: str = None):
         """Accept a peace offer from another civilization"""
         try:
@@ -1057,7 +1056,7 @@ class MilitaryCommands(commands.Cog):
             await ctx.send("❌ Failed to accept peace. Try again later.")
 
     @commands.command(name='cards')
-    @check_cooldown_decorator(minutes=5)
+    @check_cooldown_decorator(minutes=1)
     async def manage_cards(self, ctx, card_name: str = None):
         """View or select a card for the current tech level"""
         try:
