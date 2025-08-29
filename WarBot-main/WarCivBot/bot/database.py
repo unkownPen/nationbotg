@@ -1,4 +1,6 @@
-import sqlite3
+import firebase_admin
+from firebase_admin import credentials, firestore
+from google.cloud.firestore_v1 import FieldFilter, ServerTimestamp  # For advanced timestamp if needed
 import random
 import json
 import threading
@@ -10,11 +12,12 @@ import time
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self, db_path: str = 'nationbot.db'):
-        self.db_path = db_path
-        self.local = threading.local()
-        self.init_database()
+    def __init__(self, cred_path: str = 'serviceAccountKey.json'):
+        cred = credentials.Certificate(cred_path)
+        firebase_admin.initialize_app(cred)
+        self.db = firestore.client()
         self.setup_cleanup_scheduler()
+        logger.info("Firebase database initialized successfully")
 
     def setup_cleanup_scheduler(self):
         """Schedule daily cleanup of expired requests"""
@@ -26,167 +29,15 @@ class Database:
         threading.Timer(60, cleanup_task).start()
         logger.info("Scheduled cleanup task initialized")
 
-    def get_connection(self):
-        """Get thread-local database connection"""
-        if not hasattr(self.local, 'connection'):
-            self.local.connection = sqlite3.connect(self.db_path)
-            self.local.connection.row_factory = sqlite3.Row
-        return self.local.connection
-
-    def init_database(self):
-        """Initialize database tables"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Civilizations table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS civilizations (
-                user_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                ideology TEXT,
-                resources TEXT NOT NULL,
-                population TEXT NOT NULL,
-                military TEXT NOT NULL,
-                territory TEXT NOT NULL,
-                hyper_items TEXT NOT NULL DEFAULT '[]',
-                bonuses TEXT NOT NULL DEFAULT '{}',
-                selected_cards TEXT NOT NULL DEFAULT '[]',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Cooldowns table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cooldowns (
-                user_id TEXT,
-                command TEXT,
-                last_used_at TIMESTAMP,
-                PRIMARY KEY (user_id, command)
-            )
-        ''')
-        
-        # Cards table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS cards (
-                user_id TEXT,
-                tech_level INTEGER,
-                available_cards TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'selected'
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, tech_level)
-            )
-        ''')
-        
-        # Alliances table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alliances (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT,
-                leader_id TEXT NOT NULL,
-                members TEXT NOT NULL DEFAULT '[]',
-                join_requests TEXT NOT NULL DEFAULT '[]',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Wars table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wars (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                attacker_id TEXT NOT NULL,
-                defender_id TEXT NOT NULL,
-                war_type TEXT NOT NULL,
-                declared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                ended_at TIMESTAMP,
-                result TEXT DEFAULT 'ongoing'
-            )
-        ''')
-        
-        # Peace offers table (missing from original)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS peace_offers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                offerer_id TEXT NOT NULL,
-                receiver_id TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                responded_at TIMESTAMP
-            )
-        ''')
-        
-        # Messages table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender_id TEXT NOT NULL,
-                recipient_id TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP DEFAULT (datetime('now', '+1 day'))
-            )
-        ''')
-        
-        # Trade requests table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trade_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender_id TEXT NOT NULL,
-                recipient_id TEXT NOT NULL,
-                offer TEXT NOT NULL,
-                request TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP DEFAULT (datetime('now', '+1 day'))
-            )
-        ''')
-        
-        # Events table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                event_type TEXT NOT NULL,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL,
-                effects TEXT NOT NULL DEFAULT '{}',
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Global settings table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS global_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        ''')
-        
-        # Alliance invitation table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alliance_invitations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                alliance_id INTEGER NOT NULL,
-                sender_id TEXT NOT NULL,
-                recipient_id TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP DEFAULT (datetime('now', '+1 day'))
-            )
-        ''')
-        
-        # Create indexes for faster lookups
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages(expires_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_trade_expires ON trade_requests(expires_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_invites_expires ON alliance_invitations(expires_at)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_wars_ongoing ON wars(result)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_peace_offers_status ON peace_offers(status)')
-        
-        conn.commit()
-        logger.info("Database initialized successfully")
-
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization"""
         try:
+            # Check if exists
+            civ_ref = self.db.collection('civilizations').document(user_id)
+            if civ_ref.get().exists:
+                logger.warning(f"User {user_id} already has a civilization")
+                return False
+
             default_resources = {
                 "gold": 500,
                 "food": 300,
@@ -220,34 +71,29 @@ class Database:
             bonuses = bonuses or {}
             selected_cards = []
             
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            now = datetime.utcnow()
+            data = {
+                'name': name,
+                'ideology': None,  # Assuming from OG, not set here
+                'resources': default_resources,
+                'population': default_population,
+                'military': default_military,
+                'territory': default_territory,
+                'hyper_items': hyper_items,
+                'bonuses': bonuses,
+                'selected_cards': selected_cards,
+                'created_at': now,
+                'last_active': now
+            }
             
-            cursor.execute('''
-                INSERT INTO civilizations 
-                (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                user_id, name,
-                json.dumps(default_resources),
-                json.dumps(default_population),
-                json.dumps(default_military),
-                json.dumps(default_territory),
-                json.dumps(hyper_items),
-                json.dumps(bonuses),
-                json.dumps(selected_cards)
-            ))
+            civ_ref.set(data)
             
             # Create initial card selection for tech level 1
             self.generate_card_selection(user_id, 1)
             
-            conn.commit()
             logger.info(f"Created civilization '{name}' for user {user_id}")
             return True
             
-        except sqlite3.IntegrityError:
-            logger.warning(f"User {user_id} already has a civilization")
-            return False
         except Exception as e:
             logger.error(f"Error creating civilization: {e}")
             return False
@@ -255,25 +101,11 @@ class Database:
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get civilization data for a user"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM civilizations WHERE user_id = ?', (user_id,))
-            row = cursor.fetchone()
-            
-            if not row:
-                return None
-            
-            civ = dict(row)
-            civ['resources'] = json.loads(civ['resources'])
-            civ['population'] = json.loads(civ['population'])
-            civ['military'] = json.loads(civ['military'])
-            civ['territory'] = json.loads(civ['territory'])
-            civ['hyper_items'] = json.loads(civ['hyper_items'])
-            civ['bonuses'] = json.loads(civ['bonuses'])
-            civ['selected_cards'] = json.loads(civ['selected_cards'])
-            
-            return civ
+            doc_ref = self.db.collection('civilizations').document(user_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
             
         except Exception as e:
             logger.error(f"Error getting civilization for user {user_id}: {e}")
@@ -282,27 +114,9 @@ class Database:
     def update_civilization(self, user_id: str, updates: Dict[str, Any]) -> bool:
         """Update civilization data"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            set_clauses = []
-            values = []
-            
-            for field, value in updates.items():
-                if field in ['resources', 'population', 'military', 'territory', 'hyper_items', 'bonuses', 'selected_cards']:
-                    set_clauses.append(f"{field} = ?")
-                    values.append(json.dumps(value))
-                else:
-                    set_clauses.append(f"{field} = ?")
-                    values.append(value)
-            
-            set_clauses.append("last_active = CURRENT_TIMESTAMP")
-            values.append(user_id)
-            
-            query = f"UPDATE civilizations SET {', '.join(set_clauses)} WHERE user_id = ?"
-            cursor.execute(query, values)
-            
-            conn.commit()
+            doc_ref = self.db.collection('civilizations').document(user_id)
+            updates['last_active'] = datetime.utcnow()
+            doc_ref.update(updates)
             return True
             
         except Exception as e:
@@ -312,17 +126,12 @@ class Database:
     def get_command_cooldown(self, user_id: str, command: str) -> Optional[datetime]:
         """Get the last used time for a command, or None if no cooldown"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT last_used_at FROM cooldowns 
-                WHERE user_id = ? AND command = ?
-            ''', (user_id, command))
-            
-            row = cursor.fetchone()
-            if row:
-                return datetime.fromisoformat(row['last_used_at'])
+            doc_id = f"{user_id}_{command}"
+            doc_ref = self.db.collection('cooldowns').document(doc_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                return data.get('last_used_at')
             return None
             
         except Exception as e:
@@ -334,7 +143,6 @@ class Database:
         try:
             last_used = self.get_command_cooldown(user_id, command)
             if last_used:
-                # Return the last used time - your utils.py will calculate if it's expired
                 return last_used
             return None
             
@@ -348,15 +156,13 @@ class Database:
             if timestamp is None:
                 timestamp = datetime.utcnow()
                 
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO cooldowns (user_id, command, last_used_at)
-                VALUES (?, ?, ?)
-            ''', (user_id, command, timestamp.isoformat()))
-            
-            conn.commit()
+            doc_id = f"{user_id}_{command}"
+            doc_ref = self.db.collection('cooldowns').document(doc_id)
+            doc_ref.set({
+                'user_id': user_id,
+                'command': command,
+                'last_used_at': timestamp
+            })
             return True
             
         except Exception as e:
@@ -370,8 +176,7 @@ class Database:
     def generate_card_selection(self, user_id: str, tech_level: int) -> bool:
         """Generate 5 random cards for a tech level"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            doc_id = f"{user_id}_{tech_level}"
             
             # Define card pool (expanded for variety)
             card_pool = [
@@ -395,12 +200,14 @@ class Database:
             # Select 5 random cards
             available_cards = random.sample(card_pool, min(5, len(card_pool)))
             
-            cursor.execute('''
-                INSERT OR REPLACE INTO cards (user_id, tech_level, available_cards, status)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, tech_level, json.dumps(available_cards), 'pending'))
+            self.db.collection('cards').document(doc_id).set({
+                'user_id': user_id,
+                'tech_level': tech_level,
+                'available_cards': available_cards,
+                'status': 'pending',
+                'created_at': datetime.utcnow()
+            })
             
-            conn.commit()
             logger.info(f"Generated card selection for user {user_id} at tech level {tech_level}")
             return True
             
@@ -411,19 +218,11 @@ class Database:
     def get_card_selection(self, user_id: str, tech_level: int) -> Optional[Dict]:
         """Get available cards for a tech level"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT * FROM cards 
-                WHERE user_id = ? AND tech_level = ? AND status = 'pending'
-            ''', (user_id, tech_level))
-            
-            row = cursor.fetchone()
-            if row:
-                card_data = dict(row)
-                card_data['available_cards'] = json.loads(card_data['available_cards'])
-                return card_data
+            doc_id = f"{user_id}_{tech_level}"
+            doc_ref = self.db.collection('cards').document(doc_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
             return None
             
         except Exception as e:
@@ -433,9 +232,6 @@ class Database:
     def select_card(self, user_id: str, tech_level: int, card_name: str) -> Optional[Dict]:
         """Select a card and mark it as chosen"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
             card_selection = self.get_card_selection(user_id, tech_level)
             if not card_selection:
                 return None
@@ -444,12 +240,9 @@ class Database:
             if not selected_card:
                 return None
                 
-            cursor.execute('''
-                UPDATE cards SET status = 'selected'
-                WHERE user_id = ? AND tech_level = ?
-            ''', (user_id, tech_level))
+            doc_id = f"{user_id}_{tech_level}"
+            self.db.collection('cards').document(doc_id).update({'status': 'selected'})
             
-            conn.commit()
             logger.info(f"User {user_id} selected card '{card_name}' at tech level {tech_level}")
             return selected_card
             
@@ -460,24 +253,8 @@ class Database:
     def get_all_civilizations(self) -> List[Dict[str, Any]]:
         """Get all civilizations for leaderboards"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT * FROM civilizations ORDER BY last_active DESC')
-            rows = cursor.fetchall()
-            
-            civilizations = []
-            for row in rows:
-                civ = dict(row)
-                civ['resources'] = json.loads(civ['resources'])
-                civ['population'] = json.loads(civ['population'])
-                civ['military'] = json.loads(civ['military'])
-                civ['territory'] = json.loads(civ['territory'])
-                civ['hyper_items'] = json.loads(civ['hyper_items'])
-                civ['bonuses'] = json.loads(civ['bonuses'])
-                civ['selected_cards'] = json.loads(civ['selected_cards'])
-                civilizations.append(civ)
-            
+            docs = self.db.collection('civilizations').order_by('last_active', direction=firestore.Query.DESCENDING).stream()
+            civilizations = [doc.to_dict() for doc in docs]
             return civilizations
             
         except Exception as e:
@@ -487,21 +264,24 @@ class Database:
     def create_alliance(self, name: str, leader_id: str, description: str = "") -> bool:
         """Create a new alliance"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            # Check unique name
+            query = self.db.collection('alliances').where(filter=FieldFilter('name', '==', name)).limit(1).stream()
+            if next(query, None):
+                logger.warning(f"Alliance name '{name}' already exists")
+                return False
             
-            cursor.execute('''
-                INSERT INTO alliances (name, leader_id, members, description)
-                VALUES (?, ?, ?, ?)
-            ''', (name, leader_id, json.dumps([leader_id]), description))
-            
-            conn.commit()
-            logger.info(f"Created alliance '{name}' led by {leader_id}")
+            data = {
+                'name': name,
+                'description': description,
+                'leader_id': leader_id,
+                'members': [leader_id],
+                'join_requests': [],
+                'created_at': datetime.utcnow()
+            }
+            _, doc_ref = self.db.collection('alliances').add(data)
+            logger.info(f"Created alliance '{name}' led by {leader_id} with ID {doc_ref.id}")
             return True
             
-        except sqlite3.IntegrityError:
-            logger.warning(f"Alliance name '{name}' already exists")
-            return False
         except Exception as e:
             logger.error(f"Error creating alliance: {e}")
             return False
@@ -509,15 +289,15 @@ class Database:
     def log_event(self, user_id: str, event_type: str, title: str, description: str, effects: Dict = None):
         """Log an event to the database"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO events (user_id, event_type, title, description, effects)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, event_type, title, description, json.dumps(effects or {})))
-            
-            conn.commit()
+            data = {
+                'user_id': user_id,
+                'event_type': event_type,
+                'title': title,
+                'description': description,
+                'effects': effects or {},
+                'timestamp': datetime.utcnow()
+            }
+            self.db.collection('events').add(data)
             logger.debug(f"Logged event: {title} for user {user_id}")
             
         except Exception as e:
@@ -526,24 +306,13 @@ class Database:
     def get_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get recent events for dashboard"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT e.*, c.name as civ_name 
-                FROM events e 
-                LEFT JOIN civilizations c ON e.user_id = c.user_id 
-                ORDER BY e.timestamp DESC 
-                LIMIT ?
-            ''', (limit,))
-            
-            rows = cursor.fetchall()
+            docs = self.db.collection('events').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit).stream()
             events = []
-            for row in rows:
-                event = dict(row)
-                event['effects'] = json.loads(event['effects'])
+            for doc in docs:
+                event = doc.to_dict()
+                civ = self.get_civilization(event['user_id'])
+                event['civ_name'] = civ['name'] if civ else 'Unknown'
                 events.append(event)
-            
             return events
             
         except Exception as e:
@@ -553,13 +322,16 @@ class Database:
     def create_trade_request(self, sender_id: str, recipient_id: str, offer: Dict, request: Dict) -> bool:
         """Create a new trade request"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO trade_requests (sender_id, recipient_id, offer, request)
-                VALUES (?, ?, ?, ?)
-            ''', (sender_id, recipient_id, json.dumps(offer), json.dumps(request)))
-            conn.commit()
+            now = datetime.utcnow()
+            data = {
+                'sender_id': sender_id,
+                'recipient_id': recipient_id,
+                'offer': offer,
+                'request': request,
+                'created_at': now,
+                'expires_at': now + timedelta(days=1)
+            }
+            self.db.collection('trade_requests').add(data)
             logger.info(f"Trade request created from {sender_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -569,68 +341,57 @@ class Database:
     def get_trade_requests(self, user_id: str) -> List[Dict]:
         """Get all active trade requests for a user"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT t.*, c.name as sender_name 
-                FROM trade_requests t
-                JOIN civilizations c ON t.sender_id = c.user_id
-                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (user_id,))
-            rows = cursor.fetchall()
+            now = datetime.utcnow()
+            query = self.db.collection('trade_requests').where(filter=FieldFilter('recipient_id', '==', user_id)).where(filter=FieldFilter('expires_at', '>', now)).stream()
             requests = []
-            for row in rows:
-                req = dict(row)
-                req['offer'] = json.loads(req['offer'])
-                req['request'] = json.loads(req['request'])
+            for doc in query:
+                req = doc.to_dict()
+                req['id'] = doc.id
+                sender_civ = self.get_civilization(req['sender_id'])
+                req['sender_name'] = sender_civ['name'] if sender_civ else 'Unknown'
                 requests.append(req)
             return requests
         except Exception as e:
             logger.error(f"Error getting trade requests: {e}")
             return []
 
-    def get_trade_request_by_id(self, request_id: int) -> Optional[Dict]:
+    def get_trade_request_by_id(self, request_id: str) -> Optional[Dict]:
         """Get a specific trade request by ID"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM trade_requests 
-                WHERE id = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (request_id,))
-            row = cursor.fetchone()
-            if row:
-                req = dict(row)
-                req['offer'] = json.loads(req['offer'])
-                req['request'] = json.loads(req['request'])
-                return req
+            now = datetime.utcnow()
+            doc_ref = self.db.collection('trade_requests').document(request_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                req = doc.to_dict()
+                if req['expires_at'] > now:
+                    return req
             return None
         except Exception as e:
             logger.error(f"Error getting trade request by ID: {e}")
             return None
 
-    def delete_trade_request(self, request_id: int) -> bool:
+    def delete_trade_request(self, request_id: str) -> bool:
         """Delete a trade request"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM trade_requests WHERE id = ?', (request_id,))
-            conn.commit()
-            return cursor.rowcount > 0
+            doc_ref = self.db.collection('trade_requests').document(request_id)
+            doc_ref.delete()
+            return True
         except Exception as e:
             logger.error(f"Error deleting trade request: {e}")
             return False
 
-    def create_alliance_invite(self, alliance_id: int, sender_id: str, recipient_id: str) -> bool:
+    def create_alliance_invite(self, alliance_id: str, sender_id: str, recipient_id: str) -> bool:
         """Invite a user to an alliance"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO alliance_invitations (alliance_id, sender_id, recipient_id)
-                VALUES (?, ?, ?)
-            ''', (alliance_id, sender_id, recipient_id))
-            conn.commit()
+            now = datetime.utcnow()
+            data = {
+                'alliance_id': alliance_id,
+                'sender_id': sender_id,
+                'recipient_id': recipient_id,
+                'created_at': now,
+                'expires_at': now + timedelta(days=1)
+            }
+            self.db.collection('alliance_invitations').add(data)
             logger.info(f"Alliance invite created: alliance={alliance_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -640,44 +401,43 @@ class Database:
     def get_alliance_invites(self, user_id: str) -> List[Dict]:
         """Get active alliance invites for a user"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT ai.*, a.name as alliance_name 
-                FROM alliance_invitations ai
-                JOIN alliances a ON ai.alliance_id = a.id
-                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+            now = datetime.utcnow()
+            query = self.db.collection('alliance_invitations').where(filter=FieldFilter('recipient_id', '==', user_id)).where(filter=FieldFilter('expires_at', '>', now)).stream()
+            invites = []
+            for doc in query:
+                invite = doc.to_dict()
+                invite['id'] = doc.id
+                alliance = self.get_alliance(invite['alliance_id'])
+                invite['alliance_name'] = alliance['name'] if alliance else 'Unknown'
+                invites.append(invite)
+            return invites
         except Exception as e:
             logger.error(f"Error getting alliance invites: {e}")
             return []
 
-    def get_alliance_invite_by_id(self, invite_id: int) -> Optional[Dict]:
+    def get_alliance_invite_by_id(self, invite_id: str) -> Optional[Dict]:
         """Get a specific alliance invite by ID"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT ai.*, a.name as alliance_name 
-                FROM alliance_invitations ai
-                JOIN alliances a ON ai.alliance_id = a.id
-                WHERE ai.id = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (invite_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            now = datetime.utcnow()
+            doc_ref = self.db.collection('alliance_invitations').document(invite_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                invite = doc.to_dict()
+                if invite['expires_at'] > now:
+                    alliance = self.get_alliance(invite['alliance_id'])
+                    invite['alliance_name'] = alliance['name'] if alliance else 'Unknown'
+                    return invite
+            return None
         except Exception as e:
             logger.error(f"Error getting alliance invite by ID: {e}")
             return None
 
-    def delete_alliance_invite(self, invite_id: int) -> bool:
+    def delete_alliance_invite(self, invite_id: str) -> bool:
         """Delete an alliance invitation"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM alliance_invitations WHERE id = ?', (invite_id,))
-            conn.commit()
-            return cursor.rowcount > 0
+            doc_ref = self.db.collection('alliance_invitations').document(invite_id)
+            doc_ref.delete()
+            return True
         except Exception as e:
             logger.error(f"Error deleting alliance invite: {e}")
             return False
@@ -685,13 +445,15 @@ class Database:
     def send_message(self, sender_id: str, recipient_id: str, message: str) -> bool:
         """Send a message between users"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO messages (sender_id, recipient_id, message)
-                VALUES (?, ?, ?)
-            ''', (sender_id, recipient_id, message))
-            conn.commit()
+            now = datetime.utcnow()
+            data = {
+                'sender_id': sender_id,
+                'recipient_id': recipient_id,
+                'message': message,
+                'created_at': now,
+                'expires_at': now + timedelta(days=1)
+            }
+            self.db.collection('messages').add(data)
             logger.info(f"Message sent from {sender_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -701,43 +463,37 @@ class Database:
     def get_messages(self, user_id: str) -> List[Dict]:
         """Get active messages for a user"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT m.*, c.name as sender_name 
-                FROM messages m
-                JOIN civilizations c ON m.sender_id = c.user_id
-                WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+            now = datetime.utcnow()
+            query = self.db.collection('messages').where(filter=FieldFilter('recipient_id', '==', user_id)).where(filter=FieldFilter('expires_at', '>', now)).stream()
+            messages = []
+            for doc in query:
+                msg = doc.to_dict()
+                msg['id'] = doc.id
+                sender_civ = self.get_civilization(msg['sender_id'])
+                msg['sender_name'] = sender_civ['name'] if sender_civ else 'Unknown'
+                messages.append(msg)
+            return messages
         except Exception as e:
             logger.error(f"Error getting messages: {e}")
             return []
 
-    def delete_message(self, message_id: int) -> bool:
+    def delete_message(self, message_id: str) -> bool:
         """Delete a message"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM messages WHERE id = ?', (message_id,))
-            conn.commit()
-            return cursor.rowcount > 0
+            doc_ref = self.db.collection('messages').document(message_id)
+            doc_ref.delete()
+            return True
         except Exception as e:
             logger.error(f"Error deleting message: {e}")
             return False
 
-    def get_alliance(self, alliance_id: int) -> Optional[Dict]:
+    def get_alliance(self, alliance_id: str) -> Optional[Dict]:
         """Get alliance data by ID"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM alliances WHERE id = ?', (alliance_id,))
-            row = cursor.fetchone()
-            if row:
-                alliance = dict(row)
-                alliance['members'] = json.loads(alliance['members'])
-                alliance['join_requests'] = json.loads(alliance['join_requests'])
-                return alliance
+            doc_ref = self.db.collection('alliances').document(alliance_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                return doc.to_dict()
             return None
         except Exception as e:
             logger.error(f"Error getting alliance: {e}")
@@ -746,21 +502,16 @@ class Database:
     def get_alliance_by_name(self, name: str) -> Optional[Dict]:
         """Get alliance data by name"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM alliances WHERE name = ?', (name,))
-            row = cursor.fetchone()
-            if row:
-                alliance = dict(row)
-                alliance['members'] = json.loads(alliance['members'])
-                alliance['join_requests'] = json.loads(alliance['join_requests'])
-                return alliance
+            query = self.db.collection('alliances').where(filter=FieldFilter('name', '==', name)).limit(1).stream()
+            doc = next(query, None)
+            if doc:
+                return doc.to_dict()
             return None
         except Exception as e:
             logger.error(f"Error getting alliance by name: {e}")
             return None
 
-    def add_alliance_member(self, alliance_id: int, user_id: str) -> bool:
+    def add_alliance_member(self, alliance_id: str, user_id: str) -> bool:
         """Add member to alliance"""
         try:
             alliance = self.get_alliance(alliance_id)
@@ -771,17 +522,13 @@ class Database:
                 return True
             
             members = alliance['members'] + [user_id]
-            join_requests = [uid for uid in alliance['join_requests'] if uid != user_id]
+            join_requests = [uid for uid in alliance.get('join_requests', []) if uid != user_id]
             
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE alliances 
-                SET members = ?, join_requests = ?
-                WHERE id = ?
-            ''', (json.dumps(members), json.dumps(join_requests), alliance_id))
-            
-            conn.commit()
+            doc_ref = self.db.collection('alliances').document(alliance_id)
+            doc_ref.update({
+                'members': members,
+                'join_requests': join_requests
+            })
             return True
         except Exception as e:
             logger.error(f"Error adding alliance member: {e}")
@@ -790,31 +537,25 @@ class Database:
     def get_wars(self, user_id: str = None, status: str = 'ongoing') -> List[Dict]:
         """Get wars involving a user or all wars"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
+            collection = self.db.collection('wars')
             if user_id:
-                cursor.execute('''
-                    SELECT w.*, 
-                           ac.name as attacker_name, 
-                           dc.name as defender_name
-                    FROM wars w
-                    JOIN civilizations ac ON w.attacker_id = ac.user_id
-                    JOIN civilizations dc ON w.defender_id = dc.user_id
-                    WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.result = ?
-                ''', (user_id, user_id, status))
+                # Need two queries and union since OR not on different fields easily
+                query1 = collection.where(filter=FieldFilter('attacker_id', '==', user_id)).where(filter=FieldFilter('result', '==', status)).stream()
+                query2 = collection.where(filter=FieldFilter('defender_id', '==', user_id)).where(filter=FieldFilter('result', '==', status)).stream()
+                docs = list(query1) + list(query2)
             else:
-                cursor.execute('''
-                    SELECT w.*, 
-                           ac.name as attacker_name, 
-                           dc.name as defender_name
-                    FROM wars w
-                    JOIN civilizations ac ON w.attacker_id = ac.user_id
-                    JOIN civilizations dc ON w.defender_id = dc.user_id
-                    WHERE w.result = ?
-                ''', (status,))
+                docs = collection.where(filter=FieldFilter('result', '==', status)).stream()
             
-            return [dict(row) for row in cursor.fetchall()]
+            wars = []
+            for doc in set(docs):  # Dedup if any
+                war = doc.to_dict()
+                war['id'] = doc.id
+                attacker_civ = self.get_civilization(war['attacker_id'])
+                defender_civ = self.get_civilization(war['defender_id'])
+                war['attacker_name'] = attacker_civ['name'] if attacker_civ else 'Unknown'
+                war['defender_name'] = defender_civ['name'] if defender_civ else 'Unknown'
+                wars.append(war)
+            return wars
         except Exception as e:
             logger.error(f"Error getting wars: {e}")
             return []
@@ -822,31 +563,24 @@ class Database:
     def get_peace_offers(self, user_id: str = None) -> List[Dict]:
         """Get peace offers for a user or all peace offers"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
+            collection = self.db.collection('peace_offers')
             if user_id:
-                cursor.execute('''
-                    SELECT po.*, 
-                           oc.name as offerer_name, 
-                           rc.name as receiver_name
-                    FROM peace_offers po
-                    JOIN civilizations oc ON po.offerer_id = oc.user_id
-                    JOIN civilizations rc ON po.receiver_id = rc.user_id
-                    WHERE (po.offerer_id = ? OR po.receiver_id = ?) AND po.status = 'pending'
-                ''', (user_id, user_id))
+                query1 = collection.where(filter=FieldFilter('offerer_id', '==', user_id)).where(filter=FieldFilter('status', '==', 'pending')).stream()
+                query2 = collection.where(filter=FieldFilter('receiver_id', '==', user_id)).where(filter=FieldFilter('status', '==', 'pending')).stream()
+                docs = list(query1) + list(query2)
             else:
-                cursor.execute('''
-                    SELECT po.*, 
-                           oc.name as offerer_name, 
-                           rc.name as receiver_name
-                    FROM peace_offers po
-                    JOIN civilizations oc ON po.offerer_id = oc.user_id
-                    JOIN civilizations rc ON po.receiver_id = rc.user_id
-                    WHERE po.status = 'pending'
-                ''')
+                docs = collection.where(filter=FieldFilter('status', '==', 'pending')).stream()
             
-            return [dict(row) for row in cursor.fetchall()]
+            offers = []
+            for doc in set(docs):
+                offer = doc.to_dict()
+                offer['id'] = doc.id
+                offerer_civ = self.get_civilization(offer['offerer_id'])
+                receiver_civ = self.get_civilization(offer['receiver_id'])
+                offer['offerer_name'] = offerer_civ['name'] if offerer_civ else 'Unknown'
+                offer['receiver_name'] = receiver_civ['name'] if receiver_civ else 'Unknown'
+                offers.append(offer)
+            return offers
         except Exception as e:
             logger.error(f"Error getting peace offers: {e}")
             return []
@@ -854,31 +588,29 @@ class Database:
     def create_peace_offer(self, offerer_id: str, receiver_id: str) -> bool:
         """Create a peace offer"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO peace_offers (offerer_id, receiver_id)
-                VALUES (?, ?)
-            ''', (offerer_id, receiver_id))
-            conn.commit()
+            data = {
+                'offerer_id': offerer_id,
+                'receiver_id': receiver_id,
+                'status': 'pending',
+                'offered_at': datetime.utcnow(),
+                'responded_at': None
+            }
+            self.db.collection('peace_offers').add(data)
             logger.info(f"Peace offer created from {offerer_id} to {receiver_id}")
             return True
         except Exception as e:
             logger.error(f"Error creating peace offer: {e}")
             return False
 
-    def update_peace_offer(self, offer_id: int, status: str) -> bool:
+    def update_peace_offer(self, offer_id: str, status: str) -> bool:
         """Update peace offer status"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE peace_offers 
-                SET status = ?, responded_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (status, offer_id))
-            conn.commit()
-            return cursor.rowcount > 0
+            doc_ref = self.db.collection('peace_offers').document(offer_id)
+            doc_ref.update({
+                'status': status,
+                'responded_at': datetime.utcnow()
+            })
+            return True
         except Exception as e:
             logger.error(f"Error updating peace offer: {e}")
             return False
@@ -886,17 +618,20 @@ class Database:
     def end_war(self, attacker_id: str, defender_id: str, result: str) -> bool:
         """End a war between two civilizations"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE wars 
-                SET result = ?, ended_at = CURRENT_TIMESTAMP
-                WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                AND result = 'ongoing'
-            ''', (result, attacker_id, defender_id, defender_id, attacker_id))
+            # Find matching wars
+            query1 = self.db.collection('wars').where(filter=FieldFilter('attacker_id', '==', attacker_id)).where(filter=FieldFilter('defender_id', '==', defender_id)).where(filter=FieldFilter('result', '==', 'ongoing'))
+            query2 = self.db.collection('wars').where(filter=FieldFilter('attacker_id', '==', defender_id)).where(filter=FieldFilter('defender_id', '==', attacker_id)).where(filter=FieldFilter('result', '==', 'ongoing'))
+            docs = list(query1.stream()) + list(query2.stream())
             
-            conn.commit()
-            return cursor.rowcount > 0
+            if not docs:
+                return False
+            
+            for doc in docs:
+                doc.reference.update({
+                    'result': result,
+                    'ended_at': datetime.utcnow()
+                })
+            return True
         except Exception as e:
             logger.error(f"Error ending war: {e}")
             return False
@@ -904,52 +639,39 @@ class Database:
     def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
         """Get comprehensive statistics for a user"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Get basic civilization data
             civ = self.get_civilization(user_id)
             if not civ:
                 return {}
             
-            # Count wars participated in
-            cursor.execute('''
-                SELECT 
-                    COUNT(*) as total_wars,
-                    SUM(CASE WHEN result = 'victory' THEN 1 ELSE 0 END) as victories,
-                    SUM(CASE WHEN result = 'defeat' THEN 1 ELSE 0 END) as defeats,
-                    SUM(CASE WHEN result = 'peace' THEN 1 ELSE 0 END) as peace_treaties
-                FROM wars 
-                WHERE attacker_id = ? OR defender_id = ?
-            ''', (user_id, user_id))
-            
-            war_stats = dict(cursor.fetchone()) if cursor.fetchone() else {
-                'total_wars': 0, 'victories': 0, 'defeats': 0, 'peace_treaties': 0
+            # War stats
+            wars = self.get_wars(user_id, 'ongoing') + self.get_wars(user_id, 'victory') + self.get_wars(user_id, 'defeat') + self.get_wars(user_id, 'peace')
+            total_wars = len(wars)
+            victories = sum(1 for w in wars if w['result'] == 'victory')
+            defeats = sum(1 for w in wars if w['result'] == 'defeat')
+            peace_treaties = sum(1 for w in wars if w['result'] == 'peace')
+            war_stats = {
+                'total_wars': total_wars,
+                'victories': victories,
+                'defeats': defeats,
+                'peace_treaties': peace_treaties
             }
             
-            # Get recent events
-            cursor.execute('''
-                SELECT COUNT(*) as total_events
-                FROM events 
-                WHERE user_id = ?
-            ''', (user_id,))
+            # Event count
+            query = self.db.collection('events').where(filter=FieldFilter('user_id', '==', user_id)).stream()
+            total_events = len(list(query))
             
-            event_count = cursor.fetchone()[0] if cursor.fetchone() else 0
-            
-            # Calculate power score
+            # Power scores
             military_power = (civ['military']['soldiers'] * 10 + 
-                            civ['military']['spies'] * 5 + 
-                            civ['military']['tech_level'] * 50)
-            
+                              civ['military']['spies'] * 5 + 
+                              civ['military']['tech_level'] * 50)
             economic_power = sum(civ['resources'].values())
             territorial_power = civ['territory']['land_size']
-            
             total_power = military_power + economic_power + territorial_power
             
             return {
                 'civilization': civ,
                 'war_statistics': war_stats,
-                'total_events': event_count,
+                'total_events': total_events,
                 'power_scores': {
                     'military': military_power,
                     'economic': economic_power,
@@ -965,32 +687,19 @@ class Database:
     def get_leaderboard(self, category: str = 'power', limit: int = 10) -> List[Dict]:
         """Get leaderboard for different categories"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            civs = self.get_all_civilizations()
             
             if category == 'power':
-                # Calculate total power score
-                cursor.execute('''
-                    SELECT user_id, name, resources, military, territory
-                    FROM civilizations
-                    ORDER BY last_active DESC
-                ''')
-                
-                civs = []
-                for row in cursor.fetchall():
-                    civ = dict(row)
-                    resources = json.loads(civ['resources'])
-                    military = json.loads(civ['military'])
-                    territory = json.loads(civ['territory'])
-                    
-                    military_power = (military['soldiers'] * 10 + 
-                                    military['spies'] * 5 + 
-                                    military['tech_level'] * 50)
+                scored_civs = []
+                for civ in civs:
+                    military = civ['military']
+                    resources = civ['resources']
+                    territory = civ['territory']
+                    military_power = (military['soldiers'] * 10 + military['spies'] * 5 + military['tech_level'] * 50)
                     economic_power = sum(resources.values())
                     territorial_power = territory['land_size']
                     total_power = military_power + economic_power + territorial_power
-                    
-                    civs.append({
+                    scored_civs.append({
                         'user_id': civ['user_id'],
                         'name': civ['name'],
                         'score': total_power,
@@ -998,68 +707,33 @@ class Database:
                         'economic_power': economic_power,
                         'territorial_power': territorial_power
                     })
-                
-                return sorted(civs, key=lambda x: x['score'], reverse=True)[:limit]
+                return sorted(scored_civs, key=lambda x: x['score'], reverse=True)[:limit]
                 
             elif category == 'gold':
-                cursor.execute('''
-                    SELECT user_id, name, resources
-                    FROM civilizations
-                    ORDER BY json_extract(resources, '$.gold') DESC
-                    LIMIT ?
-                ''', (limit,))
-                
-                civs = []
-                for row in cursor.fetchall():
-                    civ = dict(row)
-                    resources = json.loads(civ['resources'])
-                    civs.append({
-                        'user_id': civ['user_id'],
-                        'name': civ['name'],
-                        'score': resources['gold']
-                    })
-                return civs
+                scored_civs = [{
+                    'user_id': civ['user_id'],
+                    'name': civ['name'],
+                    'score': civ['resources']['gold']
+                } for civ in civs]
+                return sorted(scored_civs, key=lambda x: x['score'], reverse=True)[:limit]
                 
             elif category == 'military':
-                cursor.execute('''
-                    SELECT user_id, name, military
-                    FROM civilizations
-                    ORDER BY (json_extract(military, '$.soldiers') + json_extract(military, '$.spies')) DESC
-                    LIMIT ?
-                ''', (limit,))
-                
-                civs = []
-                for row in cursor.fetchall():
-                    civ = dict(row)
-                    military = json.loads(civ['military'])
-                    total_units = military['soldiers'] + military['spies']
-                    civs.append({
-                        'user_id': civ['user_id'],
-                        'name': civ['name'],
-                        'score': total_units,
-                        'soldiers': military['soldiers'],
-                        'spies': military['spies']
-                    })
-                return civs
+                scored_civs = [{
+                    'user_id': civ['user_id'],
+                    'name': civ['name'],
+                    'score': civ['military']['soldiers'] + civ['military']['spies'],
+                    'soldiers': civ['military']['soldiers'],
+                    'spies': civ['military']['spies']
+                } for civ in civs]
+                return sorted(scored_civs, key=lambda x: x['score'], reverse=True)[:limit]
                 
             elif category == 'territory':
-                cursor.execute('''
-                    SELECT user_id, name, territory
-                    FROM civilizations
-                    ORDER BY json_extract(territory, '$.land_size') DESC
-                    LIMIT ?
-                ''', (limit,))
-                
-                civs = []
-                for row in cursor.fetchall():
-                    civ = dict(row)
-                    territory = json.loads(civ['territory'])
-                    civs.append({
-                        'user_id': civ['user_id'],
-                        'name': civ['name'],
-                        'score': territory['land_size']
-                    })
-                return civs
+                scored_civs = [{
+                    'user_id': civ['user_id'],
+                    'name': civ['name'],
+                    'score': civ['territory']['land_size']
+                } for civ in civs]
+                return sorted(scored_civs, key=lambda x: x['score'], reverse=True)[:limit]
                 
             return []
             
@@ -1070,22 +744,32 @@ class Database:
     def cleanup_expired_requests(self):
         """Automatically remove expired requests (runs daily)"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            now = datetime.utcnow()
             
-            cursor.execute('DELETE FROM trade_requests WHERE expires_at <= CURRENT_TIMESTAMP')
-            trade_count = cursor.rowcount
+            # Trade requests
+            trade_query = self.db.collection('trade_requests').where(filter=FieldFilter('expires_at', '<=', now)).stream()
+            trade_docs = list(trade_query)
+            for doc in trade_docs:
+                doc.reference.delete()
+            trade_count = len(trade_docs)
             
-            cursor.execute('DELETE FROM alliance_invitations WHERE expires_at <= CURRENT_TIMESTAMP')
-            invite_count = cursor.rowcount
+            # Alliance invitations
+            invite_query = self.db.collection('alliance_invitations').where(filter=FieldFilter('expires_at', '<=', now)).stream()
+            invite_docs = list(invite_query)
+            for doc in invite_docs:
+                doc.reference.delete()
+            invite_count = len(invite_docs)
             
-            cursor.execute('DELETE FROM messages WHERE expires_at <= CURRENT_TIMESTAMP')
-            message_count = cursor.rowcount
+            # Messages
+            msg_query = self.db.collection('messages').where(filter=FieldFilter('expires_at', '<=', now)).stream()
+            msg_docs = list(msg_query)
+            for doc in msg_docs:
+                doc.reference.delete()
+            message_count = len(msg_docs)
             
-            conn.commit()
             logger.info(f"Cleaned up expired requests: "
-                       f"{trade_count} trades, {invite_count} invites, "
-                       f"{message_count} messages removed")
+                        f"{trade_count} trades, {invite_count} invites, "
+                        f"{message_count} messages removed")
             return True
             
         except Exception as e:
@@ -1093,52 +777,32 @@ class Database:
             return False
 
     def backup_database(self, backup_path: str = None) -> bool:
-        """Create a backup of the database"""
-        try:
-            if not backup_path:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_path = f"nationbot_backup_{timestamp}.db"
-            
-            import shutil
-            shutil.copy2(self.db_path, backup_path)
-            logger.info(f"Database backed up to {backup_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error backing up database: {e}")
-            return False
+        """Create a backup of the database - stubbed for Firebase (use console export)"""
+        logger.warning("Backup not implemented for Firebase; use Firebase console or export API")
+        return False
 
     def get_database_info(self) -> Dict[str, Any]:
         """Get database information and statistics"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
             info = {}
             
-            # Count records in each table
-            tables = [
+            # Count records in each table (collection)
+            collections = [
                 'civilizations', 'wars', 'peace_offers', 'alliances', 
                 'events', 'trade_requests', 'messages', 'cards', 
                 'cooldowns', 'alliance_invitations'
             ]
             
-            for table in tables:
-                cursor.execute(f'SELECT COUNT(*) FROM {table}')
-                info[f'{table}_count'] = cursor.fetchone()[0]
+            for coll in collections:
+                docs = self.db.collection(coll).stream()
+                info[f'{coll}_count'] = len(list(docs))
             
-            # Get database file size
-            import os
-            if os.path.exists(self.db_path):
-                info['database_size_bytes'] = os.path.getsize(self.db_path)
-                info['database_size_mb'] = round(info['database_size_bytes'] / (1024 * 1024), 2)
+            # Database size not directly available in client SDK
             
-            # Get active users (logged in within last 7 days)
-            cursor.execute('''
-                SELECT COUNT(*) FROM civilizations 
-                WHERE last_active > datetime('now', '-7 days')
-            ''')
-            info['active_users_week'] = cursor.fetchone()[0]
+            # Active users (last_active > now - 7 days)
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            active_query = self.db.collection('civilizations').where(filter=FieldFilter('last_active', '>', seven_days_ago)).stream()
+            info['active_users_week'] = len(list(active_query))
             
             return info
             
@@ -1147,10 +811,8 @@ class Database:
             return {}
 
     def close_connections(self):
-        """Close all database connections (for shutdown)"""
-        if hasattr(self.local, 'connection'):
-            self.local.connection.close()
-            del self.local.connection
+        """Close all database connections (for shutdown) - not needed for Firebase"""
+        pass
 
 logging.basicConfig(
     level=logging.INFO,
