@@ -1,59 +1,54 @@
 """
-Economy cog for Guilded bot.
+ExtraEconomy cog (updated)
 
-This file provides:
-- EconomyManager: pure logic + JSON persistence (balances, jobs, inventory, products).
-- EconomyCog: a guilded.ext.commands.Cog exposing economy commands and starting background loops.
+Changes from previous version:
+- Removed the built-in Flask webserver (main.py already runs the dashboard).
+- Replaced background Threads with asyncio Tasks started in cog_load so tasks run on the bot's event loop.
+- Added cog_unload to cancel background tasks cleanly on reload/shutdown.
+- Removed the '/help' command to avoid conflicts with the main bot help.
+- Keeps optional Database integration and JSON fallback persistence.
+- Exposes setup(bot, db=None, storage_dir=".") for main.py to call.
 
-Usage:
-    from bot.economy import EconomyCog
-    bot.add_cog(EconomyCog(bot, db=None))
-
-If you have a Database abstraction you want to use instead of JSON files,
-pass it as db=YourDatabaseInstance to EconomyCog; it must implement the methods
-used in the manager (optional). By default JSON files are used for persistence.
+Usage (from your main.py):
+    from ExtraEconomy import setup as setup_extra_economy
+    setup_extra_economy(bot, db=self.db, storage_dir="./data")
 """
 import os
 import json
 import random
 import time
+import asyncio
 import logging
-from threading import Thread, Lock
+from threading import Lock
 from typing import Dict, Any, Optional
 
-from flask import Flask
 from guilded.ext import commands
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # -----------------------
 # EconomyManager (persistence + logic)
 # -----------------------
 class EconomyManager:
     def __init__(self, storage_dir: str = ".", db: Optional[Any] = None):
-        """
-        :param storage_dir: Directory to store JSON files
-        :param db: Optional external Database object; if provided, manager will prefer db operations.
-        """
         self.db = db
         self.storage_dir = storage_dir
         self.lock = Lock()
 
         # JSON filenames
+        os.makedirs(storage_dir, exist_ok=True)
         self.DATA_BAL = os.path.join(storage_dir, "user_balances.json")
         self.DATA_JOB = os.path.join(storage_dir, "user_jobs.json")
         self.DATA_INV = os.path.join(storage_dir, "user_inventory.json")
         self.DATA_PROD = os.path.join(storage_dir, "user_products.json")
 
-        # Load state (if not using db)
         if not self.db:
             self.user_balances = self._load_json(self.DATA_BAL)
             self.user_jobs = self._load_json(self.DATA_JOB)
             self.user_inventory = self._load_json(self.DATA_INV)
             self.user_products = self._load_json(self.DATA_PROD)
         else:
-            # If using an external db, these caches are not used
+            # when using an external DB we keep caches empty
             self.user_balances = {}
             self.user_jobs = {}
             self.user_inventory = {}
@@ -90,7 +85,7 @@ class EconomyManager:
             "crypto_miner": {"price": 3500, "desc": "Cheaper, shady miner hardware"}
         }
 
-    # --- Persistence helpers (JSON) ---
+    # Persistence helpers
     def _load_json(self, path: str) -> dict:
         try:
             if not os.path.exists(path):
@@ -109,13 +104,13 @@ class EconomyManager:
         except Exception:
             logger.exception("Failed to save JSON %s", path)
 
-    # --- Generic DB wrappers: if self.db provided, prefer that interface (not implemented here) ---
+    # Generic DB wrappers
     def _get_state(self, key: str):
         if self.db:
             try:
-                return self.db.get_state(key)
+                return getattr(self.db, f"get_{key}")()  # optional convenience
             except Exception:
-                logger.exception("db.get_state failed")
+                logger.debug("db get wrapper not available for %s", key)
                 return {}
         else:
             return getattr(self, key)
@@ -123,13 +118,12 @@ class EconomyManager:
     def _save_state(self, key: str, data: dict):
         if self.db:
             try:
-                return self.db.save_state(key, data)
+                return getattr(self.db, f"save_{key}")(data)
             except Exception:
-                logger.exception("db.save_state failed")
+                logger.debug("db save wrapper not available for %s", key)
                 return False
         else:
             setattr(self, key, data)
-            # persist corresponding file
             if key == "user_balances":
                 self._save_json(self.DATA_BAL, data)
             elif key == "user_jobs":
@@ -140,11 +134,11 @@ class EconomyManager:
                 self._save_json(self.DATA_PROD, data)
             return True
 
-    # --- Utility functions ---
+    # Utility
     def uid(self, user_id) -> str:
         return str(user_id)
 
-    # --- User ensure & simple CRUD ---
+    # CRUD
     def ensure_user(self, user_id):
         suid = self.uid(user_id)
         with self.lock:
@@ -162,7 +156,6 @@ class EconomyManager:
                     self.user_products[suid] = {}
                     self._save_state("user_products", self.user_products)
             else:
-                # If using external DB, call db.ensure_user if available
                 try:
                     if hasattr(self.db, "ensure_user"):
                         self.db.ensure_user(suid)
@@ -286,7 +279,6 @@ class EconomyManager:
             self.user_products[self.uid(user_id)] = products
             self._save_state("user_products", self.user_products)
 
-    # --- Faction detection similar to original code ---
     def get_faction(self, user_id) -> str:
         job = self.get_job(user_id)
         if job in ["Teller", "Manager", "Executive"]:
@@ -302,7 +294,7 @@ class EconomyManager:
         return "Criminal"
 
 # -----------------------
-# EconomyCog - Guilded commands
+# EconomyCog - Guilded commands (async tasks)
 # -----------------------
 class EconomyCog(commands.Cog):
     def __init__(self, bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
@@ -314,123 +306,144 @@ class EconomyCog(commands.Cog):
         self.coding_tasks = {}              # uid -> (project, finish_ts)
         self.product_last_pay = {}          # uid -> {product_name: ts}
 
-        # start background loops (daemon)
-        Thread(target=self._restock_shop_loop, daemon=True).start()
-        Thread(target=self._crypto_miner_loop, daemon=True).start()
-        Thread(target=self._swat_raid_loop, daemon=True).start()
-        Thread(target=self._product_income_loop, daemon=True).start()
-        Thread(target=self._coding_loop, daemon=True).start()
+        # tasks (asyncio Tasks) will be created in cog_load
+        self._tasks = []
 
-        # start webserver for uptime (optional)
-        Thread(target=self._run_web, daemon=True).start()
+    # cog_load and cog_unload are used for lifecycle management of the cog in modern commands frameworks
+    async def cog_load(self):
+        # schedule background coro tasks on the bot loop
+        loop = self.bot.loop
+        self._tasks.append(loop.create_task(self._restock_shop_loop()))
+        self._tasks.append(loop.create_task(self._crypto_miner_loop()))
+        self._tasks.append(loop.create_task(self._swat_raid_loop()))
+        self._tasks.append(loop.create_task(self._product_income_loop()))
+        self._tasks.append(loop.create_task(self._coding_loop()))
+        logger.info("EconomyCog: background tasks started")
 
-    # ---------------- background loops ----------------
-    def _restock_shop_loop(self):
-        while True:
-            time.sleep(180)  # 3 minutes
-            self.manager.shop_items["ak"]["stock"] = 5
-            self.manager.shop_items["ammo"]["stock"] = 10
-            self.manager.shop_items["glock17"]["stock"] = 5
-            self.manager.shop_items["crypto_miner"]["stock"] = 2
-            logger.debug("Shop restocked.")
-
-    def _crypto_miner_loop(self):
-        while True:
-            time.sleep(3600)  # 1 hour
-            # give each miner owner payout (simple)
-            inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
+    async def cog_unload(self):
+        # cancel running tasks when cog is unloaded
+        for t in self._tasks:
             try:
-                for suid, items in list(inv_map.items()):
-                    if not isinstance(items, list):
-                        continue
-                    miner_count = sum(1 for i in items if i == "crypto_miner")
-                    if miner_count > 0:
-                        self.manager.add_money(suid, 200 * miner_count)
-                        logger.debug(f"Crypto miners paid ${200 * miner_count} to {suid}")
+                t.cancel()
             except Exception:
-                logger.exception("crypto miner loop error")
+                logger.exception("Failed to cancel task")
+        self._tasks.clear()
+        logger.info("EconomyCog: background tasks cancelled")
 
-    def _swat_raid_loop(self):
-        while True:
-            time.sleep(18000)  # 5 hours
-            inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
-            try:
-                for suid, items in list(inv_map.items()):
-                    if self.manager.get_faction(suid) == "Criminal" and random.random() < 0.5:
-                        loss = min(self.manager.get_balance(suid), random.randint(200, 1000))
-                        if loss > 0:
-                            self.manager.try_withdraw(suid, loss)
-                        inv = items[:] if isinstance(items, list) else []
-                        illegal = {"ak", "ammo", "glock17", "explosives", "stolen_data", "forged_documents"}
-                        inv = [i for i in inv if i not in illegal]
-                        self.manager.update_inventory(suid, inv)
-                        logger.debug(f"SWAT raided {suid}, seized ${loss} and contraband.")
-            except Exception:
-                logger.exception("swat raid loop error")
-
-    def _product_income_loop(self):
-        while True:
-            time.sleep(3600)  # hourly check (adjust to your needs)
-            now = time.time()
-            products_map = self.manager._get_state("user_products") if not self.manager.db else self.manager.db.get_all_products()
-            try:
-                for suid, prods in list(products_map.items()):
-                    if not isinstance(prods, dict):
-                        continue
-                    if "messenger" in prods:
-                        state = prods["messenger"]
-                        last = self.product_last_pay.get(suid, {}).get("messenger", 0)
-                        if state == "viral":
-                            interval = 18000  # 5 hours
-                            if now - last >= interval:
-                                payout = random.randint(1000, 5000)
-                                self.manager.add_money(suid, payout)
-                                self.product_last_pay.setdefault(suid, {})["messenger"] = now
-                                logger.debug(f"Messenger viral payout ${payout} -> {suid}")
-                        else:
-                            interval = 10800
-                            if now - last >= interval:
-                                self.manager.add_money(suid, 10)
-                                self.product_last_pay.setdefault(suid, {})["messenger"] = now
-                                logger.debug(f"Messenger flop payout $10 -> {suid}")
-            except Exception:
-                logger.exception("product income loop error")
-
-    def _coding_loop(self):
-        while True:
-            time.sleep(30)
-            now = time.time()
-            finished = []
-            for suid, task in list(self.coding_tasks.items()):
-                proj, finish_ts = task
-                if now >= finish_ts:
-                    finished.append((suid, proj))
-            for suid, proj in finished:
-                if proj == "website":
-                    self.manager.add_money(suid, random.randint(50, 150))
-                elif proj == "virus":
-                    # 25% chance police catch (simple log)
-                    if random.random() < 0.25:
-                        logger.debug(f"Virus coder {suid} got caught.")
-                    else:
-                        self.manager.add_money(suid, random.randint(250, 763))
-                elif proj == "messenger":
-                    prods = self.manager.get_products(suid)
-                    prods["messenger"] = "viral" if random.random() < 0.45 else "flop"
-                    self.manager.update_products(suid, prods)
-                self.coding_tasks.pop(suid, None)
-                logger.debug(f"Coding finished for {suid}: {proj}")
-
-    # ---------------- webserver for uptime ----------------
-    def _run_web(self):
-        app = Flask("economy_uptime")
-        @app.route("/")
-        def home():
-            return "Economy Cog running."
+    # ---------------- background coroutines ----------------
+    async def _restock_shop_loop(self):
         try:
-            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-        except Exception:
-            logger.exception("Web server failed to start (likely in non-blocking environment).")
+            while True:
+                await asyncio.sleep(180)  # 3 minutes
+                self.manager.shop_items["ak"]["stock"] = 5
+                self.manager.shop_items["ammo"]["stock"] = 10
+                self.manager.shop_items["glock17"]["stock"] = 5
+                self.manager.shop_items["crypto_miner"]["stock"] = 2
+                logger.debug("Shop restocked.")
+        except asyncio.CancelledError:
+            logger.debug("restock_shop_loop cancelled")
+            return
+
+    async def _crypto_miner_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(3600)  # 1 hour
+                inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
+                try:
+                    for suid, items in list(inv_map.items()):
+                        if not isinstance(items, list):
+                            continue
+                        miner_count = sum(1 for i in items if i == "crypto_miner")
+                        if miner_count > 0:
+                            self.manager.add_money(suid, 200 * miner_count)
+                            logger.debug(f"Crypto miners paid ${200 * miner_count} to {suid}")
+                except Exception:
+                    logger.exception("crypto miner loop error")
+        except asyncio.CancelledError:
+            logger.debug("crypto_miner_loop cancelled")
+            return
+
+    async def _swat_raid_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(18000)  # 5 hours
+                inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
+                try:
+                    for suid, items in list(inv_map.items()):
+                        if self.manager.get_faction(suid) == "Criminal" and random.random() < 0.5:
+                            loss = min(self.manager.get_balance(suid), random.randint(200, 1000))
+                            if loss > 0:
+                                self.manager.try_withdraw(suid, loss)
+                            inv = items[:] if isinstance(items, list) else []
+                            illegal = {"ak", "ammo", "glock17", "explosives", "stolen_data", "forged_documents"}
+                            inv = [i for i in inv if i not in illegal]
+                            self.manager.update_inventory(suid, inv)
+                            logger.debug(f"SWAT raided {suid}, seized ${loss} and contraband.")
+                except Exception:
+                    logger.exception("swat raid loop error")
+        except asyncio.CancelledError:
+            logger.debug("swat_raid_loop cancelled")
+            return
+
+    async def _product_income_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(3600)  # hourly check
+                now = time.time()
+                products_map = self.manager._get_state("user_products") if not self.manager.db else self.manager.db.get_all_products()
+                try:
+                    for suid, prods in list(products_map.items()):
+                        if not isinstance(prods, dict):
+                            continue
+                        if "messenger" in prods:
+                            state = prods["messenger"]
+                            last = self.product_last_pay.get(suid, {}).get("messenger", 0)
+                            if state == "viral":
+                                interval = 18000  # 5 hours
+                                if now - last >= interval:
+                                    payout = random.randint(1000, 5000)
+                                    self.manager.add_money(suid, payout)
+                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
+                                    logger.debug(f"Messenger viral payout ${payout} -> {suid}")
+                            else:
+                                interval = 10800
+                                if now - last >= interval:
+                                    self.manager.add_money(suid, 10)
+                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
+                                    logger.debug(f"Messenger flop payout $10 -> {suid}")
+                except Exception:
+                    logger.exception("product income loop error")
+        except asyncio.CancelledError:
+            logger.debug("product_income_loop cancelled")
+            return
+
+    async def _coding_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(30)
+                now = time.time()
+                finished = []
+                for suid, task in list(self.coding_tasks.items()):
+                    proj, finish_ts = task
+                    if now >= finish_ts:
+                        finished.append((suid, proj))
+                for suid, proj in finished:
+                    if proj == "website":
+                        self.manager.add_money(suid, random.randint(50, 150))
+                    elif proj == "virus":
+                        if random.random() < 0.25:
+                            logger.debug(f"Virus coder {suid} got caught.")
+                        else:
+                            self.manager.add_money(suid, random.randint(250, 763))
+                    elif proj == "messenger":
+                        prods = self.manager.get_products(suid)
+                        prods["messenger"] = "viral" if random.random() < 0.45 else "flop"
+                        self.manager.update_products(suid, prods)
+                    self.coding_tasks.pop(suid, None)
+                    logger.debug(f"Coding finished for {suid}: {proj}")
+        except asyncio.CancelledError:
+            logger.debug("coding_loop cancelled")
+            return
 
     # ---------------- Helpers for UI ----------------
     def build_shop_display(self) -> str:
@@ -448,28 +461,7 @@ class EconomyCog(commands.Cog):
         return "\n".join(lines)
 
     # ---------------- Commands ----------------
-    @commands.command()
-    async def help(self, ctx):
-        await ctx.send(
-            "📜 Commands:\n"
-            "/balance — Check your money\n"
-            "/profile [user] — View profile\n"
-            "/inventory — View your items\n"
-            "/give [user] [amount] — Send money\n"
-            "/shop — View shop items\n"
-            "/buy [item] — Buy from shop\n"
-            "/darkweb [item]? — View or attempt shady purchase (50% scam)\n"
-            "/slots [amount] — Slots with bet (no loss on fail)\n"
-            "/blackjack [amount] — Beat dealer to win (no loss on fail)\n"
-            "/cards [amount] — High card wins (no loss on fail)\n"
-            "/jobs — List job categories\n"
-            "/job [type] — Apply for a job\n"
-            "/work — Earn salary every 20 min\n"
-            "/arrest [user] — Police perk\n"
-            "/rob [user] — Criminal perk\n"
-            "/code — List coding projects"
-        )
-
+    # Note: '/help' command intentionally removed to avoid conflicts with main.py help
     @commands.command()
     async def balance(self, ctx):
         self.manager.ensure_user(ctx.author.id)
@@ -675,7 +667,6 @@ class EconomyCog(commands.Cog):
             return
         if random.random() < 0.6:
             try:
-                # attempt to seize $200 from target
                 if self.manager.try_withdraw(target, 200):
                     self.manager.add_money(ctx.author.id, 200)
                     await ctx.send(f"🚓 Arrested {target} and seized $200!")
@@ -744,7 +735,7 @@ class EconomyCog(commands.Cog):
         else:
             await ctx.send("❌ Unknown project. Use /code to see options.")
 
-    # Admin command: setbalance (guarded by guilded author id strings in ADMIN_ALLOWED_IDS)
+    # Admin command: setbalance
     @commands.command()
     async def setbalance(self, ctx, amount: int):
         allowed_ids = os.getenv("ADMIN_ALLOWED_IDS", "mpGYeq9d,mL2MM1N4").split(",")
@@ -762,6 +753,5 @@ class EconomyCog(commands.Cog):
 def setup(bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
     bot.add_cog(EconomyCog(bot, db=db, storage_dir=storage_dir))
     logger.info("EconomyCog registered.")
-
 
 __all__ = ["EconomyManager", "EconomyCog", "setup"]
