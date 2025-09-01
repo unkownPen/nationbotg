@@ -9,7 +9,10 @@ from web.dashboard import app as flask_app
 from bot.database import Database
 from bot.civilization import CivilizationManager
 from bot.commands.basic import BasicCommands
+# Bring back the original EconomyCommands (legacy/old economy bot code)
 from bot.commands.economy import EconomyCommands
+# Also load the ExtraEconomy cog you added (ExtraEconomy.py should expose setup)
+from ExtraEconomy import setup as setup_extra_economy
 from bot.commands.military import MilitaryCommands
 from bot.commands.diplomacy import DiplomacyCommands
 from bot.commands.store import StoreCommands
@@ -46,12 +49,27 @@ class WarBot(commands.Bot):
         # Initialize command cogs after bot is ready
         try:
             self.add_cog(BasicCommands(self))
-            self.add_cog(EconomyCommands(self))
+
+            # Register legacy/old economy cog (kept as EconomyCommands)
+            try:
+                self.add_cog(EconomyCommands(self))
+                logger.info("Legacy EconomyCommands cog loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load legacy EconomyCommands cog: {e}")
+
+            # Register the ExtraEconomy cog using the setup helper from ExtraEconomy.py.
+            # This is the new/extra economy implementation you've pasted into ExtraEconomy.py.
+            try:
+                setup_extra_economy(self, db=self.db, storage_dir="./data")
+                logger.info("ExtraEconomy cog (extra/modern economy) loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load ExtraEconomy cog: {e}")
+
             self.add_cog(MilitaryCommands(self))
             self.add_cog(DiplomacyCommands(self))
             self.add_cog(StoreCommands(self))
             self.add_cog(HyperItemCommands(self))
-            logger.info("All command cogs loaded successfully")
+            logger.info("All other command cogs loaded successfully")
         except Exception as e:
             logger.error(f"Error loading cogs: {e}")
         
