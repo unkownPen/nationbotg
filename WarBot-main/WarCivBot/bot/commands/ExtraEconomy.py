@@ -1,15 +1,18 @@
 """
-ExtraEconomy cog (updated)
+ExtraEconomy cog (DB-integrated, civ-checking)
 
-Changes from previous version:
-- Removed the built-in Flask webserver (main.py already runs the dashboard).
-- Replaced background Threads with asyncio Tasks started in cog_load so tasks run on the bot's event loop.
-- Added cog_unload to cancel background tasks cleanly on reload/shutdown.
-- Removed the '/help' command to avoid conflicts with the main bot help.
-- Keeps optional Database integration and JSON fallback persistence.
-- Exposes setup(bot, db=None, storage_dir=".") for main.py to call.
+This version:
+- Integrates with bot.database.Database when passed in setup(...).
+- Starts background tasks on cog_load and cancels them on cog_unload.
+- Uses the bot's command_prefix (main.py sets '.'), messages use '.' examples.
+- Enforces that a user must have a civilization (from CivilizationManager / db)
+  before using game-affecting economy commands (job, work, arrest, rob, code,
+  buy, darkweb, give). It checks for civs by:
+    1) Checking bot.civ_manager.get_civilization(user_id) if the bot exposes civ_manager
+    2) Falling back to manager.db.get_civilization(user_id) if a Database instance was provided
+- /help command removed to avoid conflicts with the main bot help.
 
-Usage (from your main.py):
+Usage:
     from ExtraEconomy import setup as setup_extra_economy
     setup_extra_economy(bot, db=self.db, storage_dir="./data")
 """
@@ -20,22 +23,26 @@ import time
 import asyncio
 import logging
 from threading import Lock
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from guilded.ext import commands
 
-logger = logging.getLogger(__name__)
+# try to import the Database class for type-awareness; optional
+try:
+    from bot.database import Database
+except Exception:
+    Database = None
 
-# -----------------------
-# EconomyManager (persistence + logic)
-# -----------------------
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
 class EconomyManager:
     def __init__(self, storage_dir: str = ".", db: Optional[Any] = None):
         self.db = db
         self.storage_dir = storage_dir
         self.lock = Lock()
 
-        # JSON filenames
         os.makedirs(storage_dir, exist_ok=True)
         self.DATA_BAL = os.path.join(storage_dir, "user_balances.json")
         self.DATA_JOB = os.path.join(storage_dir, "user_jobs.json")
@@ -48,13 +55,12 @@ class EconomyManager:
             self.user_inventory = self._load_json(self.DATA_INV)
             self.user_products = self._load_json(self.DATA_PROD)
         else:
-            # when using an external DB we keep caches empty
+            self._ensure_db_tables()
             self.user_balances = {}
             self.user_jobs = {}
             self.user_inventory = {}
             self.user_products = {}
 
-        # game state
         self.job_roles = {
             "bank": ["Rejected", "Teller", "Manager", "Executive"],
             "police": ["Rejected", "Recruit", "Officer", "Captain"],
@@ -85,7 +91,7 @@ class EconomyManager:
             "crypto_miner": {"price": 3500, "desc": "Cheaper, shady miner hardware"}
         }
 
-    # Persistence helpers
+    # JSON fallback helpers
     def _load_json(self, path: str) -> dict:
         try:
             if not os.path.exists(path):
@@ -104,180 +110,318 @@ class EconomyManager:
         except Exception:
             logger.exception("Failed to save JSON %s", path)
 
-    # Generic DB wrappers
-    def _get_state(self, key: str):
-        if self.db:
+    # DB table creation (if db is provided)
+    def _ensure_db_tables(self):
+        try:
+            if not self.db or not hasattr(self.db, "get_connection"):
+                return
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS economy_balances (
+                    user_id TEXT PRIMARY KEY,
+                    balance INTEGER NOT NULL
+                )
+            ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS economy_jobs (
+                    user_id TEXT PRIMARY KEY,
+                    job TEXT NOT NULL
+                )
+            ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS economy_inventory (
+                    user_id TEXT PRIMARY KEY,
+                    items TEXT NOT NULL
+                )
+            ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS economy_products (
+                    user_id TEXT PRIMARY KEY,
+                    products TEXT NOT NULL
+                )
+            ''')
+            conn.commit()
+            logger.info("Economy tables ensured in Database")
+        except Exception:
+            logger.exception("Failed to ensure economy tables in DB")
+
+    # SQL helpers
+    def _db_get_balance(self, suid: str) -> int:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT balance FROM economy_balances WHERE user_id = ?', (suid,))
+        row = cur.fetchone()
+        return int(row['balance']) if row else 0
+
+    def _db_set_balance(self, suid: str, amount: int):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('INSERT OR REPLACE INTO economy_balances (user_id, balance) VALUES (?, ?)', (suid, int(amount)))
+        conn.commit()
+
+    def _db_get_job(self, suid: str) -> str:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT job FROM economy_jobs WHERE user_id = ?', (suid,))
+        row = cur.fetchone()
+        return row['job'] if row else "Unemployed"
+
+    def _db_set_job(self, suid: str, job: str):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('INSERT OR REPLACE INTO economy_jobs (user_id, job) VALUES (?, ?)', (suid, job))
+        conn.commit()
+
+    def _db_get_inventory(self, suid: str) -> list:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT items FROM economy_inventory WHERE user_id = ?', (suid,))
+        row = cur.fetchone()
+        if row:
             try:
-                return getattr(self.db, f"get_{key}")()  # optional convenience
+                return json.loads(row['items'])
             except Exception:
-                logger.debug("db get wrapper not available for %s", key)
+                return []
+        return []
+
+    def _db_set_inventory(self, suid: str, items: list):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('INSERT OR REPLACE INTO economy_inventory (user_id, items) VALUES (?, ?)', (suid, json.dumps(items)))
+        conn.commit()
+
+    def _db_get_products(self, suid: str) -> dict:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT products FROM economy_products WHERE user_id = ?', (suid,))
+        row = cur.fetchone()
+        if row:
+            try:
+                return json.loads(row['products'])
+            except Exception:
                 return {}
-        else:
-            return getattr(self, key)
+        return {}
 
-    def _save_state(self, key: str, data: dict):
-        if self.db:
+    def _db_set_products(self, suid: str, products: dict):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('INSERT OR REPLACE INTO economy_products (user_id, products) VALUES (?, ?)', (suid, json.dumps(products)))
+        conn.commit()
+
+    def _db_get_all_inventories(self) -> Dict[str, list]:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT user_id, items FROM economy_inventory')
+        rows = cur.fetchall()
+        result = {}
+        for row in rows:
             try:
-                return getattr(self.db, f"save_{key}")(data)
+                result[row['user_id']] = json.loads(row['items'])
             except Exception:
-                logger.debug("db save wrapper not available for %s", key)
-                return False
-        else:
-            setattr(self, key, data)
-            if key == "user_balances":
-                self._save_json(self.DATA_BAL, data)
-            elif key == "user_jobs":
-                self._save_json(self.DATA_JOB, data)
-            elif key == "user_inventory":
-                self._save_json(self.DATA_INV, data)
-            elif key == "user_products":
-                self._save_json(self.DATA_PROD, data)
-            return True
+                result[row['user_id']] = []
+        return result
 
-    # Utility
+    def _db_get_all_products(self) -> Dict[str, dict]:
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT user_id, products FROM economy_products')
+        rows = cur.fetchall()
+        result = {}
+        for row in rows:
+            try:
+                result[row['user_id']] = json.loads(row['products'])
+            except Exception:
+                result[row['user_id']] = {}
+        return result
+
+    # Public utility / CRUD
     def uid(self, user_id) -> str:
         return str(user_id)
 
-    # CRUD
     def ensure_user(self, user_id):
         suid = self.uid(user_id)
         with self.lock:
-            if not self.db:
+            if self.db:
+                try:
+                    cur_bal = self._db_get_balance(suid)
+                    if cur_bal == 0:
+                        self._db_set_balance(suid, 500)
+                    cur_job = self._db_get_job(suid)
+                    if cur_job == "Unemployed":
+                        self._db_set_job(suid, "Unemployed")
+                    inv = self._db_get_inventory(suid)
+                    if inv == []:
+                        self._db_set_inventory(suid, [])
+                    prods = self._db_get_products(suid)
+                    if prods == {}:
+                        self._db_set_products(suid, {})
+                except Exception:
+                    logger.exception("ensure_user (db) failed")
+            else:
                 if suid not in self.user_balances:
                     self.user_balances[suid] = 500
-                    self._save_state("user_balances", self.user_balances)
+                    self._save_json(self.DATA_BAL, self.user_balances)
                 if suid not in self.user_jobs:
                     self.user_jobs[suid] = "Unemployed"
-                    self._save_state("user_jobs", self.user_jobs)
+                    self._save_json(self.DATA_JOB, self.user_jobs)
                 if suid not in self.user_inventory:
                     self.user_inventory[suid] = []
-                    self._save_state("user_inventory", self.user_inventory)
+                    self._save_json(self.DATA_INV, self.user_inventory)
                 if suid not in self.user_products:
                     self.user_products[suid] = {}
-                    self._save_state("user_products", self.user_products)
-            else:
-                try:
-                    if hasattr(self.db, "ensure_user"):
-                        self.db.ensure_user(suid)
-                except Exception:
-                    logger.exception("db.ensure_user failed")
+                    self._save_json(self.DATA_PROD, self.user_products)
 
     def get_balance(self, user_id) -> int:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return int(self.db.get_balance(self.uid(user_id)))
+                return int(self._db_get_balance(suid))
             except Exception:
                 logger.exception("db.get_balance failed")
                 return 0
-        return int(self.user_balances.get(self.uid(user_id), 0))
+        return int(self.user_balances.get(suid, 0))
 
     def update_balance(self, user_id, amount) -> None:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.update_balance(self.uid(user_id), int(amount))
+                self._db_set_balance(suid, int(amount))
             except Exception:
                 logger.exception("db.update_balance failed")
-                return
-        with self.lock:
-            self.user_balances[self.uid(user_id)] = int(amount)
-            self._save_state("user_balances", self.user_balances)
+        else:
+            with self.lock:
+                self.user_balances[suid] = int(amount)
+                self._save_json(self.DATA_BAL, self.user_balances)
 
     def add_money(self, user_id, amount) -> None:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.add_money(self.uid(user_id), int(amount))
+                curr = int(self._db_get_balance(suid))
+                self._db_set_balance(suid, curr + int(amount))
             except Exception:
                 logger.exception("db.add_money failed")
-                return
-        with self.lock:
-            curr = int(self.user_balances.get(self.uid(user_id), 0))
-            self.user_balances[self.uid(user_id)] = curr + int(amount)
-            self._save_state("user_balances", self.user_balances)
+        else:
+            with self.lock:
+                curr = int(self.user_balances.get(suid, 0))
+                self.user_balances[suid] = curr + int(amount)
+                self._save_json(self.DATA_BAL, self.user_balances)
 
     def try_withdraw(self, user_id, amount) -> bool:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.try_withdraw(self.uid(user_id), int(amount))
+                curr = int(self._db_get_balance(suid))
+                if curr >= int(amount):
+                    self._db_set_balance(suid, curr - int(amount))
+                    return True
+                return False
             except Exception:
                 logger.exception("db.try_withdraw failed")
                 return False
-        with self.lock:
-            curr = int(self.user_balances.get(self.uid(user_id), 0))
-            if curr >= int(amount):
-                self.user_balances[self.uid(user_id)] = curr - int(amount)
-                self._save_state("user_balances", self.user_balances)
-                return True
-            return False
+        else:
+            with self.lock:
+                curr = int(self.user_balances.get(suid, 0))
+                if curr >= int(amount):
+                    self.user_balances[suid] = curr - int(amount)
+                    self._save_json(self.DATA_BAL, self.user_balances)
+                    return True
+                return False
 
     def update_inventory(self, user_id, items) -> None:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.update_inventory(self.uid(user_id), items)
+                self._db_set_inventory(suid, items)
             except Exception:
                 logger.exception("db.update_inventory failed")
-                return
-        with self.lock:
-            self.user_inventory[self.uid(user_id)] = items
-            self._save_state("user_inventory", self.user_inventory)
+        else:
+            with self.lock:
+                self.user_inventory[suid] = items
+                self._save_json(self.DATA_INV, self.user_inventory)
 
-    def get_inventory(self, user_id):
+    def get_inventory(self, user_id) -> List[str]:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.get_inventory(self.uid(user_id))
+                return list(self._db_get_inventory(suid))
             except Exception:
                 logger.exception("db.get_inventory failed")
                 return []
-        return list(self.user_inventory.get(self.uid(user_id), []))
+        return list(self.user_inventory.get(suid, []))
 
     def update_job(self, user_id, job_name) -> None:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.update_job(self.uid(user_id), job_name)
+                self._db_set_job(suid, job_name)
             except Exception:
                 logger.exception("db.update_job failed")
-                return
-        with self.lock:
-            self.user_jobs[self.uid(user_id)] = job_name
-            self._save_state("user_jobs", self.user_jobs)
+        else:
+            with self.lock:
+                self.user_jobs[suid] = job_name
+                self._save_json(self.DATA_JOB, self.user_jobs)
 
-    def get_job(self, user_id):
+    def get_job(self, user_id) -> str:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.get_job(self.uid(user_id))
+                return self._db_get_job(suid)
             except Exception:
                 logger.exception("db.get_job failed")
                 return "Unemployed"
-        return self.user_jobs.get(self.uid(user_id), "Unemployed")
+        return self.user_jobs.get(suid, "Unemployed")
 
-    def get_products(self, user_id):
+    def get_products(self, user_id) -> Dict[str, Any]:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.get_products(self.uid(user_id))
+                return dict(self._db_get_products(suid))
             except Exception:
                 logger.exception("db.get_products failed")
                 return {}
-        return self.user_products.get(self.uid(user_id), {})
+        return dict(self.user_products.get(suid, {}))
 
-    def update_products(self, user_id, products):
+    def update_products(self, user_id, products) -> None:
         self.ensure_user(user_id)
+        suid = self.uid(user_id)
         if self.db:
             try:
-                return self.db.update_products(self.uid(user_id), products)
+                self._db_set_products(suid, products)
             except Exception:
                 logger.exception("db.update_products failed")
-                return
-        with self.lock:
-            self.user_products[self.uid(user_id)] = products
-            self._save_state("user_products", self.user_products)
+        else:
+            with self.lock:
+                self.user_products[suid] = products
+                self._save_json(self.DATA_PROD, self.user_products)
+
+    def get_all_inventories(self) -> Dict[str, list]:
+        if self.db:
+            try:
+                return self._db_get_all_inventories()
+            except Exception:
+                logger.exception("db.get_all_inventories failed")
+                return {}
+        return dict(self.user_inventory)
+
+    def get_all_products(self) -> Dict[str, dict]:
+        if self.db:
+            try:
+                return self._db_get_all_products()
+            except Exception:
+                logger.exception("db.get_all_products failed")
+                return {}
+        return dict(self.user_products)
 
     def get_faction(self, user_id) -> str:
         job = self.get_job(user_id)
@@ -293,25 +437,17 @@ class EconomyManager:
             return "Military"
         return "Criminal"
 
-# -----------------------
-# EconomyCog - Guilded commands (async tasks)
-# -----------------------
+
 class EconomyCog(commands.Cog):
     def __init__(self, bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
         self.bot = bot
         self.manager = EconomyManager(storage_dir=storage_dir, db=db)
+        self.last_work_time = {}
+        self.coding_tasks = {}
+        self.product_last_pay = {}
+        self._tasks: List[asyncio.Task] = []
 
-        # background state
-        self.last_work_time = {}            # per-user cooldown for /work
-        self.coding_tasks = {}              # uid -> (project, finish_ts)
-        self.product_last_pay = {}          # uid -> {product_name: ts}
-
-        # tasks (asyncio Tasks) will be created in cog_load
-        self._tasks = []
-
-    # cog_load and cog_unload are used for lifecycle management of the cog in modern commands frameworks
     async def cog_load(self):
-        # schedule background coro tasks on the bot loop
         loop = self.bot.loop
         self._tasks.append(loop.create_task(self._restock_shop_loop()))
         self._tasks.append(loop.create_task(self._crypto_miner_loop()))
@@ -321,7 +457,6 @@ class EconomyCog(commands.Cog):
         logger.info("EconomyCog: background tasks started")
 
     async def cog_unload(self):
-        # cancel running tasks when cog is unloaded
         for t in self._tasks:
             try:
                 t.cancel()
@@ -330,91 +465,111 @@ class EconomyCog(commands.Cog):
         self._tasks.clear()
         logger.info("EconomyCog: background tasks cancelled")
 
+    # -- Civ check helpers --
+    def _user_has_civ_via_bot(self, user_id: str) -> bool:
+        try:
+            if hasattr(self.bot, "civ_manager") and self.bot.civ_manager:
+                civ = self.bot.civ_manager.get_civilization(str(user_id))
+                return civ is not None
+        except Exception:
+            logger.exception("Error checking civ via bot.civ_manager")
+        return False
+
+    def _user_has_civ_via_db(self, user_id: str) -> bool:
+        try:
+            if self.manager.db and hasattr(self.manager.db, "get_civilization"):
+                civ = self.manager.db.get_civilization(str(user_id))
+                return civ is not None
+        except Exception:
+            logger.exception("Error checking civ via Database.get_civilization")
+        return False
+
+    def user_has_civ(self, user_id: str) -> bool:
+        # priority: bot.civ_manager (if present), then db method
+        if self._user_has_civ_via_bot(user_id):
+            return True
+        if self._user_has_civ_via_db(user_id):
+            return True
+        return False
+
+    async def require_civ(self, ctx) -> bool:
+        """
+        Send an error message and return False if the invoking user doesn't have a civ.
+        Returns True when user has a civ.
+        """
+        uid = str(ctx.author.id)
+        if not self.user_has_civ(uid):
+            await ctx.send("🚫 You need a civilization to use that command. Create one using your civ commands.")
+            return False
+        return True
+
     # ---------------- background coroutines ----------------
     async def _restock_shop_loop(self):
         try:
             while True:
-                await asyncio.sleep(180)  # 3 minutes
+                await asyncio.sleep(180)
                 self.manager.shop_items["ak"]["stock"] = 5
                 self.manager.shop_items["ammo"]["stock"] = 10
                 self.manager.shop_items["glock17"]["stock"] = 5
                 self.manager.shop_items["crypto_miner"]["stock"] = 2
-                logger.debug("Shop restocked.")
         except asyncio.CancelledError:
-            logger.debug("restock_shop_loop cancelled")
             return
 
     async def _crypto_miner_loop(self):
         try:
             while True:
-                await asyncio.sleep(3600)  # 1 hour
-                inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
-                try:
-                    for suid, items in list(inv_map.items()):
-                        if not isinstance(items, list):
-                            continue
-                        miner_count = sum(1 for i in items if i == "crypto_miner")
-                        if miner_count > 0:
-                            self.manager.add_money(suid, 200 * miner_count)
-                            logger.debug(f"Crypto miners paid ${200 * miner_count} to {suid}")
-                except Exception:
-                    logger.exception("crypto miner loop error")
+                await asyncio.sleep(3600)
+                inv_map = self.manager.get_all_inventories()
+                for suid, items in list(inv_map.items()):
+                    if not isinstance(items, list):
+                        continue
+                    miner_count = sum(1 for i in items if i == "crypto_miner")
+                    if miner_count > 0:
+                        self.manager.add_money(suid, 200 * miner_count)
         except asyncio.CancelledError:
-            logger.debug("crypto_miner_loop cancelled")
             return
 
     async def _swat_raid_loop(self):
         try:
             while True:
-                await asyncio.sleep(18000)  # 5 hours
-                inv_map = self.manager._get_state("user_inventory") if not self.manager.db else self.manager.db.get_all_inventories()
-                try:
-                    for suid, items in list(inv_map.items()):
-                        if self.manager.get_faction(suid) == "Criminal" and random.random() < 0.5:
-                            loss = min(self.manager.get_balance(suid), random.randint(200, 1000))
-                            if loss > 0:
-                                self.manager.try_withdraw(suid, loss)
-                            inv = items[:] if isinstance(items, list) else []
-                            illegal = {"ak", "ammo", "glock17", "explosives", "stolen_data", "forged_documents"}
-                            inv = [i for i in inv if i not in illegal]
-                            self.manager.update_inventory(suid, inv)
-                            logger.debug(f"SWAT raided {suid}, seized ${loss} and contraband.")
-                except Exception:
-                    logger.exception("swat raid loop error")
+                await asyncio.sleep(18000)
+                inv_map = self.manager.get_all_inventories()
+                for suid, items in list(inv_map.items()):
+                    if self.manager.get_faction(suid) == "Criminal" and random.random() < 0.5:
+                        loss = min(self.manager.get_balance(suid), random.randint(200, 1000))
+                        if loss > 0:
+                            self.manager.try_withdraw(suid, loss)
+                        inv = items[:] if isinstance(items, list) else []
+                        illegal = {"ak", "ammo", "glock17", "explosives", "stolen_data", "forged_documents"}
+                        inv = [i for i in inv if i not in illegal]
+                        self.manager.update_inventory(suid, inv)
         except asyncio.CancelledError:
-            logger.debug("swat_raid_loop cancelled")
             return
 
     async def _product_income_loop(self):
         try:
             while True:
-                await asyncio.sleep(3600)  # hourly check
+                await asyncio.sleep(3600)
                 now = time.time()
-                products_map = self.manager._get_state("user_products") if not self.manager.db else self.manager.db.get_all_products()
-                try:
-                    for suid, prods in list(products_map.items()):
-                        if not isinstance(prods, dict):
-                            continue
-                        if "messenger" in prods:
-                            state = prods["messenger"]
-                            last = self.product_last_pay.get(suid, {}).get("messenger", 0)
-                            if state == "viral":
-                                interval = 18000  # 5 hours
-                                if now - last >= interval:
-                                    payout = random.randint(1000, 5000)
-                                    self.manager.add_money(suid, payout)
-                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
-                                    logger.debug(f"Messenger viral payout ${payout} -> {suid}")
-                            else:
-                                interval = 10800
-                                if now - last >= interval:
-                                    self.manager.add_money(suid, 10)
-                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
-                                    logger.debug(f"Messenger flop payout $10 -> {suid}")
-                except Exception:
-                    logger.exception("product income loop error")
+                products_map = self.manager.get_all_products()
+                for suid, prods in list(products_map.items()):
+                    if not isinstance(prods, dict):
+                        continue
+                    if "messenger" in prods:
+                        state = prods["messenger"]
+                        last = self.product_last_pay.get(suid, {}).get("messenger", 0)
+                        if state == "viral":
+                            interval = 18000
+                            if now - last >= interval:
+                                payout = random.randint(1000, 5000)
+                                self.manager.add_money(suid, payout)
+                                self.product_last_pay.setdefault(suid, {})["messenger"] = now
+                        else:
+                            interval = 10800
+                            if now - last >= interval:
+                                self.manager.add_money(suid, 10)
+                                self.product_last_pay.setdefault(suid, {})["messenger"] = now
         except asyncio.CancelledError:
-            logger.debug("product_income_loop cancelled")
             return
 
     async def _coding_loop(self):
@@ -440,9 +595,7 @@ class EconomyCog(commands.Cog):
                         prods["messenger"] = "viral" if random.random() < 0.45 else "flop"
                         self.manager.update_products(suid, prods)
                     self.coding_tasks.pop(suid, None)
-                    logger.debug(f"Coding finished for {suid}: {proj}")
         except asyncio.CancelledError:
-            logger.debug("coding_loop cancelled")
             return
 
     # ---------------- Helpers for UI ----------------
@@ -457,11 +610,10 @@ class EconomyCog(commands.Cog):
         lines = ["🌑 Dark Web Market (50% scam risk):"]
         for name, data in self.manager.darkweb_items.items():
             lines.append(f"- {name.upper()} (${data['price']}) — {data['desc']}")
-        lines.append("\nUse /darkweb [item] to attempt a purchase.")
+        lines.append("\nUse .darkweb [item] to attempt a purchase.")
         return "\n".join(lines)
 
     # ---------------- Commands ----------------
-    # Note: '/help' command intentionally removed to avoid conflicts with main.py help
     @commands.command()
     async def balance(self, ctx):
         self.manager.ensure_user(ctx.author.id)
@@ -498,6 +650,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def give(self, ctx, user: str, amount: int):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         self.manager.ensure_user(user)
         if amount <= 0:
@@ -515,6 +669,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="buy")
     async def buy_item(self, ctx, item: str):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         item = item.lower()
         if item not in self.manager.shop_items:
@@ -535,6 +691,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def darkweb(self, ctx, item: Optional[str] = None):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         if item is None:
             await ctx.send(self.build_darkweb_display())
@@ -619,7 +777,6 @@ class EconomyCog(commands.Cog):
         else:
             await ctx.send(f"🂠 Both drew {y_label}. Tie — no change.")
 
-    # Jobs
     @commands.command()
     async def jobs(self, ctx):
         text = ["📋 Available Jobs:"]
@@ -629,6 +786,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def job(self, ctx, job_type: str):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         jt = job_type.lower()
         if jt not in self.manager.job_roles:
@@ -643,6 +802,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def work(self, ctx):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         user_id = ctx.author.id
         now = time.time()
@@ -661,6 +822,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def arrest(self, ctx, target: str):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         if self.manager.get_faction(ctx.author.id) != "Police":
             await ctx.send("🚫 Only police can arrest criminals.")
@@ -680,6 +843,8 @@ class EconomyCog(commands.Cog):
 
     @commands.command()
     async def rob(self, ctx, target: str):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         if self.manager.get_faction(ctx.author.id) != "Criminal":
             await ctx.send("🚫 Only criminals can rob others.")
@@ -694,16 +859,17 @@ class EconomyCog(commands.Cog):
         else:
             await ctx.send("❌ Robbery failed.")
 
-    # Coding projects
     @commands.command()
     async def code(self, ctx, project: Optional[str] = None):
+        if not await self.require_civ(ctx):
+            return
         self.manager.ensure_user(ctx.author.id)
         if project is None:
             await ctx.send(
                 "💻 Coding Projects:\n"
-                "/code virus — $250 – $763 in 25 min, 25% police catch chance\n"
-                "/code website — $50 – $150 in 10 min\n"
-                "/code messenger — 45% viral (thousands/5h) or 55% flop ($10/3h)"
+                ".code virus — $250 – $763 in 25 min, 25% police catch chance\n"
+                ".code website — $50 – $150 in 10 min\n"
+                ".code messenger — 45% viral (thousands/5h) or 55% flop ($10/3h)"
             )
             return
         uid = self.manager.uid(ctx.author.id)
@@ -733,11 +899,11 @@ class EconomyCog(commands.Cog):
             self.coding_tasks[uid] = ("messenger", time.time() + 18000)
             await ctx.send("📱 Developing a messenger app... will finish in 5 hours.")
         else:
-            await ctx.send("❌ Unknown project. Use /code to see options.")
+            await ctx.send("❌ Unknown project. Use .code to see options.")
 
-    # Admin command: setbalance
     @commands.command()
     async def setbalance(self, ctx, amount: int):
+        # admin only; doesn't require civ
         allowed_ids = os.getenv("ADMIN_ALLOWED_IDS", "mpGYeq9d,mL2MM1N4").split(",")
         if str(ctx.author.id) not in allowed_ids:
             await ctx.send("❌ You don't have permission to use this command.")
@@ -749,9 +915,9 @@ class EconomyCog(commands.Cog):
         await ctx.send(f"✅ Your balance has been set to ${amount}.")
 
 
-# helper to register cog in main program
 def setup(bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
     bot.add_cog(EconomyCog(bot, db=db, storage_dir=storage_dir))
-    logger.info("EconomyCog registered.")
+    logger.info("EconomyCog registered (ExtraEconomy).")
+
 
 __all__ = ["EconomyManager", "EconomyCog", "setup"]
