@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 class CivilizationManager:
     def __init__(self, db: Database):
         self.db = db
+        # Expanded ideology modifiers to include socialism, terrorism, capitalism, federalism, monarchy
         self.ideology_modifiers = {
             "fascism": {
                 "soldier_training_speed": 1.25,
@@ -49,6 +50,37 @@ class CivilizationManager:
                 "soldier_training_speed": 0.40,
                 "combat_strength": 0.60,
                 "diplomacy_success": 1.25
+            },
+            # New ideologies
+            "socialism": {
+                "citizen_productivity": 1.15,
+                "happiness_boost": 1.10,
+                "trade_profit": 0.90
+            },
+            "terrorism": {
+                # terrorism is treated as a shadow/guerrilla ideology: strong raids/spy ops,
+                # poor diplomacy and unstable resources
+                "guerrilla_effectiveness": 1.40,
+                "spy_success": 1.30,
+                "diplomacy_success": 0.50,
+                "resource_production": 0.80,
+                "unrest_multiplier": 1.25
+            },
+            "capitalism": {
+                "trade_profit": 1.20,
+                "gold_generation": 1.15,
+                "happiness_boost": 0.90  # inequality can lower happiness
+            },
+            "federalism": {
+                "stability": 1.10,
+                "diplomacy_success": 1.10,
+                "regional_production": 1.05
+            },
+            "monarchy": {
+                "loyalty": 1.10,
+                "soldier_morale": 1.10,
+                "reform_speed": 0.90,
+                "happiness_boost": 1.10
             }
         }
 
@@ -292,6 +324,7 @@ class CivilizationManager:
             base_food = int(population['citizens'] * 0.2 * employment_modifier)
             
             resource_modifier = 1.0
+            # Existing ideology adjustments
             if ideology == 'communism':
                 resource_modifier *= self.ideology_modifiers['communism']['citizen_productivity']
             elif ideology == 'democracy':
@@ -300,6 +333,19 @@ class CivilizationManager:
                 resource_modifier *= self.ideology_modifiers['destruction']['resource_production']
             elif ideology == 'pacifist':
                 resource_modifier *= self.ideology_modifiers['pacifist']['trade_profit']
+            # New ideology adjustments
+            elif ideology == 'socialism':
+                resource_modifier *= self.ideology_modifiers['socialism']['citizen_productivity']
+            elif ideology == 'capitalism':
+                # capitalism favors gold/trade more than raw production
+                resource_modifier *= self.ideology_modifiers['capitalism']['trade_profit']
+                base_gold = int(base_gold * self.ideology_modifiers['capitalism']['gold_generation'])
+            elif ideology == 'federalism':
+                resource_modifier *= self.ideology_modifiers['federalism']['regional_production']
+            elif ideology == 'monarchy':
+                resource_modifier *= 1.0  # monarchy primarily affects morale/happiness, not base resource yield
+            elif ideology == 'terrorism':
+                resource_modifier *= self.ideology_modifiers['terrorism']['resource_production']
             
             resource_modifier *= (1 + bonuses.get('resource_production', 0) / 100)
             
@@ -330,7 +376,12 @@ class CivilizationManager:
             
             if ideology == 'anarchy':
                 soldier_upkeep = 0
-                
+            # terrorism increases use of spies/guerrilla ops -> higher spy upkeep
+            if ideology == 'terrorism':
+                spy_upkeep = int(spy_upkeep * 1.3)
+            # monarchy + fascism may improve soldier morale but not reduce upkeep by default
+            # socialism may add minor upkeep changes via state support; keep base values
+            
             return {
                 "food": food_consumption,
                 "gold": soldier_upkeep + spy_upkeep
@@ -349,8 +400,19 @@ class CivilizationManager:
             population = civ['population']
             happiness = population['happiness']
             bonuses = civ['bonuses']
+            ideology = civ.get('ideology', '')
             
             happiness_modifier = 1 + bonuses.get('happiness_boost', 0) / 100
+            # apply ideology intrinsic happiness boosts if present
+            if ideology in self.ideology_modifiers and 'happiness_boost' in self.ideology_modifiers[ideology]:
+                # some ideologies express happiness_boost as a multiplier (e.g., 1.10)
+                ide_happy = self.ideology_modifiers[ideology]['happiness_boost']
+                # if ide_happy looks like a multiplier (>1), convert to additive percent boost
+                if ide_happy > 1.0:
+                    happiness_modifier *= ide_happy
+                else:
+                    happiness_modifier += ide_happy
+            
             happiness = int(happiness * happiness_modifier)
             
             if happiness < 20:
@@ -364,6 +426,11 @@ class CivilizationManager:
                 growth_rate = bonuses.get('population_growth', 0) / 100
                 if ideology == 'pacifist':
                     growth_rate += self.ideology_modifiers['pacifist']['population_growth'] - 1
+                # socialism and monarchy can add to growth/happiness effects
+                if ideology == 'socialism':
+                    growth_rate += (self.ideology_modifiers['socialism'].get('citizen_productivity', 1.0) - 1.0)
+                if ideology == 'monarchy':
+                    growth_rate += (self.ideology_modifiers['monarchy'].get('loyalty', 1.0) - 1.0) * 0.25
                 if random.random() < (0.15 + growth_rate):
                     growth = int(population['citizens'] * (0.03 + growth_rate))
                     self.update_population(user_id, {"citizens": growth})
@@ -411,7 +478,8 @@ class CivilizationManager:
             modifiers = self.ideology_modifiers.get(ideology, {})
             base_modifier = modifiers.get(modifier_type, 1.0)
             
-            if modifier_type in ['soldier_training_speed', 'combat_strength', 'trade_profit', 'population_growth']:
+            # For common action types combine base modifier with civ bonuses
+            if modifier_type in ['soldier_training_speed', 'combat_strength', 'trade_profit', 'population_growth', 'citizen_productivity']:
                 return base_modifier + (civ['bonuses'].get(modifier_type, 0) / 100)
             return base_modifier
         except Exception as e:
