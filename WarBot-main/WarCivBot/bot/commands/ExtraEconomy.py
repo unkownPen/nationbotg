@@ -1,25 +1,11 @@
 """
-ExtraEconomy cog (renamed store/inventory/cards -> extrastore/extrainventory/extracards)
+ExtraEconomy cog (gold-in-civ currency, cooldowns, extragamble, .extrawork)
 
-This replaces the previous commands:
- - shop / buy  -> .extrastore [buy <item>]
- - inventory   -> .extrainventory
- - cards       -> .extracards <amount>
-
-Behavior notes (keeps previous logic):
- - Cooldowns: most commands 60s, extrawork 300s. Cooldowns are applied only on
-   successful completion (missing args or errors do NOT set cooldown).
- - Currency: uses civ.resources.gold via bot.civ_manager or Database; falls back to JSON.
- - Inventory persistence uses DB methods if available.
- - extrastore supports:
-     .extrastore                -> shows store
-     .extrastore buy <item>     -> purchase item (1m cd on success)
- - extracards mirrors previous cards mini-game.
-
-Install:
- - Drop this file into WarBot-main/WarCivBot/bot/commands/ExtraEconomy.py
- - Restart the bot.
-
+Notes:
+- .balance and .profile have been removed as requested.
+- Commands replaced/renamed: extrawork, extrastore, extrainventory, extracards, extragamble, etc.
+- Currency is stored on the civilization (civ['resources']['gold']) via bot.civ_manager or Database.
+- Cooldowns are applied only after successful execution.
 """
 from __future__ import annotations
 
@@ -57,7 +43,7 @@ class EconomyManager:
                 json.dump({}, f)
         self._load_fallback()
 
-        # keep ephemeral shop config
+        # Ephemeral shop config
         self.shop_items = {
             "ak": {"price": 500, "stock": 5},
             "ammo": {"price": 100, "stock": 10},
@@ -309,7 +295,7 @@ class EconomyCog(commands.Cog):
             return False
         return True
 
-    # background loops (simplified: product/miner/coding)
+    # background loops (simplified)
     async def _crypto_miner_loop(self):
         try:
             while True:
@@ -392,11 +378,11 @@ class EconomyCog(commands.Cog):
         except asyncio.CancelledError:
             return
 
-    # ---------------- UI helpers ----------------
+    # UI helpers
     def build_store_display(self) -> str:
         lines = ["🛒 Current Store Stock:"]
         for name, data in self.manager.shop_items.items():
-            extra = " ⛏️ $200/hour" if name == "crypto_miner" else ""
+            extra = " ⛏️ miner pays hourly" if name == "crypto_miner" else ""
             lines.append(f"- {name.upper()} ({data['price']} gold) — {data['stock']} in stock{extra}")
         lines.append("\nBuy items with .extrastore buy <item>")
         return "\n".join(lines)
@@ -411,37 +397,7 @@ class EconomyCog(commands.Cog):
         lines.append("\nUse .darkweb <item> to attempt a purchase.")
         return "\n".join(lines)
 
-    # ---------------- Commands (renamed) ----------------
-    @commands.command()
-    async def balance(self, ctx):
-        try:
-            uid = str(ctx.author.id)
-            if not await self.require_civ(ctx):
-                return
-            bal = self.manager.get_gold(uid)
-            await ctx.send(f"💰 Your civilization has {bal} gold.")
-        except Exception:
-            logger.exception("balance command failed")
-            await ctx.send("❌ Failed to fetch balance. No cooldown applied.")
-
-    @commands.command()
-    async def profile(self, ctx, user: Optional[str] = None):
-        try:
-            target_id = str(ctx.author.id) if user is None else str(user)
-            if not self.user_has_civ(target_id):
-                await ctx.send("User does not have a civilization.")
-                return
-            civ = self.manager._get_civ(target_id)
-            if not civ:
-                await ctx.send("Could not load civilization.")
-                return
-            resources = civ.get("resources", {})
-            gold = resources.get("gold", 0)
-            name = civ.get("name", "Unknown")
-            await ctx.send(f"👤 {name}\n💰 Gold: {gold}\nOther resources: {resources}")
-        except Exception:
-            logger.exception("profile command failed")
-            await ctx.send("❌ Failed to fetch profile. No cooldown applied.")
+    # ---------------- Commands (balance & profile removed) ----------------
 
     @commands.command()
     async def extrainventory(self, ctx):
