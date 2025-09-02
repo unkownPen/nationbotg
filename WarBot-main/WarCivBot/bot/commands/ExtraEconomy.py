@@ -1,625 +1,928 @@
-import random
-import guilded
+"""
+ExtraEconomy cog (renamed store/inventory/cards -> extrastore/extrainventory/extracards)
+
+This replaces the previous commands:
+ - shop / buy  -> .extrastore [buy <item>]
+ - inventory   -> .extrainventory
+ - cards       -> .extracards <amount>
+
+Behavior notes (keeps previous logic):
+ - Cooldowns: most commands 60s, extrawork 300s. Cooldowns are applied only on
+   successful completion (missing args or errors do NOT set cooldown).
+ - Currency: uses civ.resources.gold via bot.civ_manager or Database; falls back to JSON.
+ - Inventory persistence uses DB methods if available.
+ - extrastore supports:
+     .extrastore                -> shows store
+     .extrastore buy <item>     -> purchase item (1m cd on success)
+ - extracards mirrors previous cards mini-game.
+
+Install:
+ - Drop this file into WarBot-main/WarCivBot/bot/commands/ExtraEconomy.py
+ - Restart the bot.
+
+"""
+from __future__ import annotations
+
 import os
-import aiohttp
+import json
+import random
+import time
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from collections import defaultdict, deque
+from threading import Lock
+from typing import Dict, Any, Optional, List
+
 from guilded.ext import commands
-from bot.utils import format_number, get_ascii_art, create_embed
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-# Constants
-MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges per user
-CONVERSATION_TIMEOUT = 1800  # 30 minutes in seconds
+try:
+    from bot.database import Database  # type: ignore
+except Exception:
+    Database = None  # type: ignore
 
-class BasicCommands(commands.Cog):
-    def __init__(self, bot):
+
+class EconomyManager:
+    def __init__(self, storage_dir: str = ".", db: Optional[Any] = None, bot: Optional[commands.Bot] = None):
+        self.db = db
         self.bot = bot
-        self.db = bot.db
-        self.civ_manager = bot.civ_manager
-        self.openrouter_key = os.getenv('OPENROUTER')
-        self.openai_key = os.getenv('OPENAI_API_KEY')  # fallback option
-        self.current_model = "deepseek/deepseek-chat"
-        self.model_switch_time = None
-        self.rate_limited = False
-        
-        # Conversation tracking
-        self.conversations = defaultdict(deque)  # user_id: deque of messages
-        self.last_interaction = {}  # user_id: timestamp
+        self.storage_dir = storage_dir
+        self.lock = Lock()
 
-    def _get_conversation_history(self, user_id):
-        """Get formatted conversation history for a user"""
-        history = []
-        for msg in self.conversations[user_id]:
-            history.append({
-                "role": "user" if msg['is_user'] else "assistant",
-                "content": msg['content']
-            })
-        return history
+        os.makedirs(storage_dir, exist_ok=True)
+        self.DATA_FALLBACK = os.path.join(storage_dir, "civ_gold_fallback.json")
+        if not os.path.exists(self.DATA_FALLBACK):
+            with open(self.DATA_FALLBACK, "w") as f:
+                json.dump({}, f)
+        self._load_fallback()
 
-    def _update_conversation(self, user_id, is_user, content):
-        """Update conversation history for a user"""
-        now = datetime.now()
-        self.last_interaction[user_id] = now
-        
-        # Add new message to history
-        self.conversations[user_id].append({
-            "is_user": is_user,
-            "content": content,
-            "timestamp": now
-        })
-        
-        # Trim old messages if needed
-        while len(self.conversations[user_id]) > MAX_CONVERSATION_HISTORY * 2:
-            self.conversations[user_id].popleft()
-            
-        # Clean up expired conversations
-        expired_users = []
-        for uid, last_time in list(self.last_interaction.items()):
-            if (now - last_time).total_seconds() > CONVERSATION_TIMEOUT:
-                expired_users.append(uid)
-                
-        for uid in expired_users:
-            try:
-                del self.conversations[uid]
-                del self.last_interaction[uid]
-            except KeyError:
-                pass
-
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        """Respond to mentions with AI assistance"""
-        # Skip if message is from bot
-        try:
-            if message.author.bot:
-                return
-        except Exception:
-            # If message object doesn't have .author or .bot attribute as expected, bail
-            return
-            
-        user_id = str(message.author.id)
-        content = (message.content or "").strip()
-        
-        # Check if this is a reply to the bot
-        is_reply = False
-        if getattr(message, "replied_to", None):
-            try:
-                # guilded's fetch may differ; attempt to get the replied_to author id safely
-                replied = message.replied_to
-                if getattr(replied, "author", None) and getattr(replied.author, "id", None) == self.bot.user.id:
-                    is_reply = True
-                else:
-                    # Best-effort fetch if possible
-                    try:
-                        replied_msg = await message.channel.fetch_message(message.replied_to.id)
-                        if replied_msg and getattr(replied_msg.author, "id", None) == self.bot.user.id:
-                            is_reply = True
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        
-        # Check if our bot is mentioned
-        bot_mentioned = False
-        try:
-            mentions = getattr(message, "mentions", []) or []
-            bot_mentioned = any((getattr(u, "id", None) == self.bot.user.id) for u in mentions)
-        except Exception:
-            bot_mentioned = False
-        
-        # Only respond to direct mentions or replies to our messages
-        if not (bot_mentioned or is_reply):
-            return
-            
-        # Handle mentions
-        if bot_mentioned:
-            # Remove mention text if present
-            try:
-                content = content.replace(f'<@{self.bot.user.id}>', '').strip()
-            except Exception:
-                pass
-            
-        # Reset conversation if it's a new mention (not a reply)
-        if bot_mentioned and not is_reply:
-            self.conversations[user_id] = deque()
-            self.last_interaction[user_id] = datetime.now()
-            
-        # Handle empty content
-        if not content:
-            if bot_mentioned:
-                # Default response for just a mention
-                try:
-                    await message.reply(embed=create_embed(
-                        "🤖 NationBot Assistant",
-                        "Hello! I'm here to help you with NationBot. Ask me about:\n"
-                        "- Starting your civilization (`.start`)\n"
-                        "- Managing resources (`.status`)\n"
-                        "- Military commands (`.warhelp`)\n"
-                        "- Ideologies and strategies\n\n"
-                        "Try asking: 'How do I declare war?' or 'What does fascism do?'",
-                        guilded.Color.blue()
-                    ))
-                    self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
-                except Exception:
-                    logger.exception("Failed to send default mention reply")
-            return
-            
-        # Get user's civilization status for context
-        civ = None
-        try:
-            civ = self.civ_manager.get_civilization(user_id)
-        except Exception:
-            logger.exception("Failed to fetch civ for context")
-            civ = None
-
-        civ_status = ""
-        if civ:
-            try:
-                civ_status = (
-                    f"Player's Civilization: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
-                    f"Resources: 🪙{format_number(civ['resources'].get('gold',0))} "
-                    f"🌾{format_number(civ['resources'].get('food',0))} "
-                    f"🪨{format_number(civ['resources'].get('stone',0))} "
-                    f"🪵{format_number(civ['resources'].get('wood',0))}\n"
-                    f"Military: ⚔️{format_number(civ['military'].get('soldiers',0))} "
-                    f"🕵️{format_number(civ['military'].get('spies',0))}\n"
-                )
-            except Exception:
-                civ_status = ""
-        
-        # Prepare system prompt
-        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
-Players build civilizations, manage resources, wage wars, and form alliances. 
-Your role is to help players understand game mechanics and strategies.
-
-{civ_status}
-Key Game Concepts:
-- Resources: gold, food, stone, wood
-- Military: soldiers, spies, tech_level
-- Population: citizens, happiness, hunger
-- Territory: land_size
-- Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist
-
-BasicCommands:
-  ideology      Choose your civilization's government ideology
-  start         Start a new civilization with a cinematic intro
-  status        View your civilization status
-  warhelp       Display help information
-
-EconomyCommands: (short)
-  extrawork, extrastore, extrainventory, extragamble, extracards, slots, blackjack, give, setbalance
-
-MilitaryCommands & Diplomacy:
-  Use `.warhelp Military` or `.warhelp Diplomacy` to see full lists.
-
-You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
-If asked about non-game topics, politely decline. Use brief Discord-style formatting.
-Address the player as 'President' and keep a confident, commanding tone.
-When appropriate, include tactical suggestions and short examples.
-"""
-        
-        # Generate AI response with conversation history
-        try:
-            # Build messages with conversation history
-            messages = [{"role": "system", "content": system_prompt}]
-            
-            # Add conversation history if available
-            if user_id in self.conversations and self.conversations[user_id]:
-                history = self._get_conversation_history(user_id)
-                messages.extend(history)
-            
-            # Add current user message
-            messages.append({"role": "user", "content": content})
-            
-            # Generate response
-            response = await self.generate_ai_response(messages)
-            
-            # Send response and update conversation
-            try:
-                await message.reply(response)
-            except Exception:
-                # fallback to sending as plain text if reply fails
-                try:
-                    await message.channel.send(response)
-                except Exception:
-                    logger.exception("Failed to send AI response to channel")
-            self._update_conversation(user_id, True, content)
-            self._update_conversation(user_id, False, response)
-        except Exception as e:
-            logger.error(f"AI response error: {e}", exc_info=True)
-            try:
-                await message.reply("I'm having trouble thinking right now. Please try again later!")
-            except Exception:
-                pass
-
-    async def generate_ai_response(self, messages):
-        """Generate response using OpenRouter API or fallback to OpenAI (if configured)"""
-        # PRIORITY: OpenRouter (OPENROUTER) -> OpenAI (OPENAI_API_KEY) -> local fallback message
-        # messages should be a list of dicts with 'role' and 'content'
-        headers = {}
-        # Try OpenRouter first
-        if self.openrouter_key:
-            headers = {
-                "Authorization": f"Bearer {self.openrouter_key}",
-                "Content-Type": "application/json"
-            }
-            # Check model switch due to rate limiting
-            if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
-                model = "moonshotai/kimi-k2:free"
-            else:
-                model = self.current_model
-                self.rate_limited = False
-
-            payload = {
-                "model": model,
-                "messages": messages,
-                "max_tokens": 500
-            }
-
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post("https://openrouter.ai/api/v1/chat/completions",
-                                            headers=headers, json=payload, timeout=60) as response:
-                        text = await response.text()
-                        if response.status == 200:
-                            data = await response.json()
-                            # OpenRouter follows a similar structure
-                            return data['choices'][0]['message']['content']
-                        elif response.status == 429:
-                            # Rate limited: switch to fallback model for 24 hours
-                            self.rate_limited = True
-                            self.model_switch_time = datetime.now() + timedelta(hours=24)
-                            logger.warning("OpenRouter rate limited; switching to fallback model for 24 hours")
-                            # Retry with fallback model once
-                            payload["model"] = "moonshotai/kimi-k2:free"
-                            async with session.post("https://openrouter.ai/api/v1/chat/completions",
-                                                    headers=headers, json=payload, timeout=60) as fallback_response:
-                                if fallback_response.status == 200:
-                                    data = await fallback_response.json()
-                                    return data['choices'][0]['message']['content']
-                                else:
-                                    errtxt = await fallback_response.text()
-                                    raise Exception(f"Fallback model failed: {fallback_response.status} - {errtxt}")
-                        else:
-                            raise Exception(f"OpenRouter API error {response.status}: {text}")
-            except Exception as e:
-                logger.exception("OpenRouter failed, will try OpenAI if available")
-                # Fall through to OpenAI fallback
-        # Try OpenAI if available
-        if self.openai_key:
-            headers = {
-                "Authorization": f"Bearer {self.openai_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "gpt-3.5-turbo",
-                "messages": messages,
-                "max_tokens": 500,
-                "temperature": 0.7
-            }
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post("https://api.openai.com/v1/chat/completions",
-                                            headers=headers, json=payload, timeout=60) as response:
-                        text = await response.text()
-                        if response.status == 200:
-                            data = await response.json()
-                            return data['choices'][0]['message']['content']
-                        else:
-                            raise Exception(f"OpenAI API error {response.status}: {text}")
-            except Exception:
-                logger.exception("OpenAI request failed")
-        # No API keys configured or all attempts failed
-        logger.error("No configured AI provider available or all providers failed")
-        return ("⚠️ AI is unavailable right now. Please make sure the bot has an API key set "
-                "via the OPENROUTER or OPENAI_API_KEY environment variable, and try again later.")
-
-    @commands.command(name='start')
-    async def start_civilization(self, ctx, civ_name: str = None):
-        """Start a new civilization with a cinematic intro"""
-        if not civ_name:
-            await ctx.send("❌ Please provide a civilization name: `.start <civilization_name>`")
-            return
-            
-        user_id = str(ctx.author.id)
-        
-        # Check if user already has a civilization
-        if self.civ_manager.get_civilization(user_id):
-            await ctx.send("❌ You already have a civilization! Use `.status` to view it.")
-            return
-            
-        # Show cinematic intro
-        intro_art = get_ascii_art("civilization_start")
-        
-        # Random founding event
-        founding_events = [
-            ("🏛️ **Golden Dawn**: Your people discovered ancient gold deposits!", {"gold": 200}),
-            ("🌾 **Fertile Lands**: Blessed with rich soil for farming!", {"food": 300}),
-            ("🏗️ **Master Builders**: Your citizens are natural architects!", {"stone": 150, "wood": 150}),
-            ("👥 **Population Boom**: Word of your great leadership spreads!", {"population": 50}),
-            ("⚡ **Lightning Strike**: A divine sign brings good fortune!", {"gold": 100, "happiness": 20})
-        ]
-        
-        event_text, bonus_resources = random.choice(founding_events)
-        
-        # Special name bonuses
-        name_bonuses = {}
-        special_message = ""
-        if "ink" in civ_name.lower():
-            name_bonuses["luck_bonus"] = 5
-            special_message = "🖋️ *The pen will never forget your work.* (+5% luck)"
-        elif "pen" in civ_name.lower():
-            name_bonuses["diplomacy_bonus"] = 5
-            special_message = "🖋️ *The pen is mightier than the sword.* (+5% diplomacy success)"
-            
-        # 5% chance for random HyperItem
-        hyper_item = None
-        if random.random() < 0.05:
-            common_items = ["Lucky Charm", "Propaganda Kit", "Mercenary Contract"]
-            hyper_item = random.choice(common_items)
-            
-        # Create civilization
-        self.civ_manager.create_civilization(user_id, civ_name, bonus_resources, name_bonuses, hyper_item)
-        
-        # Send intro message
-        embed = guilded.Embed(
-            title=f"🏛️ The Founding of {civ_name}",
-            description=f"{intro_art}\n\n{event_text}\n{special_message}",
-            color=0x00ff00
-        )
-        
-        if hyper_item:
-            embed.add_field(
-                name="🎁 Rare Discovery!",
-                value=f"Your scouts found a **{hyper_item}**! This powerful item unlocks special abilities.",
-                inline=False
-            )
-            
-        embed.add_field(
-            name="📋 Next Step",
-            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist",
-            inline=False
-        )
-        
-        await ctx.send(embed=embed)
-
-    @commands.command(name='ideology')
-    async def choose_ideology(self, ctx, ideology_type: str = None):
-        """Choose your civilization's government ideology"""
-        if not ideology_type:
-            ideologies = {
-                "fascism": "+25% soldier training speed, -15% diplomacy success, -10% luck",
-                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
-                "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
-                "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
-                "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
-                # NEW IDEOLOGIES
-                "destruction": "+35% combat strength, +40% soldier training, -25% resources, -30% happiness, -50% diplomacy",
-                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy"
-            }
-            
-            embed = guilded.Embed(title="🏛️ Government Ideologies", color=0x0099ff)
-            for name, description in ideologies.items():
-                embed.add_field(name=name.capitalize(), value=description, inline=False)
-            embed.add_field(name="Usage", value="`.ideology <type>`", inline=False)
-            
-            await ctx.send(embed=embed)
-            return
-            
-        user_id = str(ctx.author.id)
-        civ = self.civ_manager.get_civilization(user_id)
-        
-        if not civ:
-            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
-            return
-            
-        if civ.get('ideology'):
-            await ctx.send("❌ You have already chosen an ideology! It cannot be changed.")
-            return
-            
-        ideology_type = ideology_type.lower()
-        # UPDATED valid ideologies list
-        valid_ideologies = ["fascism", "democracy", "communism", "theocracy", "anarchy", "destruction", "pacifist"]
-        
-        if ideology_type not in valid_ideologies:
-            await ctx.send(f"❌ Invalid ideology! Choose from: {', '.join(valid_ideologies)}")
-            return
-            
-        # Apply ideology
-        self.civ_manager.set_ideology(user_id, ideology_type)
-        
-        ideology_descriptions = {
-            "fascism": "⚔️ **Fascism**: Your military grows strong, but diplomacy suffers.",
-            "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
-            "communism": "🏭 **Communism**: Workers unite for the collective good.",
-            "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
-            "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
-            # NEW IDEOLOGY DESCRIPTIONS
-            "destruction": "💥 **Destruction**: Y o u. m o n s t e r.",
-            "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony."
+        # keep ephemeral shop config
+        self.shop_items = {
+            "ak": {"price": 500, "stock": 5},
+            "ammo": {"price": 100, "stock": 10},
+            "glock17": {"price": 800, "stock": 5},
+            "crypto_miner": {"price": 4000, "stock": 2}
         }
-        
-        embed = guilded.Embed(
-            title=f"🏛️ Ideology Chosen: {ideology_type.capitalize()}",
-            description=ideology_descriptions[ideology_type],
-            color=0x00ff00
-        )
-        embed.add_field(
-            name="✅ Civilization Complete!",
-            value="Your civilization is now ready. Use `.status` to view your progress and `.warhelp` for available commands.",
-            inline=False
-        )
-        
-        await ctx.send(embed=embed)
 
-    @commands.command(name='status')
-    async def civilization_status(self, ctx):
-        """View your civilization status"""
-        user_id = str(ctx.author.id)
-        civ = self.civ_manager.get_civilization(user_id)
-        
-        if not civ:
-            await ctx.send("❌ You don't have a civilization yet! Use `.start <name>` to begin.")
+    def _load_fallback(self):
+        try:
+            with open(self.DATA_FALLBACK, "r") as f:
+                self.fallback_gold = json.load(f) or {}
+        except Exception:
+            logger.exception("Failed to load fallback gold file")
+            self.fallback_gold = {}
+
+    def _save_fallback(self):
+        try:
+            with open(self.DATA_FALLBACK, "w") as f:
+                json.dump(self.fallback_gold, f, indent=2)
+        except Exception:
+            logger.exception("Failed to save fallback gold file")
+
+    # civ lookup / persist helpers
+    def _get_civ_via_bot(self, user_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            if self.bot and hasattr(self.bot, "civ_manager") and self.bot.civ_manager:
+                return self.bot.civ_manager.get_civilization(str(user_id))
+        except Exception:
+            logger.exception("Error calling bot.civ_manager.get_civilization")
+        return None
+
+    def _get_civ_via_db(self, user_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            if self.db and hasattr(self.db, "get_civilization"):
+                return self.db.get_civilization(str(user_id))
+        except Exception:
+            logger.exception("Error calling Database.get_civilization")
+        return None
+
+    def _update_civ_via_bot(self, user_id: str, civ: Dict[str, Any]) -> bool:
+        try:
+            if self.bot and hasattr(self.bot, "civ_manager") and self.bot.civ_manager:
+                if hasattr(self.bot.civ_manager, "update_civilization"):
+                    return self.bot.civ_manager.update_civilization(str(user_id), civ)
+        except Exception:
+            logger.exception("Error calling bot.civ_manager.update_civilization")
+        return False
+
+    def _update_civ_via_db(self, user_id: str, civ: Dict[str, Any]) -> bool:
+        try:
+            if self.db and hasattr(self.db, "update_civilization"):
+                return self.db.update_civilization(str(user_id), civ)
+        except Exception:
+            logger.exception("Error calling Database.update_civilization")
+        return False
+
+    def _get_civ(self, user_id: str) -> Optional[Dict[str, Any]]:
+        civ = self._get_civ_via_bot(user_id)
+        if civ:
+            return civ
+        civ = self._get_civ_via_db(user_id)
+        if civ:
+            return civ
+        return None
+
+    def _persist_civ(self, user_id: str, civ: Dict[str, Any]) -> bool:
+        if self._update_civ_via_bot(user_id, civ):
+            return True
+        if self._update_civ_via_db(user_id, civ):
+            return True
+        return False
+
+    # gold operations (store gold on civ.resources.gold)
+    def get_gold(self, user_id: str) -> int:
+        try:
+            civ = self._get_civ(user_id)
+            if civ:
+                resources = civ.get("resources", {})
+                return int(resources.get("gold", 0))
+        except Exception:
+            logger.exception("get_gold via civ failed")
+        return int(self.fallback_gold.get(str(user_id), 0))
+
+    def set_gold(self, user_id: str, amount: int) -> bool:
+        user_id = str(user_id)
+        try:
+            civ = self._get_civ(user_id)
+            if civ is not None:
+                resources = civ.get("resources", {})
+                resources["gold"] = int(amount)
+                civ["resources"] = resources
+                if self._persist_civ(user_id, civ):
+                    return True
+            self.fallback_gold[user_id] = int(amount)
+            self._save_fallback()
+            return True
+        except Exception:
+            logger.exception("set_gold failed")
+            return False
+
+    def add_gold(self, user_id: str, amount: int) -> bool:
+        user_id = str(user_id)
+        try:
+            civ = self._get_civ(user_id)
+            if civ is not None:
+                resources = civ.get("resources", {})
+                resources["gold"] = int(resources.get("gold", 0)) + int(amount)
+                civ["resources"] = resources
+                if self._persist_civ(user_id, civ):
+                    return True
+            curr = int(self.fallback_gold.get(user_id, 0))
+            self.fallback_gold[user_id] = curr + int(amount)
+            self._save_fallback()
+            return True
+        except Exception:
+            logger.exception("add_gold failed")
+            return False
+
+    def try_withdraw_gold(self, user_id: str, amount: int) -> bool:
+        user_id = str(user_id)
+        try:
+            civ = self._get_civ(user_id)
+            if civ is not None:
+                resources = civ.get("resources", {})
+                curr = int(resources.get("gold", 0))
+                if curr >= int(amount):
+                    resources["gold"] = curr - int(amount)
+                    civ["resources"] = resources
+                    if self._persist_civ(user_id, civ):
+                        return True
+                    return False
+                return False
+            curr = int(self.fallback_gold.get(user_id, 0))
+            if curr >= int(amount):
+                self.fallback_gold[user_id] = curr - int(amount)
+                self._save_fallback()
+                return True
+            return False
+        except Exception:
+            logger.exception("try_withdraw_gold failed")
+            return False
+
+    # inventory/products wrappers (DB-backed)
+    def get_inventory(self, user_id: str) -> List[str]:
+        try:
+            if self.db and hasattr(self.db, "get_inventory"):
+                return list(self.db.get_inventory(str(user_id)) or [])
+        except Exception:
+            logger.debug("db.get_inventory not used")
+        return []
+
+    def update_inventory(self, user_id: str, items: List[str]) -> None:
+        try:
+            if self.db and hasattr(self.db, "update_inventory"):
+                return self.db.update_inventory(str(user_id), items)
+        except Exception:
+            logger.debug("db.update_inventory not used")
+
+    def get_products(self, user_id: str) -> Dict[str, Any]:
+        try:
+            if self.db and hasattr(self.db, "get_products"):
+                return dict(self.db.get_products(str(user_id)) or {})
+        except Exception:
+            logger.debug("db.get_products not used")
+        return {}
+
+    def update_products(self, user_id: str, products: Dict[str, Any]) -> None:
+        try:
+            if self.db and hasattr(self.db, "update_products"):
+                return self.db.update_products(str(user_id), products)
+        except Exception:
+            logger.debug("db.update_products not used")
+
+
+class EconomyCog(commands.Cog):
+    def __init__(self, bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
+        self.bot = bot
+        self.manager = EconomyManager(storage_dir=storage_dir, db=db, bot=bot)
+        self.cooldowns: Dict[str, Dict[str, float]] = {}
+        self.default_cd_seconds = 60
+        self.extrawork_cd_seconds = 300
+        self.coding_tasks: Dict[str, tuple] = {}
+        self.product_last_pay: Dict[str, Dict[str, float]] = {}
+        self._tasks: List[asyncio.Task] = []
+
+    async def cog_load(self):
+        loop = self.bot.loop
+        self._tasks.append(loop.create_task(self._crypto_miner_loop()))
+        self._tasks.append(loop.create_task(self._product_income_loop()))
+        self._tasks.append(loop.create_task(self._coding_loop()))
+        logger.info("EconomyCog: background tasks started")
+
+    async def cog_unload(self):
+        for t in self._tasks:
+            try:
+                t.cancel()
+            except Exception:
+                logger.exception("Failed to cancel task")
+        self._tasks.clear()
+        logger.info("EconomyCog: background tasks cancelled")
+
+    # cooldown helpers
+    def _get_last(self, cmd_name: str, user_id: str) -> float:
+        return self.cooldowns.get(cmd_name, {}).get(user_id, 0.0)
+
+    def _set_last(self, cmd_name: str, user_id: str, ts: Optional[float] = None):
+        ts = ts or time.time()
+        self.cooldowns.setdefault(cmd_name, {})[user_id] = ts
+
+    def _is_on_cooldown(self, cmd_name: str, user_id: str, cd_seconds: int) -> Optional[int]:
+        last = self._get_last(cmd_name, user_id)
+        if last == 0.0:
+            return None
+        elapsed = time.time() - last
+        if elapsed >= cd_seconds:
+            return None
+        return int(cd_seconds - elapsed)
+
+    # civ checks
+    def _user_has_civ_via_bot(self, user_id: str) -> bool:
+        try:
+            if hasattr(self.bot, "civ_manager") and self.bot.civ_manager:
+                civ = self.bot.civ_manager.get_civilization(str(user_id))
+                return civ is not None
+        except Exception:
+            logger.exception("Error checking civ via bot.civ_manager")
+        return False
+
+    def _user_has_civ_via_db(self, user_id: str) -> bool:
+        try:
+            if self.manager.db and hasattr(self.manager.db, "get_civilization"):
+                civ = self.manager.db.get_civilization(str(user_id))
+                return civ is not None
+        except Exception:
+            logger.exception("Error checking civ via Database.get_civilization")
+        return False
+
+    def user_has_civ(self, user_id: str) -> bool:
+        if self._user_has_civ_via_bot(user_id):
+            return True
+        if self._user_has_civ_via_db(user_id):
+            return True
+        return False
+
+    async def require_civ(self, ctx) -> bool:
+        uid = str(ctx.author.id)
+        if not self.user_has_civ(uid):
+            await ctx.send("🚫 You need a civilization to use that command. Create one using your civ commands.")
+            return False
+        return True
+
+    # background loops (simplified: product/miner/coding)
+    async def _crypto_miner_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(3600)
+                inv_map = {}
+                try:
+                    if self.manager.db and hasattr(self.manager.db, "get_all_inventories"):
+                        inv_map = self.manager.db.get_all_inventories()
+                except Exception:
+                    inv_map = {}
+                try:
+                    for suid, items in list(inv_map.items()):
+                        if not isinstance(items, list):
+                            continue
+                        miner_count = sum(1 for i in items if i == "crypto_miner")
+                        if miner_count > 0:
+                            self.manager.add_gold(suid, 200 * miner_count)
+                except Exception:
+                    logger.exception("crypto miner loop error")
+        except asyncio.CancelledError:
             return
-            
-        # Create status embed
-        embed = guilded.Embed(
-            title=f"🏛️ {civ['name']}",
-            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}",
-            color=0x0099ff
-        )
-        
-        # Resources
-        resources = civ['resources']
-        embed.add_field(
-            name="💰 Resources",
-            value=f"🪙 Gold: {format_number(resources['gold'])}\n🌾 Food: {format_number(resources['food'])}\n🪨 Stone: {format_number(resources['stone'])}\n🪵 Wood: {format_number(resources['wood'])}",
-            inline=True
-        )
-        
-        # Population & Military
-        population = civ['population']
-        military = civ['military']
-        embed.add_field(
-            name="👥 Population & Military",
-            value=f"👤 Citizens: {format_number(population['citizens'])}\n😊 Happiness: {population['happiness']}%\n🍽️ Hunger: {population['hunger']}%\n⚔️ Soldiers: {format_number(military['soldiers'])}\n🕵️ Spies: {format_number(military['spies'])}\n🔬 Tech Level: {military['tech_level']}",
-            inline=True
-        )
-        
-        # Territory & Items
-        territory = civ['territory']
-        hyper_items = civ.get('hyper_items', [])
-        embed.add_field(
-            name="🗺️ Territory & Items",
-            value=f"🏞️ Land Size: {format_number(territory['land_size'])} km²\n🎁 HyperItems: {len(hyper_items)}\n{chr(10).join(f'• {item}' for item in hyper_items[:5])}" + ("..." if len(hyper_items) > 5 else ""),
-            inline=True
-        )
-        
-        await ctx.send(embed=embed)
 
-    @commands.command(name='warhelp')
-    async def warbot_help_command(self, ctx, category: str = None):
-        """Display comprehensive help information"""
-        embed = guilded.Embed(
-            title="🤖 NationBot Command Encyclopedia",
-            description="Every command available in NationBot. Use `.warhelp <category>` for specific help.\n"
-                        "Example: `.warhelp Military` or `.warhelp Economy`",
-            color=0x1e90ff
-        )
-        
-        # BASIC COMMANDS
-        basic_commands = """
-**🏛️ BASIC COMMANDS**
-• `.start <name>` - Found your civilization with a cinematic intro
-• `.status` - View your empire's complete status
-• `.ideology <type>` - Choose government (fascism/democracy/communism/theocracy/anarchy/destruction/pacifist)
-• `.warhelp` - Show this help menu
-• `@NationBot <question>` - Ask the AI assistant anything about the game
-"""
+    async def _product_income_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(3600)
+                now = time.time()
+                prod_map = {}
+                try:
+                    if self.manager.db and hasattr(self.manager.db, "get_all_products"):
+                        prod_map = self.manager.db.get_all_products()
+                except Exception:
+                    prod_map = {}
+                try:
+                    for suid, prods in list(prod_map.items()):
+                        if not isinstance(prods, dict):
+                            continue
+                        if "messenger" in prods:
+                            state = prods["messenger"]
+                            last = self.product_last_pay.get(suid, {}).get("messenger", 0)
+                            if state == "viral":
+                                interval = 18000
+                                if now - last >= interval:
+                                    payout = random.randint(1000, 5000)
+                                    self.manager.add_gold(suid, payout)
+                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
+                            else:
+                                interval = 10800
+                                if now - last >= interval:
+                                    self.manager.add_gold(suid, 10)
+                                    self.product_last_pay.setdefault(suid, {})["messenger"] = now
+                except Exception:
+                    logger.exception("product income loop error")
+        except asyncio.CancelledError:
+            return
 
-        # ECONOMY COMMANDS
-        economy_commands = """
-**💰 ECONOMY COMMANDS**
-• `.farm` - Farm food (5 min cooldown)
-• `.mine` - Mine stone and wood (5 min cooldown)
-• `.fish` - Fish for food or occasionally find treasure (5 min cooldown)
-• `.gather` - Gather random resources (10 min cooldown)
-• `.harvest` - Large harvest (30 min cooldown)
-• `.tax` - Collect taxes from your citizens
-• `.invest <amount>` - Invest gold for 2x return after 1 hour
-• `.lottery <amount>` - Gamble gold for jackpot chance
-• `.work` - Citizens work for immediate gold
-• `.drive` - Unemploy citizens to free them for other tasks
-• `.cheer` - Boost citizen happiness slightly
-• `.festival` - Grand festival for major happiness boost
-• `.raidcaravan` - Attack NPC merchants for loot
-"""
+    async def _coding_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(30)
+                now = time.time()
+                finished = []
+                for suid, task in list(self.coding_tasks.items()):
+                    proj, finish_ts = task
+                    if now >= finish_ts:
+                        finished.append((suid, proj))
+                for suid, proj in finished:
+                    if proj == "website":
+                        self.manager.add_gold(suid, random.randint(50, 150))
+                    elif proj == "virus":
+                        if random.random() < 0.25:
+                            logger.debug(f"Virus coder {suid} got caught.")
+                        else:
+                            self.manager.add_gold(suid, random.randint(250, 763))
+                    elif proj == "messenger":
+                        prods = self.manager.get_products(suid)
+                        prods["messenger"] = "viral" if random.random() < 0.45 else "flop"
+                        self.manager.update_products(suid, prods)
+                    self.coding_tasks.pop(suid, None)
+        except asyncio.CancelledError:
+            return
 
-        # MILITARY COMMANDS
-        military_commands = """
-**⚔️ MILITARY COMMANDS**
-• `.train soldiers|spies <amount>` - Train military units
-• `.find` - Recruit wandering soldiers
-• `.declare @user` - Formally declare war
-• `.attack @user` - Launch direct attack
-• `.siege @user` - Lay siege to enemy territory
-• `.stealthbattle @user` - Covert military operation
-• `.cards` - View/manage technology cards
-• `.accept_peace @user` - Accept peace offer
-• `.peace @user` - Offer peace treaty
-"""
+    # ---------------- UI helpers ----------------
+    def build_store_display(self) -> str:
+        lines = ["🛒 Current Store Stock:"]
+        for name, data in self.manager.shop_items.items():
+            extra = " ⛏️ $200/hour" if name == "crypto_miner" else ""
+            lines.append(f"- {name.upper()} ({data['price']} gold) — {data['stock']} in stock{extra}")
+        lines.append("\nBuy items with .extrastore buy <item>")
+        return "\n".join(lines)
 
-        # DIPLOMACY COMMANDS
-        diplomacy_commands = """
-**🤝 DIPLOMACY COMMANDS**
-• `.ally @user` - Propose alliance
-• `.break @user` - End alliance/peace
-• `.mail @user <message>` - Send diplomatic message
-• `.send @user <resource> <amount>` - Gift resources
-• `.inbox` - Check pending proposals
-• `.acceptally @user` - Accept alliance
-• `.rejectally @user` - Reject alliance
-• `.trade @user <offer> <request>` - Propose trade
-• `.accepttrade @user` - Accept trade
-• `.rejecttrade @user` - Reject trade
-• `.coalition @alliance` - Form coalition against alliance
-"""
+    def build_darkweb_display(self) -> str:
+        lines = ["🌑 Dark Web Market (50% scam risk):",
+                 "- forged_documents (5000 gold)",
+                 "- stolen_data (3000 gold)",
+                 "- silencer (1500 gold)",
+                 "- explosives (5000 gold)",
+                 "- crypto_miner (3500 gold)"]
+        lines.append("\nUse .darkweb <item> to attempt a purchase.")
+        return "\n".join(lines)
 
-        # HYPERITEM COMMANDS
-        hyperitem_commands = """
-**💎 HYPERITEM COMMANDS**
-• `.blackmarket` - Buy random HyperItems
-• `.inventory` - View your HyperItems
-• `.backstab @user` - Use Dagger for assassination
-• `.bomb @user` - Use Missiles for attack
-• `.boosttech` - Use Ancient Scroll to advance tech
-• `.hiremercs` - Use Mercenary Contract for soldiers
-• `.luckystrike` - Use Lucky Charm for guaranteed success
-• `.megainvent` - Use Tech Core for multiple tech levels
-• `.mintgold` - Use Gold Mint for massive gold
-• `.nuke @user` - Nuclear attack (Warhead required)
-• `.obliterate @user` - Total destruction (HyperLaser)
-• `.propaganda @user` - Use Propaganda Kit to steal soldiers
-• `.shield` - Check Anti-Nuke Shield status
-• `.superharvest` - Use Harvest Engine for food
-• `.superspy @user` - Elite espionage (Spy Network)
-"""
+    # ---------------- Commands (renamed) ----------------
+    @commands.command()
+    async def balance(self, ctx):
+        try:
+            uid = str(ctx.author.id)
+            if not await self.require_civ(ctx):
+                return
+            bal = self.manager.get_gold(uid)
+            await ctx.send(f"💰 Your civilization has {bal} gold.")
+        except Exception:
+            logger.exception("balance command failed")
+            await ctx.send("❌ Failed to fetch balance. No cooldown applied.")
 
-        # STORE COMMANDS
-        store_commands = """
-**🛒 STORE COMMANDS**
-• `.store` - View civilization upgrades
-• `.market` - Black Market information
-• `.buy <item>` - Purchase store upgrades
-"""
+    @commands.command()
+    async def profile(self, ctx, user: Optional[str] = None):
+        try:
+            target_id = str(ctx.author.id) if user is None else str(user)
+            if not self.user_has_civ(target_id):
+                await ctx.send("User does not have a civilization.")
+                return
+            civ = self.manager._get_civ(target_id)
+            if not civ:
+                await ctx.send("Could not load civilization.")
+                return
+            resources = civ.get("resources", {})
+            gold = resources.get("gold", 0)
+            name = civ.get("name", "Unknown")
+            await ctx.send(f"👤 {name}\n💰 Gold: {gold}\nOther resources: {resources}")
+        except Exception:
+            logger.exception("profile command failed")
+            await ctx.send("❌ Failed to fetch profile. No cooldown applied.")
 
-        # Extra Economy condensed help (short and playful)
-        extra_economy = (
-            "🪙 Extra Economy (quick):\n"
-            "• .balance — civ gold\n"
-            "• .extrawork — work your job (5m cd)\n"
-            "• .extrastore / .extrastore buy <item> — shop (1m cd)\n"
-            "• .extrainventory — show inventory\n"
-            "• .extragamble <amt>, .slots <amt>, .blackjack <amt>, .extracards <amt> — games (1m cd)\n"
-            "• .give <id> <amt> — transfer (1m cd), .setbalance <amt> — admin"
-        )
+    @commands.command()
+    async def extrainventory(self, ctx):
+        """Shows the user's inventory (renamed from inventory)."""
+        try:
+            uid = str(ctx.author.id)
+            if not await self.require_civ(ctx):
+                return
+            inv = self.manager.get_inventory(uid)
+            await ctx.send(f"🎒 Inventory: {', '.join(inv) if inv else 'Empty'}")
+        except Exception:
+            logger.exception("extrainventory command failed")
+            await ctx.send("❌ Failed to fetch inventory. No cooldown applied.")
 
-        # Add all categories to embed
-        embed.add_field(name="Basic", value=basic_commands, inline=False)
-        embed.add_field(name="Economy", value=economy_commands, inline=False)
-        embed.add_field(name="Military", value=military_commands, inline=False)
-        embed.add_field(name="Diplomacy", value=diplomacy_commands, inline=False)
-        embed.add_field(name="HyperItems", value=hyperitem_commands, inline=False)
-        embed.add_field(name="Store", value=store_commands, inline=False)
-        embed.add_field(name="✨ Extra Economy", value=extra_economy, inline=False)
-        
-        # Add pro tips footer
-        embed.set_footer(text="💡 Pro Tip: Combine strategies! Use HyperItems during wars, maintain happiness for productivity, and form strong alliances.")
-        
-        await ctx.send(embed=embed)
+    @commands.command()
+    async def extrastore(self, ctx, action: Optional[str] = None, item: Optional[str] = None):
+        """
+        Store command (renamed from shop/buy).
+        Usage:
+          .extrastore                 -> show store
+          .extrastore buy <item>      -> buy item
+        """
+        cmd = "extrastore"
+        uid = str(ctx.author.id)
+        try:
+            if action is None:
+                await ctx.send(self.build_store_display())
+                return
+            action = action.lower()
+            if action != "buy":
+                await ctx.send("Unknown action. Use `.extrastore` to view or `.extrastore buy <item>` to purchase. No cooldown applied.")
+                return
+            if item is None:
+                await ctx.send("Usage: .extrastore buy <item>. No cooldown applied.")
+                return
+            if not await self.require_civ(ctx):
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            key = item.lower()
+            prices = {k: v["price"] for k, v in self.manager.shop_items.items()}
+            if key not in prices:
+                await ctx.send("Item not found. No cooldown applied.")
+                return
+            price = prices[key]
+            if not self.manager.try_withdraw_gold(uid, price):
+                await ctx.send("Not enough gold. No cooldown applied.")
+                return
+            # update inventory
+            inv = self.manager.get_inventory(uid) or []
+            inv.append(key)
+            self.manager.update_inventory(uid, inv)
+            self._set_last(cmd, uid)
+            await ctx.send(f"✅ Purchased {key.upper()} for {price} gold.")
+        except Exception:
+            logger.exception("extrastore command failed")
+            await ctx.send("❌ Purchase failed. No cooldown applied.")
 
-async def setup(bot):
-    await bot.add_cog(BasicCommands(bot))
+    @commands.command()
+    async def darkweb(self, ctx, item: Optional[str] = None):
+        cmd = "darkweb"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if item is None:
+                await ctx.send(self.build_darkweb_display())
+                return
+            item = item.lower()
+            prices = {"forged_documents": 5000, "stolen_data": 3000, "silencer": 1500, "explosives": 5000, "crypto_miner": 3500}
+            if item not in prices:
+                await ctx.send("Item not available. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            price = prices[item]
+            if not self.manager.try_withdraw_gold(uid, price):
+                await ctx.send("You don't have enough gold. No cooldown applied.")
+                return
+            if random.random() < 0.5:
+                inv = self.manager.get_inventory(uid) or []
+                inv.append(item)
+                self.manager.update_inventory(uid, inv)
+                self._set_last(cmd, uid)
+                await ctx.send(f"✅ Dark web purchase succeeded: acquired {item.upper()}.")
+            else:
+                self._set_last(cmd, uid)
+                await ctx.send(f"💀 Scammed. Lost {price} gold.")
+        except Exception:
+            logger.exception("darkweb command error")
+            await ctx.send("❌ Darkweb purchase failed. No cooldown applied.")
+
+    @commands.command()
+    async def slots(self, ctx, amount: Optional[int] = None):
+        cmd = "slots"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if amount is None:
+                await ctx.send("Usage: .slots <amount>. No cooldown applied.")
+                return
+            if amount <= 0:
+                await ctx.send("Bet must be positive. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if amount > self.manager.get_gold(uid):
+                await ctx.send("You don't have enough gold. No cooldown applied.")
+                return
+            symbols = ["🍒", "🍋", "🔔", "💎", "7️⃣"]
+            result = [random.choice(symbols) for _ in range(3)]
+            if result == ["7️⃣", "7️⃣", "7️⃣"]:
+                win = amount * 10
+                self.manager.add_gold(uid, win)
+                self._set_last(cmd, uid)
+                await ctx.send(f"{' '.join(result)}\n🎉 JACKPOT! You won {win} gold!")
+            elif result.count(result[0]) == 3:
+                win = amount * 2
+                self.manager.add_gold(uid, win)
+                self._set_last(cmd, uid)
+                await ctx.send(f"{' '.join(result)}\nNice triple! You won {win} gold!")
+            else:
+                self.manager.try_withdraw_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"{' '.join(result)}\nNo win. You lost {amount} gold.")
+        except Exception:
+            logger.exception("slots command error")
+            await ctx.send("❌ Slots failed. No cooldown applied.")
+
+    @commands.command()
+    async def blackjack(self, ctx, amount: Optional[int] = None):
+        cmd = "blackjack"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if amount is None:
+                await ctx.send("Usage: .blackjack <amount>. No cooldown applied.")
+                return
+            if amount <= 0:
+                await ctx.send("Bet must be positive. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if amount > self.manager.get_gold(uid):
+                await ctx.send("Not enough gold. No cooldown applied.")
+                return
+            player = [random.randint(2, 11), random.randint(2, 11)]
+            dealer = [random.randint(2, 11), random.randint(2, 11)]
+            p, d = sum(player), sum(dealer)
+            if p > d:
+                self.manager.add_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🃏 You win! {player} ({p}) vs {dealer} ({d}) — +{amount} gold.")
+            elif p < d:
+                self.manager.try_withdraw_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🃏 Dealer wins. {player} ({p}) vs {dealer} ({d}) — you lost {amount} gold.")
+            else:
+                await ctx.send(f"🃏 Tie! {player} ({p}) vs {dealer} ({d}) — no change. No cooldown applied.")
+        except Exception:
+            logger.exception("blackjack command failed")
+            await ctx.send("❌ Blackjack failed. No cooldown applied.")
+
+    @commands.command()
+    async def extracards(self, ctx, amount: Optional[int] = None):
+        """
+        Renamed cards command -> extracards
+        Usage: .extracards <amount>
+        """
+        cmd = "extracards"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if amount is None:
+                await ctx.send("Usage: .extracards <amount>. No cooldown applied.")
+                return
+            if amount <= 0:
+                await ctx.send("Bet must be positive. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if amount > self.manager.get_gold(uid):
+                await ctx.send("Not enough gold. No cooldown applied.")
+                return
+            you = random.randint(2, 14)
+            botc = random.randint(2, 14)
+            rank = {11: "J", 12: "Q", 13: "K", 14: "A"}
+            y_label = rank.get(you, str(you))
+            b_label = rank.get(botc, str(botc))
+            if you > botc:
+                self.manager.add_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🂡 You drew {y_label}, bot drew {b_label}. You win +{amount} gold!")
+            elif you < botc:
+                self.manager.try_withdraw_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🂱 You drew {y_label}, bot drew {b_label}. You lost {amount} gold.")
+            else:
+                await ctx.send(f"🂠 Both drew {y_label}. Tie — no change. No cooldown applied.")
+        except Exception:
+            logger.exception("extracards command failed")
+            await ctx.send("❌ Cards failed. No cooldown applied.")
+
+    @commands.command()
+    async def extragamble(self, ctx, amount: Optional[int] = None):
+        cmd = "extragamble"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if amount is None:
+                await ctx.send("Usage: .extragamble <amount>. No cooldown applied.")
+                return
+            if amount <= 0:
+                await ctx.send("Bet must be positive. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if amount > self.manager.get_gold(uid):
+                await ctx.send("Not enough gold. No cooldown applied.")
+                return
+            r = random.random()
+            if r < 0.45:
+                self.manager.try_withdraw_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"💸 You lost {amount} gold.")
+            elif r < 0.90:
+                self.manager.add_gold(uid, amount)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🎉 You won {amount} gold (1x profit).")
+            else:
+                self.manager.add_gold(uid, amount * 2)
+                self._set_last(cmd, uid)
+                await ctx.send(f"🎊 JACKPOT! You won {amount * 2} gold (2x profit).")
+        except Exception:
+            logger.exception("extragamble failed")
+            await ctx.send("❌ Gambling failed. No cooldown applied.")
+
+    @commands.command()
+    async def jobs(self, ctx):
+        try:
+            roles = {
+                "bank": ["Teller", "Manager", "Executive"],
+                "police": ["Recruit", "Officer", "Captain"],
+                "security": ["Guard", "Supervisor", "Chief"],
+                "government": ["Clerk", "Minister", "President", "Prime Minister"],
+                "military": ["Private", "Sergeant", "Commander"]
+            }
+            text = ["📋 Available Jobs:"]
+            for cat, rs in roles.items():
+                text.append(f"- {cat.title()}: {', '.join(rs)}")
+            await ctx.send("\n".join(text))
+        except Exception:
+            logger.exception("jobs failed")
+            await ctx.send("❌ Failed to fetch jobs. No cooldown applied.")
+
+    @commands.command()
+    async def job(self, ctx, job_type: Optional[str] = None):
+        cmd = "job"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if job_type is None:
+                await ctx.send("Usage: .job <job_type>. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            jt = job_type.lower()
+            mapping = {
+                "bank": ["Rejected", "Teller", "Manager", "Executive"],
+                "police": ["Rejected", "Recruit", "Officer", "Captain"],
+                "security": ["Rejected", "Guard", "Supervisor", "Chief"],
+                "government": ["Rejected", "Clerk", "Minister", "President", "Prime Minister"],
+                "military": ["Rejected", "Private", "Sergeant", "Commander"]
+            }
+            if jt not in mapping:
+                await ctx.send("Invalid job type. No cooldown applied.")
+                return
+            outcome = random.choice(mapping[jt])
+            civ = self.manager._get_civ(uid)
+            if civ is not None:
+                try:
+                    civ['job'] = outcome
+                    self.manager._persist_civ(uid, civ)
+                except Exception:
+                    logger.debug("Could not persist job on civ")
+            self._set_last(cmd, uid)
+            if outcome == "Rejected":
+                await ctx.send(f"😢 Application for {jt.title()} was rejected.")
+            else:
+                await ctx.send(f"🎉 You are now a {outcome} in {jt.title()}.")
+        except Exception:
+            logger.exception("job failed")
+            await ctx.send("❌ Job application failed. No cooldown applied.")
+
+    @commands.command()
+    async def extrawork(self, ctx):
+        cmd = "extrawork"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.extrawork_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            civ = self.manager._get_civ(uid)
+            job_name = "Unemployed"
+            if civ is not None:
+                job_name = civ.get("job", job_name)
+            if job_name == "Unemployed":
+                await ctx.send("You need a job to work. Use .job to get one. No cooldown applied.")
+                return
+            salary_map = {
+                "Teller": 100, "Manager": 200, "Executive": 300,
+                "Recruit": 150, "Officer": 250, "Captain": 350,
+                "Guard": 120, "Supervisor": 220, "Chief": 320,
+                "Clerk": 180, "Minister": 280, "President": 500, "Prime Minister": 600,
+                "Private": 130, "Sergeant": 230, "Commander": 330
+            }
+            salary = salary_map.get(job_name, 50)
+            self.manager.add_gold(uid, salary)
+            self._set_last(cmd, uid)
+            bal = self.manager.get_gold(uid)
+            await ctx.send(f"💼 You earned {salary} gold as a {job_name}. Civ gold: {bal}.")
+        except Exception:
+            logger.exception("extrawork failed")
+            await ctx.send("❌ Work failed. No cooldown applied.")
+
+    @commands.command()
+    async def arrest(self, ctx, target: Optional[str] = None):
+        cmd = "arrest"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if target is None:
+                await ctx.send("Usage: .arrest <target_user_id>. No cooldown applied.")
+                return
+            civ = self.manager._get_civ(uid)
+            job = civ.get("job", "") if civ else ""
+            if job.lower() not in ["recruit", "officer", "captain", "police"]:
+                await ctx.send("🚫 Only police can arrest criminals. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if random.random() < 0.6:
+                if self.manager.try_withdraw_gold(target, 200):
+                    self.manager.add_gold(uid, 200)
+                    self._set_last(cmd, uid)
+                    await ctx.send(f"🚓 Arrested {target} and seized 200 gold!")
+                else:
+                    self._set_last(cmd, uid)
+                    await ctx.send(f"🚓 Arrested {target} but they had no funds.")
+            else:
+                await ctx.send("❌ Arrest failed. No cooldown applied.")
+        except Exception:
+            logger.exception("arrest failed")
+            await ctx.send("❌ Arrest failed due to an error. No cooldown applied.")
+
+    @commands.command()
+    async def rob(self, ctx, target: Optional[str] = None):
+        cmd = "rob"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if target is None:
+                await ctx.send("Usage: .rob <target_user_id>. No cooldown applied.")
+                return
+            civ = self.manager._get_civ(uid)
+            job = civ.get("job", "") if civ else ""
+            if job.lower() in ["teller", "manager", "executive", "recruit", "officer", "captain",
+                               "guard", "supervisor", "chief", "clerk", "minister", "president",
+                               "prime minister", "private", "sergeant", "commander"]:
+                await ctx.send("🚫 Only criminals can rob others. No cooldown applied.")
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            if random.random() < 0.5:
+                stolen = random.randint(100, 300)
+                if self.manager.try_withdraw_gold(target, stolen):
+                    self.manager.add_gold(uid, stolen)
+                    self._set_last(cmd, uid)
+                    await ctx.send(f"💸 Robbed {target} for {stolen} gold!")
+                else:
+                    await ctx.send("Target has insufficient funds. No cooldown applied.")
+            else:
+                await ctx.send("❌ Robbery failed. No cooldown applied.")
+        except Exception:
+            logger.exception("rob failed")
+            await ctx.send("❌ Rob failed due to an error. No cooldown applied.")
+
+    @commands.command()
+    async def code(self, ctx, project: Optional[str] = None):
+        cmd = "code"
+        uid = str(ctx.author.id)
+        try:
+            if not await self.require_civ(ctx):
+                return
+            if project is None:
+                await ctx.send(
+                    "💻 Coding Projects:\n"
+                    ".code virus — 250 gold, finishes in ~25 min\n"
+                    ".code website — 50 gold, finishes in ~10 min\n"
+                    ".code messenger — 3500 gold, finishes in ~5 hours"
+                )
+                return
+            rem = self._is_on_cooldown(cmd, uid, self.default_cd_seconds)
+            if rem:
+                await ctx.send(f"⏳ You are on cooldown for {rem}s.")
+                return
+            p = project.lower()
+            if p == "virus":
+                cost, duration = 250, 1500
+            elif p == "website":
+                cost, duration = 50, 600
+            elif p == "messenger":
+                cost, duration = 3500, 18000
+            else:
+                await ctx.send("Unknown project. No cooldown applied.")
+                return
+            if not self.manager.try_withdraw_gold(uid, cost):
+                await ctx.send("Not enough gold. No cooldown applied.")
+                return
+            self.coding_tasks[self.manager.uid(uid)] = (p, time.time() + duration)
+            self._set_last(cmd, uid)
+            await ctx.send(f"🛠️ Started coding {p}. It will finish in approx {int(duration/60)} minutes.")
+        except Exception:
+            logger.exception("code failed")
+            await ctx.send("❌ Code command failed. No cooldown applied.")
+
+    @commands.command()
+    async def setbalance(self, ctx, amount: Optional[int] = None):
+        uid = str(ctx.author.id)
+        try:
+            allowed_ids = os.getenv("ADMIN_ALLOWED_IDS", "mpGYeq9d,mL2MM1N4").split(",")
+            if str(ctx.author.id) not in allowed_ids:
+                await ctx.send("❌ You don't have permission to use this command.")
+                return
+            if amount is None:
+                await ctx.send("Usage: .setbalance <amount>. No cooldown applied.")
+                return
+            if amount < 0:
+                await ctx.send("Amount must be non-negative. No cooldown applied.")
+                return
+            if not await self.require_civ(ctx):
+                return
+            self.manager.set_gold(uid, int(amount))
+            await ctx.send(f"✅ Civ gold set to {amount}.")
+        except Exception:
+            logger.exception("setbalance failed")
+            await ctx.send("❌ Failed to set balance. No cooldown applied.")
+
+
+def setup(bot: commands.Bot, db: Optional[Any] = None, storage_dir: str = "."):
+    cog = EconomyCog(bot, db=db, storage_dir=storage_dir)
+    bot.add_cog(cog)
+    logger.info("EconomyCog registered (ExtraEconomy).")
+
+
+__all__ = ["EconomyManager", "EconomyCog", "setup"]
