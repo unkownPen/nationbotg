@@ -21,6 +21,7 @@ class BasicCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.openrouter_key = os.getenv('OPENROUTER')
+        self.openai_key = os.getenv('OPENAI_API_KEY')  # fallback option
         self.current_model = "deepseek/deepseek-chat"
         self.model_switch_time = None
         self.rate_limited = False
@@ -57,36 +58,57 @@ class BasicCommands(commands.Cog):
             
         # Clean up expired conversations
         expired_users = []
-        for uid, last_time in self.last_interaction.items():
+        for uid, last_time in list(self.last_interaction.items()):
             if (now - last_time).total_seconds() > CONVERSATION_TIMEOUT:
                 expired_users.append(uid)
                 
         for uid in expired_users:
-            del self.conversations[uid]
-            del self.last_interaction[uid]
+            try:
+                del self.conversations[uid]
+                del self.last_interaction[uid]
+            except KeyError:
+                pass
 
     @commands.Cog.listener()
     async def on_message(self, message):
         """Respond to mentions with AI assistance"""
         # Skip if message is from bot
-        if message.author.bot:
+        try:
+            if message.author.bot:
+                return
+        except Exception:
+            # If message object doesn't have .author or .bot attribute as expected, bail
             return
             
         user_id = str(message.author.id)
-        content = message.content.strip()
+        content = (message.content or "").strip()
         
         # Check if this is a reply to the bot
         is_reply = False
-        if message.replied_to:
+        if getattr(message, "replied_to", None):
             try:
-                replied_msg = await message.channel.fetch_message(message.reply_to.id)
-                if replied_msg.author.id == self.bot.user.id:
+                # guilded's fetch may differ; attempt to get the replied_to author id safely
+                replied = message.replied_to
+                if getattr(replied, "author", None) and getattr(replied.author, "id", None) == self.bot.user.id:
                     is_reply = True
-            except:
+                else:
+                    # Best-effort fetch if possible
+                    try:
+                        replied_msg = await message.channel.fetch_message(message.replied_to.id)
+                        if replied_msg and getattr(replied_msg.author, "id", None) == self.bot.user.id:
+                            is_reply = True
+                    except Exception:
+                        pass
+            except Exception:
                 pass
         
         # Check if our bot is mentioned
-        bot_mentioned = self.bot.user.id in [user.id for user in message.mentions]
+        bot_mentioned = False
+        try:
+            mentions = getattr(message, "mentions", []) or []
+            bot_mentioned = any((getattr(u, "id", None) == self.bot.user.id) for u in mentions)
+        except Exception:
+            bot_mentioned = False
         
         # Only respond to direct mentions or replies to our messages
         if not (bot_mentioned or is_reply):
@@ -94,7 +116,11 @@ class BasicCommands(commands.Cog):
             
         # Handle mentions
         if bot_mentioned:
-            content = content.replace(f'<@{self.bot.user.id}>', '').strip()
+            # Remove mention text if present
+            try:
+                content = content.replace(f'<@{self.bot.user.id}>', '').strip()
+            except Exception:
+                pass
             
         # Reset conversation if it's a new mention (not a reply)
         if bot_mentioned and not is_reply:
@@ -105,111 +131,75 @@ class BasicCommands(commands.Cog):
         if not content:
             if bot_mentioned:
                 # Default response for just a mention
-                await message.reply(embed=create_embed(
-                    "🤖 NationBot Assistant",
-                    "Hello! I'm here to help you with NationBot. Ask me about:\n"
-                    "- Starting your civilization (`.start`)\n"
-                    "- Managing resources (`.status`)\n"
-                    "- Military commands (`.warhelp`)\n"
-                    "- Ideologies and strategies\n\n"
-                    "Try asking: 'How do I declare war?' or 'What does fascism do?'",
-                    guilded.Color.blue()
-                ))
-                self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
+                try:
+                    await message.reply(embed=create_embed(
+                        "🤖 NationBot Assistant",
+                        "Hello! I'm here to help you with NationBot. Ask me about:\n"
+                        "- Starting your civilization (`.start`)\n"
+                        "- Managing resources (`.status`)\n"
+                        "- Military commands (`.warhelp`)\n"
+                        "- Ideologies and strategies\n\n"
+                        "Try asking: 'How do I declare war?' or 'What does fascism do?'",
+                        guilded.Color.blue()
+                    ))
+                    self._update_conversation(user_id, False, "Hello! How can I assist with NationBot today?")
+                except Exception:
+                    logger.exception("Failed to send default mention reply")
             return
             
         # Get user's civilization status for context
-        civ = self.civ_manager.get_civilization(user_id)
+        civ = None
+        try:
+            civ = self.civ_manager.get_civilization(user_id)
+        except Exception:
+            logger.exception("Failed to fetch civ for context")
+            civ = None
+
         civ_status = ""
         if civ:
-            civ_status = (
-                f"Player's Civilization: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
-                f"Resources: 🪙{format_number(civ['resources']['gold'])} "
-                f"🌾{format_number(civ['resources']['food'])} "
-                f"🪨{format_number(civ['resources']['stone'])} "
-                f"🪵{format_number(civ['resources']['wood'])}\n"
-                f"Military: ⚔️{format_number(civ['military']['soldiers'])} "
-                f"🕵️{format_number(civ['military']['spies'])}\n"
-            )
+            try:
+                civ_status = (
+                    f"Player's Civilization: {civ['name']} (Ideology: {civ.get('ideology', 'none')})\n"
+                    f"Resources: 🪙{format_number(civ['resources'].get('gold',0))} "
+                    f"🌾{format_number(civ['resources'].get('food',0))} "
+                    f"🪨{format_number(civ['resources'].get('stone',0))} "
+                    f"🪵{format_number(civ['resources'].get('wood',0))}\n"
+                    f"Military: ⚔️{format_number(civ['military'].get('soldiers',0))} "
+                    f"🕵️{format_number(civ['military'].get('spies',0))}\n"
+                )
+            except Exception:
+                civ_status = ""
         
         # Prepare system prompt
-        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation Discord game. 
-        Players build civilizations, manage resources, wage wars, and form alliances. 
-        Your role is to help players understand game mechanics and strategies.
+        system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
+Players build civilizations, manage resources, wage wars, and form alliances. 
+Your role is to help players understand game mechanics and strategies.
 
-        {civ_status}
-        Key Game Concepts:
-        - Resources: gold, food, stone, wood
-        - Military: soldiers, spies, tech_level
-        - Population: citizens, happiness, hunger
-        - Territory: land_size
-        - Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist
+{civ_status}
+Key Game Concepts:
+- Resources: gold, food, stone, wood
+- Military: soldiers, spies, tech_level
+- Population: citizens, happiness, hunger
+- Territory: land_size
+- Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist
 
-        BasicCommands:
+BasicCommands:
   ideology      Choose your civilization's government ideology
   start         Start a new civilization with a cinematic intro
   status        View your civilization status
   warhelp       Display help information
-DiplomacyCommands:
-  acceptally    Accept a pending alliance proposal
-  accepttrade   Accept a pending trade proposal
-  ally          Propose an alliance with another civilization
-  break         Break your current alliance
-  coalition     Form a coalition against another alliance
-  inbox         Check your pending alliance, trade proposals, and diplomatic...
-  mail          Send a diplomatic message to another civilization
-  rejectally    Reject a pending alliance proposal
-  rejecttrade   Reject a pending trade proposal
-  send          Send resources to an ally
-  trade         Propose a resource trade with another civilization (requires...
-EconomyCommands:
-  cheer         Spread cheer to boost citizen happiness
-  drill         Extract rare minerals with advanced drilling
-  drive         Unemploy citizens, freeing them from work
-  farm          Farm food for your civilization
-  festival      Hold a grand festival to greatly boost citizen happiness
-  fish          Fish for food or occasionally find treasure
-  gather        Gather random resources from your territory
-  harvest       Large harvest with longer cooldown
-  invest        Invest gold for delayed profit
-  lottery       Gamble gold for a chance at the jackpot
-  mine          Mine stone and wood from your territory
-  raidcaravan   Raid NPC merchant caravans for loot
-  tax           Collect taxes from your citizens
-  work          Employ citizens to work and gain immediate gold
-HyperItemCommands:
-  backstab      Use Dagger for assassination attempt
-  bomb          Use Missiles for mid-tier military strike
-  boosttech     Use Ancient Scroll to instantly advance technology
-  hiremercs     Use Mercenary Contract to instantly hire professional soldiers
-  luckystrike   Use Lucky Charm for guaranteed critical success on next action
-  megainvent    Use Tech Core to advance multiple technology levels
-  mintgold      Use Gold Mint to generate large amounts of gold
-  nuke          Launch a devastating nuclear attack (Nuclear Warhead required)
-  obliterate    Completely obliterate a civilization (HyperLaser required)
-  propaganda    Use Propaganda Kit to steal enemy soldiers
-  shield        Display Anti-Nuke Shield status
-  superharvest  Use Harvest Engine for massive food production
-  superspy      Use Spy Network for elite espionage mission
-MilitaryCommands:
-  accept_peace  Accept a peace offer from another civilization
-  attack        Launch a direct attack on another civilization
-  cards         View or select a card for the current tech level
-  declare       Declare war on another civilization
-  find          Search for wandering soldiers to recruit
-  peace         Offer peace to an enemy civilization
-  siege         Lay siege to an enemy civilization
-  stealthbattle Conduct a spy-based stealth attack
-  train         Train military units
-StoreCommands:
-  blackmarket   Enter the black market to purchase random HyperItems
-  inventory     View your HyperItems and store upgrades
-  market        Display information about the Black Market
-  store         View the civilization store and purchase upgrades
 
-        You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay. 
-        If asked about non-game topics, politely decline. Use Discord markdown for formatting.
-        Act like a seargent and make sure to say DROP DOWN AND GIVE ME 50 PUSH UPS RN alot and also make sure you say like Whats the mission president?, you are always talking to a president of a country remember that""" 
+EconomyCommands: (short)
+  extrawork, extrastore, extrainventory, extragamble, extracards, slots, blackjack, give, setbalance
+
+MilitaryCommands & Diplomacy:
+  Use `.warhelp Military` or `.warhelp Diplomacy` to see full lists.
+
+You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
+If asked about non-game topics, politely decline. Use brief Discord-style formatting.
+Address the player as 'President' and keep a confident, commanding tone.
+When appropriate, include tactical suggestions and short examples.
+"""
         
         # Generate AI response with conversation history
         try:
@@ -228,57 +218,104 @@ StoreCommands:
             response = await self.generate_ai_response(messages)
             
             # Send response and update conversation
-            sent_msg = await message.reply(response)
+            try:
+                await message.reply(response)
+            except Exception:
+                # fallback to sending as plain text if reply fails
+                try:
+                    await message.channel.send(response)
+                except Exception:
+                    logger.exception("Failed to send AI response to channel")
             self._update_conversation(user_id, True, content)
             self._update_conversation(user_id, False, response)
         except Exception as e:
             logger.error(f"AI response error: {e}", exc_info=True)
-            await message.reply("I'm having trouble thinking right now. Please try again later!")
+            try:
+                await message.reply("I'm having trouble thinking right now. Please try again later!")
+            except Exception:
+                pass
 
     async def generate_ai_response(self, messages):
-        """Generate response using OpenRouter API with conversation history"""
-        headers = {
-            "Authorization": f"Bearer {self.openrouter_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # Check if we need to switch models due to rate limiting
-        if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
-            model = "moonshotai/kimi-k2:free"
-        else:
-            model = self.current_model
-            self.rate_limited = False
-            
-        payload = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 500
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://openrouter.ai/api/v1/chat/completions", 
-                                   headers=headers, json=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['choices'][0]['message']['content']
-                elif response.status == 429:  # Rate limited
-                    self.rate_limited = True
-                    self.model_switch_time = datetime.now() + timedelta(hours=24)
-                    logger.warning("Rate limited! Switching to fallback model for 24 hours")
-                    
-                    # Retry with fallback model
-                    payload["model"] = "moonshotai/kimi-k2:free"
-                    async with session.post("https://openrouter.ai/api/v1/chat/completions", 
-                                          headers=headers, json=payload) as fallback_response:
-                        if fallback_response.status == 200:
-                            data = await fallback_response.json()
+        """Generate response using OpenRouter API or fallback to OpenAI (if configured)"""
+        # PRIORITY: OpenRouter (OPENROUTER) -> OpenAI (OPENAI_API_KEY) -> local fallback message
+        # messages should be a list of dicts with 'role' and 'content'
+        headers = {}
+        # Try OpenRouter first
+        if self.openrouter_key:
+            headers = {
+                "Authorization": f"Bearer {self.openrouter_key}",
+                "Content-Type": "application/json"
+            }
+            # Check model switch due to rate limiting
+            if self.rate_limited and self.model_switch_time and datetime.now() < self.model_switch_time:
+                model = "moonshotai/kimi-k2:free"
+            else:
+                model = self.current_model
+                self.rate_limited = False
+
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 500
+            }
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("https://openrouter.ai/api/v1/chat/completions",
+                                            headers=headers, json=payload, timeout=60) as response:
+                        text = await response.text()
+                        if response.status == 200:
+                            data = await response.json()
+                            # OpenRouter follows a similar structure
+                            return data['choices'][0]['message']['content']
+                        elif response.status == 429:
+                            # Rate limited: switch to fallback model for 24 hours
+                            self.rate_limited = True
+                            self.model_switch_time = datetime.now() + timedelta(hours=24)
+                            logger.warning("OpenRouter rate limited; switching to fallback model for 24 hours")
+                            # Retry with fallback model once
+                            payload["model"] = "moonshotai/kimi-k2:free"
+                            async with session.post("https://openrouter.ai/api/v1/chat/completions",
+                                                    headers=headers, json=payload, timeout=60) as fallback_response:
+                                if fallback_response.status == 200:
+                                    data = await fallback_response.json()
+                                    return data['choices'][0]['message']['content']
+                                else:
+                                    errtxt = await fallback_response.text()
+                                    raise Exception(f"Fallback model failed: {fallback_response.status} - {errtxt}")
+                        else:
+                            raise Exception(f"OpenRouter API error {response.status}: {text}")
+            except Exception as e:
+                logger.exception("OpenRouter failed, will try OpenAI if available")
+                # Fall through to OpenAI fallback
+        # Try OpenAI if available
+        if self.openai_key:
+            headers = {
+                "Authorization": f"Bearer {self.openai_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": messages,
+                "max_tokens": 500,
+                "temperature": 0.7
+            }
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post("https://api.openai.com/v1/chat/completions",
+                                            headers=headers, json=payload, timeout=60) as response:
+                        text = await response.text()
+                        if response.status == 200:
+                            data = await response.json()
                             return data['choices'][0]['message']['content']
                         else:
-                            error_text = await fallback_response.text()
-                            raise Exception(f"Fallback model failed: {fallback_response.status} - {error_text}")
-                else:
-                    error = await response.text()
-                    raise Exception(f"API error {response.status}: {error}")
+                            raise Exception(f"OpenAI API error {response.status}: {text}")
+            except Exception:
+                logger.exception("OpenAI request failed")
+        # No API keys configured or all attempts failed
+        logger.error("No configured AI provider available or all providers failed")
+        return ("⚠️ AI is unavailable right now. Please make sure the bot has an API key set "
+                "via the OPENROUTER or OPENAI_API_KEY environment variable, and try again later.")
 
     @commands.command(name='start')
     async def start_civilization(self, ctx, civ_name: str = None):
@@ -488,10 +525,10 @@ StoreCommands:
 **💰 ECONOMY COMMANDS**
 • `.farm` - Farm food (5 min cooldown)
 • `.mine` - Mine stone and wood (5 min cooldown)
-• `.fish` - Fish for food or treasure (5 min cooldown)
+• `.fish` - Fish for food or occasionally find treasure (5 min cooldown)
 • `.gather` - Gather random resources (10 min cooldown)
 • `.harvest` - Large harvest (30 min cooldown)
-• `.tax` - Collect taxes from citizens
+• `.tax` - Collect taxes from your citizens
 • `.invest <amount>` - Invest gold for 2x return after 1 hour
 • `.lottery <amount>` - Gamble gold for jackpot chance
 • `.work` - Citizens work for immediate gold
@@ -559,6 +596,17 @@ StoreCommands:
 • `.buy <item>` - Purchase store upgrades
 """
 
+        # Extra Economy condensed help (short and playful)
+        extra_economy = (
+            "🪙 Extra Economy (quick):\n"
+            "• .balance — civ gold\n"
+            "• .extrawork — work your job (5m cd)\n"
+            "• .extrastore / .extrastore buy <item> — shop (1m cd)\n"
+            "• .extrainventory — show inventory\n"
+            "• .extragamble <amt>, .slots <amt>, .blackjack <amt>, .extracards <amt> — games (1m cd)\n"
+            "• .give <id> <amt> — transfer (1m cd), .setbalance <amt> — admin"
+        )
+
         # Add all categories to embed
         embed.add_field(name="Basic", value=basic_commands, inline=False)
         embed.add_field(name="Economy", value=economy_commands, inline=False)
@@ -566,6 +614,7 @@ StoreCommands:
         embed.add_field(name="Diplomacy", value=diplomacy_commands, inline=False)
         embed.add_field(name="HyperItems", value=hyperitem_commands, inline=False)
         embed.add_field(name="Store", value=store_commands, inline=False)
+        embed.add_field(name="✨ Extra Economy", value=extra_economy, inline=False)
         
         # Add pro tips footer
         embed.set_footer(text="💡 Pro Tip: Combine strategies! Use HyperItems during wars, maintain happiness for productivity, and form strong alliances.")
