@@ -9,10 +9,10 @@ from web.dashboard import app as flask_app
 from bot.database import Database
 from bot.civilization import CivilizationManager
 from bot.commands.basic import BasicCommands
-# Bring back the original EconomyCommands (legacy/old economy bot code)
+# Keep legacy economy cog if you want
 from bot.commands.economy import EconomyCommands
-# Also load the ExtraEconomy cog you added (ExtraEconomy.py should expose setup)
-from ExtraEconomy import setup as setup_extra_economy
+# Import ExtraEconomy from the bot.commands package (moved file)
+from bot.commands.ExtraEconomy import setup as setup_extra_economy
 from bot.commands.military import MilitaryCommands
 from bot.commands.diplomacy import DiplomacyCommands
 from bot.commands.store import StoreCommands
@@ -50,15 +50,14 @@ class WarBot(commands.Bot):
         try:
             self.add_cog(BasicCommands(self))
 
-            # Register legacy/old economy cog (kept as EconomyCommands)
+            # legacy economy
             try:
                 self.add_cog(EconomyCommands(self))
                 logger.info("Legacy EconomyCommands cog loaded successfully")
             except Exception as e:
                 logger.error(f"Failed to load legacy EconomyCommands cog: {e}")
 
-            # Register the ExtraEconomy cog using the setup helper from ExtraEconomy.py.
-            # This is the new/extra economy implementation you've pasted into ExtraEconomy.py.
+            # register ExtraEconomy (DB-aware) cog
             try:
                 setup_extra_economy(self, db=self.db, storage_dir="./data")
                 logger.info("ExtraEconomy cog (extra/modern economy) loaded successfully")
