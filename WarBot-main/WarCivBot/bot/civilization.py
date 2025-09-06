@@ -84,6 +84,18 @@ class CivilizationManager:
             }
         }
 
+        # Region-specific modifiers
+        self.region_modifiers = {
+            "Asia": {"food_production": 1.20, "population_capacity": 1.25},
+            "Europe": {"tech_research": 1.25, "gold_production": 1.15},
+            "Africa": {"mining_efficiency": 1.30, "stone_production": 1.20},
+            "North America": {"balanced_production": 1.10, "trade_efficiency": 1.15},
+            "South America": {"food_production": 1.25, "wood_production": 1.15},
+            "Middle East": {"gold_production": 1.40, "oil_resources": 1.30},
+            "Oceania": {"happiness": 1.15, "naval_advantage": 1.20},
+            "Antarctica": {"research_speed": 1.25, "unique_discoveries": 1.30}
+        }
+
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
         """Create a new civilization"""
         try:
@@ -108,7 +120,13 @@ class CivilizationManager:
     def _update_employment_only(self, user_id: str, employed: int) -> bool:
         """Update only the employment field without recursion"""
         try:
-            return self.db.update_civilization(user_id, {"population.employed": employed})
+            civ = self.get_civilization(user_id)
+            if not civ:
+                return False
+                
+            population = civ['population'].copy()
+            population['employed'] = employed
+            return self.db.update_civilization(user_id, {"population": population})
         except Exception as e:
             logger.error(f"Error updating employment for {user_id}: {e}")
             return False
@@ -119,6 +137,14 @@ class CivilizationManager:
             return self.db.update_civilization(user_id, {"ideology": ideology})
         except Exception as e:
             logger.error(f"Error setting ideology for {user_id}: {e}")
+            return False
+
+    def set_region(self, user_id: str, region: str) -> bool:
+        """Set civilization region"""
+        try:
+            return self.db.update_civilization(user_id, {"region": region})
+        except Exception as e:
+            logger.error(f"Error setting region for {user_id}: {e}")
             return False
 
     def update_resources(self, user_id: str, resource_changes: Dict[str, int]) -> bool:
@@ -202,7 +228,8 @@ class CivilizationManager:
             employed = population.get('employed', 0) + change
             employed = max(0, min(population['citizens'], employed))
             
-            return self.db.update_civilization(user_id, {"population.employed": employed})
+            population['employed'] = employed
+            return self.db.update_civilization(user_id, {"population": population})
         except Exception as e:
             logger.error(f"Error updating employment for {user_id}: {e}")
             return False
@@ -307,7 +334,7 @@ class CivilizationManager:
             return False
 
     def calculate_resource_income(self, user_id: str) -> Dict[str, int]:
-        """Calculate passive resource income"""
+        """Calculate passive resource income with region modifiers"""
         try:
             civ = self.get_civilization(user_id)
             if not civ:
@@ -320,6 +347,20 @@ class CivilizationManager:
             employment_rate = self.get_employment_rate(user_id)
             employment_modifier = employment_rate / 100
             
+            # Get region modifier if region is set
+            region_modifier = 1.0
+            region = civ.get('region')
+            if region and region in self.region_modifiers:
+                region_bonus = self.region_modifiers[region]
+                if region_bonus.get('food_production'):
+                    region_modifier *= region_bonus['food_production']
+                if region_bonus.get('gold_production'):
+                    region_modifier *= region_bonus['gold_production']
+                if region_bonus.get('mining_efficiency'):
+                    region_modifier *= region_bonus['mining_efficiency']
+                if region_bonus.get('balanced_production'):
+                    region_modifier *= region_bonus['balanced_production']
+
             base_gold = int(population['citizens'] * 0.1 * (territory['land_size'] / 1000) * employment_modifier)
             base_food = int(population['citizens'] * 0.2 * employment_modifier)
             
@@ -348,6 +389,9 @@ class CivilizationManager:
                 resource_modifier *= self.ideology_modifiers['terrorism']['resource_production']
             
             resource_modifier *= (1 + bonuses.get('resource_production', 0) / 100)
+            
+            # Apply region modifier
+            resource_modifier *= region_modifier
             
             return {
                 "gold": int(base_gold * resource_modifier),
@@ -401,6 +445,11 @@ class CivilizationManager:
             happiness = population['happiness']
             bonuses = civ['bonuses']
             ideology = civ.get('ideology', '')
+            
+            # Apply region happiness bonus if applicable
+            region = civ.get('region')
+            if region and region in self.region_modifiers and self.region_modifiers[region].get('happiness'):
+                happiness = int(happiness * self.region_modifiers[region]['happiness'])
             
             happiness_modifier = 1 + bonuses.get('happiness_boost', 0) / 100
             # apply ideology intrinsic happiness boosts if present
@@ -486,6 +535,20 @@ class CivilizationManager:
             logger.error(f"Error getting ideology modifier for {user_id}: {e}")
             return 1.0
 
+    def get_region_modifier(self, user_id: str, modifier_type: str) -> float:
+        """Get region modifier for specific action"""
+        try:
+            civ = self.get_civilization(user_id)
+            if not civ or not civ.get('region'):
+                return 1.0
+                
+            region = civ['region']
+            modifiers = self.region_modifiers.get(region, {})
+            return modifiers.get(modifier_type, 1.0)
+        except Exception as e:
+            logger.error(f"Error getting region modifier for {user_id}: {e}")
+            return 1.0
+
     def get_name_bonus(self, user_id: str, bonus_type: str) -> float:
         """Get name-based bonus"""
         try:
@@ -500,17 +563,19 @@ class CivilizationManager:
             return 0.0
 
     def calculate_total_modifier(self, user_id: str, action_type: str) -> float:
-        """Calculate total modifier for an action"""
+        """Calculate total modifier for an action including region effects"""
         try:
             base_modifier = 1.0
             ideology_modifier = self.get_ideology_modifier(user_id, action_type)
+            region_modifier = self.get_region_modifier(user_id, action_type)
             name_bonus = 0.0
+            
             if action_type == "luck":
                 name_bonus = self.get_name_bonus(user_id, "luck")
             elif action_type == "diplomacy":
                 name_bonus = self.get_name_bonus(user_id, "diplomacy")
                 
-            return base_modifier * ideology_modifier + name_bonus
+            return base_modifier * ideology_modifier * region_modifier + name_bonus
         except Exception as e:
             logger.error(f"Error calculating total modifier for {user_id}: {e}")
             return 1.0
