@@ -15,27 +15,6 @@ class DiplomacyCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
         self.pending_trades = {}  # Temp storage for pending trades {trade_id: details}
         self.pending_alliances = {}  # Temp storage for pending alliances {alliance_id: details}
-        
-        # Ensure messages table exists
-        self.create_messages_table()
-
-    def create_messages_table(self):
-        """Create the messages table if it doesn't exist"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender_id TEXT NOT NULL,
-                    recipient_id TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            conn.commit()
-        except sqlite3.Error as e:
-            logger.error(f"Error creating messages table: {e}")
 
     @commands.command(name='ally')
     async def propose_alliance(self, ctx, target: str = None, alliance_name: str = None):
@@ -537,28 +516,19 @@ class DiplomacyCommands(commands.Cog):
             
         # Store the message in the database
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO messages (sender_id, recipient_id, message)
-                VALUES (?, ?, ?)
-            ''', (user_id, target_id, message))
-            conn.commit()
+            success = self.db.send_message(user_id, target_id, message)
+            if not success:
+                await ctx.send("❌ Failed to send message. Please try again.")
+                return
         except Exception as e:
             logger.error(f"Error saving message: {e}")
             await ctx.send("❌ Failed to send message. Please try again.")
             return
         
-        # Send the diplomatic message
-        embed = guilded.Embed(
-            title="📜 Diplomatic Message",
-            description=f"**From**: {civ['name']} (led by {ctx.author.name})\n**To**: {target_civ['name']}",
-            color=guilded.Color.blue()
-        )
-        embed.add_field(name="Message", value=message, inline=False)
-        embed.add_field(name="Reply", value="Use `.mail @user <message>` to respond", inline=False)
+        # Send notification ping (separate message)
+        await ctx.send(f"<@{target_id}> 📜 You've got mail from {civ['name']}! Check your `.inbox` to read it.")
         
-        await ctx.send(f"<@{target_id}>", embed=embed)
+        # Send confirmation to sender
         await ctx.send("📜 **Sent diplomatic message**")
         self.db.log_event(user_id, "diplomatic_message", "Message Sent", f"Sent message to {target_civ['name']}")
 
@@ -608,26 +578,18 @@ class DiplomacyCommands(commands.Cog):
                         f"Expires: <t:{int(trade['expires'].timestamp())}:R>"
                     )
         
-        # Check diplomatic messages
+        # Check diplomatic messages using the database method
         diplomatic_messages = []
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT sender_id, message, timestamp FROM messages 
-                WHERE recipient_id = ? 
-                ORDER BY timestamp DESC 
-                LIMIT 10
-            ''', (user_id,))
-            messages = cursor.fetchall()
+            messages = self.db.get_messages(user_id)
             
             for msg in messages:
                 sender_civ = self.civ_manager.get_civilization(msg['sender_id'])
                 if sender_civ:
-                    # Handle timestamp format (could be string or datetime)
-                    timestamp = msg['timestamp']
+                    # Handle timestamp format
+                    timestamp = msg['created_at']
                     if isinstance(timestamp, str):
-                        timestamp = datetime.fromisoformat(timestamp)
+                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     
                     diplomatic_messages.append(
                         f"**From**: {sender_civ['name']}\n"
