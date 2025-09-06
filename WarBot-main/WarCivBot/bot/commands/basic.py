@@ -12,7 +12,7 @@ from bot.utils import format_number, get_ascii_art, create_embed
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CONVERSATION_HISTORY = 5  # Keep last 5 exchanges per user
+MAX_CONVERSATION_HISTORY = 100  # Increased to 100 messages max
 CONVERSATION_TIMEOUT = 1800  # 30 minutes in seconds
 
 class BasicCommands(commands.Cog):
@@ -52,9 +52,11 @@ class BasicCommands(commands.Cog):
             "timestamp": now
         })
         
-        # Trim old messages if needed
-        while len(self.conversations[user_id]) > MAX_CONVERSATION_HISTORY * 2:
-            self.conversations[user_id].popleft()
+        # Check if we've reached the 100 message limit
+        if len(self.conversations[user_id]) > MAX_CONVERSATION_HISTORY:
+            # Clear the conversation and notify user
+            self.conversations[user_id].clear()
+            return False
             
         # Clean up expired conversations
         expired_users = []
@@ -68,6 +70,8 @@ class BasicCommands(commands.Cog):
                 del self.last_interaction[uid]
             except KeyError:
                 pass
+            
+        return True
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -85,22 +89,20 @@ class BasicCommands(commands.Cog):
         
         # Check if this is a reply to the bot
         is_reply = False
-        if getattr(message, "replied_to", None):
+        replied_message = None
+        
+        # Check for message replies using Guilded's reply system :cite[7]
+        if hasattr(message, 'replied_to') and message.replied_to:
             try:
-                # guilded's fetch may differ; attempt to get the replied_to author id safely
-                replied = message.replied_to
-                if getattr(replied, "author", None) and getattr(replied.author, "id", None) == self.bot.user.id:
+                # Try to get the replied message
+                replied_message = await message.channel.fetch_message(message.replied_to.id)
+                if replied_message and replied_message.author.id == self.bot.user.id:
                     is_reply = True
-                else:
-                    # Best-effort fetch if possible
-                    try:
-                        replied_msg = await message.channel.fetch_message(message.replied_to.id)
-                        if replied_msg and getattr(replied_msg.author, "id", None) == self.bot.user.id:
-                            is_reply = True
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error fetching replied message: {e}")
+                # Fallback: check if the message content indicates it's a reply
+                if "replying to" in content.lower() or "reply to" in content.lower():
+                    is_reply = True
         
         # Check if our bot is mentioned
         bot_mentioned = False
@@ -121,6 +123,19 @@ class BasicCommands(commands.Cog):
                 content = content.replace(f'<@{self.bot.user.id}>', '').strip()
             except Exception:
                 pass
+            
+        # Handle replies - check if we've reached message limit
+        if is_reply and user_id in self.conversations and len(self.conversations[user_id]) >= MAX_CONVERSATION_HISTORY:
+            try:
+                await message.reply("💬 Saved chat limit reached! Please start a new chat by mentioning me again.")
+            except Exception:
+                logger.error("Failed to send chat limit message")
+            # Clear the conversation
+            if user_id in self.conversations:
+                del self.conversations[user_id]
+            if user_id in self.last_interaction:
+                del self.last_interaction[user_id]
+            return
             
         # Reset conversation if it's a new mention (not a reply)
         if bot_mentioned and not is_reply:
@@ -170,7 +185,7 @@ class BasicCommands(commands.Cog):
             except Exception:
                 civ_status = ""
         
-        # Prepare system prompt
+        # Prepare system prompt with Guilded markdown info :cite[2]:cite[5]
         system_prompt = f"""You are NationBot, an AI assistant for a nation simulation game. 
 Players build civilizations, manage resources, wage wars, and form alliances. 
 Your role is to help players understand game mechanics and strategies.
@@ -188,6 +203,7 @@ BasicCommands:
   start         Start a new civilization with a cinematic intro
   status        View your civilization status
   warhelp       Display help information
+  regions       View or select your civilization's region
 
 EconomyCommands: (short)
   extrawork, extrastore, extrainventory, extragamble, extracards, slots, blackjack, give, setbalance
@@ -199,6 +215,17 @@ You are helpful, encouraging, and strategic. Keep responses concise and focused 
 If asked about non-game topics, politely decline. Use brief Discord-style formatting.
 Address the player as 'President' and keep a confident, commanding tone.
 When appropriate, include tactical suggestions and short examples.
+
+IMPORTANT: Use Guilded markdown formatting in your responses :cite[2]:cite[5]:
+- **Bold** for emphasis
+- *Italics* for subtle emphasis
+- __Underline__ for important points
+- `Inline code` for commands and code references
+- > Blockquotes for special notes
+- --- for dividers
+- Use emoji where appropriate: 🏛️ ⚔️ 🪙 🌾 🪨 🪵 👥 🕵️
+
+Remember to keep responses engaging but focused on the game.
 """
         
         # Generate AI response with conversation history
@@ -217,7 +244,19 @@ When appropriate, include tactical suggestions and short examples.
             # Generate response
             response = await self.generate_ai_response(messages)
             
-            # Send response and update conversation
+            # Check if we reached message limit during update
+            update_success = self._update_conversation(user_id, True, content)
+            if not update_success:
+                # We reached the limit, add a note to the response
+                response += "\n\n💬 *Note: Chat history limit reached. Starting a new conversation.*"
+                # Clear and restart conversation
+                self.conversations[user_id] = deque()
+                self.last_interaction[user_id] = datetime.now()
+            
+            # Update with AI response
+            self._update_conversation(user_id, False, response)
+            
+            # Send response
             try:
                 await message.reply(response)
             except Exception:
@@ -226,8 +265,7 @@ When appropriate, include tactical suggestions and short examples.
                     await message.channel.send(response)
                 except Exception:
                     logger.exception("Failed to send AI response to channel")
-            self._update_conversation(user_id, True, content)
-            self._update_conversation(user_id, False, response)
+                    
         except Exception as e:
             logger.error(f"AI response error: {e}", exc_info=True)
             try:
@@ -317,6 +355,160 @@ When appropriate, include tactical suggestions and short examples.
         return ("⚠️ AI is unavailable right now. Please make sure the bot has an API key set "
                 "via the OPENROUTER or OPENAI_API_KEY environment variable, and try again later.")
 
+    @commands.command(name='regions')
+    async def regions_command(self, ctx, region_name: str = None):
+        """View or select your civilization's region"""
+        # Define available regions with bonuses
+        regions = {
+            "asia": {
+                "name": "Asia",
+                "bonuses": {"food": 200, "population": 50},
+                "description": "🌏 **Asia**: Fertile lands with abundant resources and large population capacity."
+            },
+            "europe": {
+                "name": "Europe",
+                "bonuses": {"gold": 300, "tech_level": 1},
+                "description": "🇪🇺 **Europe**: Advanced technological development and economic strength."
+            },
+            "africa": {
+                "name": "Africa",
+                "bonuses": {"stone": 150, "wood": 150},
+                "description": "🌍 **Africa**: Rich in natural resources and mineral wealth."
+            },
+            "north america": {
+                "name": "North America",
+                "bonuses": {"gold": 200, "food": 200},
+                "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."
+            },
+            "south america": {
+                "name": "South America",
+                "bonuses": {"food": 300, "wood": 100},
+                "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."
+            },
+            "middle east": {
+                "name": "Middle East",
+                "bonuses": {"gold": 400},
+                "description": "🌅 **Middle East**: Vast oil reserves creating immense wealth."
+            },
+            "oceania": {
+                "name": "Oceania",
+                "bonuses": {"food": 250, "happiness": 15},
+                "description": "🇦🇺 **Oceania**: Island paradise with high quality of life and abundant seafood."
+            },
+            "antarctica": {
+                "name": "Antarctica",
+                "bonuses": {"research": 25},
+                "description": "🇦🇶 **Antarctica**: Harsh environment but unique research opportunities. +25% research speed."
+            }
+        }
+        
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # If no region specified, show available regions
+        if not region_name:
+            embed = guilded.Embed(
+                title="🌍 Available Regions",
+                description="Choose a region for your civilization. Each region provides unique bonuses:",
+                color=0x00ff00
+            )
+            
+            for region_id, region_data in regions.items():
+                bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_data["bonuses"].items()])
+                embed.add_field(
+                    name=region_data["name"],
+                    value=f"{region_data['description']}\n**Bonuses:** {bonus_text}",
+                    inline=False
+                )
+            
+            embed.add_field(
+                name="Usage",
+                value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)",
+                inline=False
+            )
+            
+            if civ.get('region'):
+                current_region = next((r for r in regions.values() if r['name'].lower() == civ.get('region').lower()), None)
+                if current_region:
+                    bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in current_region["bonuses"].items()])
+                    embed.add_field(
+                        name="Current Region",
+                        value=f"**{current_region['name']}**: {bonus_text}",
+                        inline=False
+                    )
+            
+            await ctx.send(embed=embed)
+            return
+            
+        # Check if region is valid
+        region_name = region_name.lower()
+        if region_name not in regions:
+            await ctx.send(f"❌ Invalid region! Available regions: {', '.join(regions.keys())}")
+            return
+            
+        # Check if region is already set
+        if civ.get('region'):
+            if civ['region'].lower() == region_name:
+                await ctx.send(f"❌ Your civilization is already in the {regions[region_name]['name']} region!")
+                return
+            else:
+                await ctx.send(f"❌ You've already selected the {civ['region']} region. Region selection cannot be changed.")
+                return
+                
+        # Apply region bonuses
+        region_bonuses = regions[region_name]['bonuses']
+        updated_resources = civ['resources'].copy()
+        updated_population = civ['population'].copy()
+        
+        for resource, amount in region_bonuses.items():
+            if resource in updated_resources:
+                updated_resources[resource] += amount
+            elif resource == "population":
+                updated_population['citizens'] += amount
+            elif resource == "happiness":
+                updated_population['happiness'] = min(100, updated_population['happiness'] + amount)
+            elif resource == "research":
+                # Special bonus for Antarctica - stored in bonuses
+                current_bonuses = civ.get('bonuses', {})
+                current_bonuses['research_speed'] = current_bonuses.get('research_speed', 0) + amount
+                self.db.update_civilization(user_id, {'bonuses': current_bonuses})
+        
+        # Update civilization with region and bonuses
+        update_data = {
+            'region': regions[region_name]['name'],
+            'resources': updated_resources,
+            'population': updated_population
+        }
+        
+        if self.db.update_civilization(user_id, update_data):
+            bonus_text = ", ".join([f"+{amount} {resource}" for resource, amount in region_bonuses.items()])
+            
+            embed = guilded.Embed(
+                title=f"🌍 Region Selected: {regions[region_name]['name']}",
+                description=regions[region_name]['description'],
+                color=0x00ff00
+            )
+            
+            embed.add_field(
+                name="Bonuses Applied",
+                value=bonus_text,
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Next Steps",
+                value="Use `.status` to view your updated civilization stats or `.warhelp` to see available commands.",
+                inline=False
+            )
+            
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("❌ Failed to update your region. Please try again later.")
+
     @commands.command(name='start')
     async def start_civilization(self, ctx, civ_name: str = None):
         """Start a new civilization with a cinematic intro"""
@@ -379,8 +571,8 @@ When appropriate, include tactical suggestions and short examples.
             )
             
         embed.add_field(
-            name="📋 Next Step",
-            value="Choose your government ideology with `.ideology <type>`\nOptions: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy",
+            name="📋 Next Steps",
+            value="Choose your government ideology with `.ideology <type>`\nSelect your region with `.regions`\nView your status with `.status`",
             inline=False
         )
         
@@ -478,7 +670,7 @@ When appropriate, include tactical suggestions and short examples.
         # Create status embed
         embed = guilded.Embed(
             title=f"🏛️ {civ['name']}",
-            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}",
+            description=f"**Leader**: {ctx.author.name}\n**Ideology**: {civ['ideology'].capitalize() if civ.get('ideology') else 'None'}\n**Region**: {civ.get('region', 'Not selected')}",
             color=0x0099ff
         )
         
@@ -524,6 +716,7 @@ When appropriate, include tactical suggestions and short examples.
             "• `.start <name>` — Start a new civilization with a cinematic intro 🎬\n"
             "• `.ideology <type>` — Choose your government (fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy) 🏷️\n"
             "• `.status` — View your civ's full status: resources, military, items 📊\n"
+            "• `.regions` — View or select your civilization's region 🌍\n"
             "• `.warhelp` — Display this comprehensive help menu 📚"
         )
 
@@ -647,3 +840,6 @@ When appropriate, include tactical suggestions and short examples.
         embed.set_footer(text="🎯 Tip: Use `.warhelp <category>` to show just one section if this is too big for chat.")
 
         await ctx.send(embed=embed)
+
+def setup(bot):
+    bot.add_cog(BasicCommands(bot))
