@@ -38,7 +38,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Civilizations table
+        # Civilizations table with region support
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS civilizations (
                 user_id TEXT PRIMARY KEY,
@@ -51,6 +51,7 @@ class Database:
                 hyper_items TEXT NOT NULL DEFAULT '[]',
                 bonuses TEXT NOT NULL DEFAULT '{}',
                 selected_cards TEXT NOT NULL DEFAULT '[]',
+                region TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -104,7 +105,7 @@ class Database:
             )
         ''')
         
-        # Peace offers table (missing from original)
+        # Peace offers table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS peace_offers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +117,7 @@ class Database:
             )
         ''')
         
-        # Messages table
+        # Messages table with proper structure
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +181,7 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_invites_expires ON alliance_invitations(expires_at)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_wars_ongoing ON wars(result)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_peace_offers_status ON peace_offers(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')
         
         conn.commit()
         logger.info("Database initialized successfully")
@@ -225,8 +227,8 @@ class Database:
             
             cursor.execute('''
                 INSERT INTO civilizations 
-                (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (user_id, name, resources, population, military, territory, hyper_items, bonuses, selected_cards, region)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 user_id, name,
                 json.dumps(default_resources),
@@ -235,7 +237,8 @@ class Database:
                 json.dumps(default_territory),
                 json.dumps(hyper_items),
                 json.dumps(bonuses),
-                json.dumps(selected_cards)
+                json.dumps(selected_cards),
+                None  # Region starts as null
             ))
             
             # Create initial card selection for tech level 1
@@ -512,7 +515,7 @@ class Database:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute('''
+            cursor.execute(''>
                 INSERT INTO events (user_id, event_type, title, description, effects)
                 VALUES (?, ?, ?, ?, ?)
             ''', (user_id, event_type, title, description, json.dumps(effects or {})))
@@ -642,7 +645,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT ai.*, a.name as alliance_name 
                 FROM alliance_invitations ai
                 JOIN alliances a ON ai.alliance_id = a.id
@@ -658,7 +661,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT ai.*, a.name as alliance_name 
                 FROM alliance_invitations ai
                 JOIN alliances a ON ai.alliance_id = a.id
@@ -687,7 +690,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 INSERT INTO messages (sender_id, recipient_id, message)
                 VALUES (?, ?, ?)
             ''', (sender_id, recipient_id, message))
@@ -703,11 +706,12 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT m.*, c.name as sender_name 
                 FROM messages m
                 JOIN civilizations c ON m.sender_id = c.user_id
                 WHERE recipient_id = ? AND expires_at > CURRENT_TIMESTAMP
+                ORDER BY created_at DESC
             ''', (user_id,))
             return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
@@ -775,7 +779,7 @@ class Database:
             
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 UPDATE alliances 
                 SET members = ?, join_requests = ?
                 WHERE id = ?
@@ -794,7 +798,7 @@ class Database:
             cursor = conn.cursor()
             
             if user_id:
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT w.*, 
                            ac.name as attacker_name, 
                            dc.name as defender_name
@@ -804,7 +808,7 @@ class Database:
                     WHERE (w.attacker_id = ? OR w.defender_id = ?) AND w.result = ?
                 ''', (user_id, user_id, status))
             else:
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT w.*, 
                            ac.name as attacker_name, 
                            dc.name as defender_name
@@ -826,7 +830,7 @@ class Database:
             cursor = conn.cursor()
             
             if user_id:
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT po.*, 
                            oc.name as offerer_name, 
                            rc.name as receiver_name
@@ -836,7 +840,7 @@ class Database:
                     WHERE (po.offerer_id = ? OR po.receiver_id = ?) AND po.status = 'pending'
                 ''', (user_id, user_id))
             else:
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT po.*, 
                            oc.name as offerer_name, 
                            rc.name as receiver_name
@@ -856,7 +860,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 INSERT INTO peace_offers (offerer_id, receiver_id)
                 VALUES (?, ?)
             ''', (offerer_id, receiver_id))
@@ -872,7 +876,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 UPDATE peace_offers 
                 SET status = ?, responded_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -888,7 +892,7 @@ class Database:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            cursor.execute(''>
                 UPDATE wars 
                 SET result = ?, ended_at = CURRENT_TIMESTAMP
                 WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
@@ -913,7 +917,7 @@ class Database:
                 return {}
             
             # Count wars participated in
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT 
                     COUNT(*) as total_wars,
                     SUM(CASE WHEN result = 'victory' THEN 1 ELSE 0 END) as victories,
@@ -928,7 +932,7 @@ class Database:
             }
             
             # Get recent events
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT COUNT(*) as total_events
                 FROM events 
                 WHERE user_id = ?
@@ -970,7 +974,7 @@ class Database:
             
             if category == 'power':
                 # Calculate total power score
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT user_id, name, resources, military, territory
                     FROM civilizations
                     ORDER BY last_active DESC
@@ -1002,7 +1006,7 @@ class Database:
                 return sorted(civs, key=lambda x: x['score'], reverse=True)[:limit]
                 
             elif category == 'gold':
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT user_id, name, resources
                     FROM civilizations
                     ORDER BY json_extract(resources, '$.gold') DESC
@@ -1021,7 +1025,7 @@ class Database:
                 return civs
                 
             elif category == 'military':
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT user_id, name, military
                     FROM civilizations
                     ORDER BY (json_extract(military, '$.soldiers') + json_extract(military, '$.spies')) DESC
@@ -1043,7 +1047,7 @@ class Database:
                 return civs
                 
             elif category == 'territory':
-                cursor.execute('''
+                cursor.execute(''>
                     SELECT user_id, name, territory
                     FROM civilizations
                     ORDER BY json_extract(territory, '$.land_size') DESC
@@ -1134,7 +1138,7 @@ class Database:
                 info['database_size_mb'] = round(info['database_size_bytes'] / (1024 * 1024), 2)
             
             # Get active users (logged in within last 7 days)
-            cursor.execute('''
+            cursor.execute(''>
                 SELECT COUNT(*) FROM civilizations 
                 WHERE last_active > datetime('now', '-7 days')
             ''')
