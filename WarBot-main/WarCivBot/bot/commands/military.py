@@ -1098,13 +1098,18 @@ class MilitaryCommands(commands.Cog):
                                   selected_card['description'], selected_card['effect'])
                 await ctx.send(embed=embed)
             else:
-                # Display available cards
+                # Display available cards with numbers for easier selection
                 embed = create_embed(
                     f"🎴 Tech Level {tech_level} Cards",
-                    "Choose a card using `.cards <card_name>`",
+                    "Choose a card using `.cards <card_name>` or `.cards <number>`",
                     guilded.Color.blue()
                 )
-                cards_text = "\n".join([f"**{card['name']}**: {card['description']}" for card in card_selection['available_cards']])
+                
+                cards = card_selection['available_cards']
+                cards_text = ""
+                for i, card in enumerate(cards, 1):
+                    cards_text += f"{i}. **{card['name']}**: {card['description']}\n"
+                
                 embed.add_field(name="Available Cards", value=cards_text or "No cards available", inline=False)
                 await ctx.send(embed=embed)
 
