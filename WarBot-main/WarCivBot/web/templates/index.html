@@ -7,7 +7,6 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        /* Root Variables for Dark Theme */
         :root {
             --primary-color: #6366f1;
             --secondary-color: #94a3b8;
@@ -37,7 +36,6 @@
             --none-color: #64748b;
         }
 
-        /* Global Styles */
         body {
             background-color: var(--dark-bg);
             color: var(--light-text);
@@ -45,7 +43,6 @@
             line-height: 1.6;
         }
 
-        /* Navigation Bar */
         .navbar-dark {
             background-color: rgba(15, 23, 42, 0.95) !important;
             backdrop-filter: blur(10px);
@@ -72,7 +69,6 @@
             font-weight: 500;
         }
 
-        /* Alert Styles */
         .alert {
             border: none;
             border-radius: 8px;
@@ -86,7 +82,6 @@
             color: var(--light-text);
         }
 
-        /* Headings */
         h2 {
             font-weight: 600;
             color: var(--light-text);
@@ -100,7 +95,6 @@
             margin-right: 0.5rem;
         }
 
-        /* Statistics Cards */
         .stat-card {
             background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(30, 41, 59, 0.95));
             border: 1px solid var(--dark-border);
@@ -139,7 +133,6 @@
             font-weight: 500;
         }
 
-        /* Main Cards */
         .card {
             background-color: var(--dark-card);
             border: 1px solid var(--dark-border);
@@ -147,6 +140,7 @@
             box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
             margin-bottom: 1.5rem;
             overflow: hidden;
+            min-height: 300px;
         }
 
         .card-header {
@@ -172,7 +166,27 @@
             padding: 1.5rem;
         }
 
-        /* Tables */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted-text);
+            height: 100%;
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--secondary-color);
+        }
+
+        .empty-state p {
+            margin-bottom: 1.5rem;
+        }
+
         .table {
             color: var(--light-text);
             width: 100%;
@@ -199,7 +213,6 @@
             background-color: rgba(51, 65, 85, 0.3);
         }
 
-        /* Ideology Badges */
         .ideology-badge {
             display: inline-block;
             padding: 0.35rem 0.75rem;
@@ -225,7 +238,6 @@
         .ideology-monarchy { background-color: var(--monarchy-color); color: white; }
         .ideology-none { background-color: var(--none-color); }
 
-        /* Event Timeline */
         .event-timeline {
             max-height: 600px;
             overflow-y: auto;
@@ -280,6 +292,9 @@
             color: var(--light-text);
             margin-bottom: 0.25rem;
             font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
         .event-description {
@@ -306,7 +321,6 @@
             font-style: italic;
         }
 
-        /* Ideology Statistics */
         .ideology-stat {
             padding: 0.75rem;
             background: rgba(30, 41, 59, 0.7);
@@ -319,7 +333,6 @@
             background: rgba(30, 41, 59, 0.9);
         }
 
-        /* Badges */
         .badge {
             font-size: 0.75rem;
             padding: 0.35rem 0.65rem;
@@ -327,7 +340,6 @@
             font-weight: 600;
         }
 
-        /* Footer */
         footer {
             background-color: var(--dark-card);
             border-top: 1px solid var(--dark-border);
@@ -346,7 +358,6 @@
             margin-right: 0.5rem;
         }
 
-        /* Text Colors */
         .text-muted {
             color: var(--muted-text) !important;
         }
@@ -355,7 +366,6 @@
             color: #b45309 !important;
         }
 
-        /* Responsive Design */
         @media (max-width: 768px) {
             .stat-card {
                 margin-bottom: 1rem;
@@ -403,6 +413,12 @@
     </nav>
 
     <div class="container-fluid mt-4">
+        {% if error %}
+        <div class="alert alert-danger" role="alert">
+            <i class="fas fa-exclamation-triangle"></i> {{ error }}
+        </div>
+        {% endif %}
+
         <!-- Statistics Overview -->
         <div class="row mb-4">
             <div class="col-12">
@@ -414,7 +430,7 @@
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
                     <i class="fas fa-city stat-icon text-primary"></i>
-                    <h5 class="card-title">152</h5>
+                    <h5 class="card-title">{{ stats.get('total_civilizations', 0) }}</h5>
                     <p class="card-text">Civilizations</p>
                 </div>
             </div>
@@ -422,7 +438,7 @@
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
                     <i class="fas fa-users stat-icon text-success"></i>
-                    <h5 class="card-title">3,742,891</h5>
+                    <h5 class="card-title">{{ "{:,}".format(stats.get('total_population', 0)) }}</h5>
                     <p class="card-text">Total Population</p>
                 </div>
             </div>
@@ -430,15 +446,15 @@
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
                     <i class="fas fa-coins stat-icon text-warning"></i>
-                    <h5 class="card-title">12,458,327</h5>
+                    <h5 class="card-title">{{ "{:,}".format(stats.get('total_resources', 0)) }}</h5>
                     <p class="card-text">Total Resources</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
-                    <i class="fas fa-sword stat-icon text-danger"></i>
-                    <h5 class="card-title">27</h5>
+                    <i class="fas fa-fist-raised stat-icon text-danger"></i>
+                    <h5 class="card-title">{{ stats.get('active_wars', 0) }}</h5>
                     <p class="card-text">Active Wars</p>
                 </div>
             </div>
@@ -446,7 +462,7 @@
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
                     <i class="fas fa-handshake stat-icon text-info"></i>
-                    <h5 class="card-title">18</h5>
+                    <h5 class="card-title">{{ stats.get('total_alliances', 0) }}</h5>
                     <p class="card-text">Alliances</p>
                 </div>
             </div>
@@ -454,7 +470,7 @@
             <div class="col-md-2 col-sm-4 col-6 mb-3">
                 <div class="stat-card text-center">
                     <i class="fas fa-smile stat-icon text-success"></i>
-                    <h5 class="card-title">78.5%</h5>
+                    <h5 class="card-title">{{ "%.1f"|format(stats.get('average_happiness', 0)) }}%</h5>
                     <p class="card-text">Avg Happiness</p>
                 </div>
             </div>
@@ -468,6 +484,7 @@
                         <h4><i class="fas fa-trophy"></i> Top Civilizations by Power</h4>
                     </div>
                     <div class="card-body p-0">
+                        {% if top_civs %}
                         <div class="table-responsive">
                             <table class="table table-hover mb-0">
                                 <thead>
@@ -480,75 +497,49 @@
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {% for civ in top_civs %}
                                     <tr>
                                         <td>
-                                            <i class="fas fa-crown text-warning"></i> #1
+                                            {% if loop.index == 1 %}
+                                                <i class="fas fa-crown text-warning"></i> #{{ loop.index }}
+                                            {% elif loop.index == 2 %}
+                                                <i class="fas fa-medal text-secondary"></i> #{{ loop.index }}
+                                            {% elif loop.index == 3 %}
+                                                <i class="fas fa-medal text-brown"></i> #{{ loop.index }}
+                                            {% else %}
+                                                #{{ loop.index }}
+                                            {% endif %}
                                         </td>
                                         <td>
-                                            <strong>🏆 Eastern Empire</strong>
-                                            <br><small class="text-muted">Supreme Leader</small>
+                                            <strong>{{ civ.rank_emoji }} {{ civ.name }}</strong>
+                                            <br><small class="text-muted">{{ civ.rank }}</small>
                                         </td>
                                         <td>
-                                            <span class="badge bg-primary">12,458</span>
+                                            <span class="badge bg-primary">{{ "{:,}".format(civ.power_score) }}</span>
                                         </td>
                                         <td>
-                                            <span class="ideology-badge ideology-monarchy">
-                                                Monarchy
+                                            <span class="ideology-badge ideology-{{ civ.ideology.lower() }}">
+                                                {{ civ.ideology.title() }}
                                             </span>
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">
-                                                😄 Prosperous
+                                                {{ civ.happiness_emoji }} {{ civ.happiness_status }}
                                             </span>
                                         </td>
                                     </tr>
-                                    <tr>
-                                        <td>
-                                            <i class="fas fa-medal text-secondary"></i> #2
-                                        </td>
-                                        <td>
-                                            <strong>🥈 Northern Federation</strong>
-                                            <br><small class="text-muted">High Chancellor</small>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-primary">11,792</span>
-                                        </td>
-                                        <td>
-                                            <span class="ideology-badge ideology-democracy">
-                                                Democracy
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">
-                                                🙂 Content
-                                            </span>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td>
-                                            <i class="fas fa-medal text-brown"></i> #3
-                                        </td>
-                                        <td>
-                                            <strong>🥉 Southern Republic</strong>
-                                            <br><small class="text-muted">Grand Marshal</small>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-primary">10,845</span>
-                                        </td>
-                                        <td>
-                                            <span class="ideology-badge ideology-capitalism">
-                                                Capitalism
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-light text-dark">
-                                                😊 Happy
-                                            </span>
-                                        </td>
-                                    </tr>
+                                    {% endfor %}
                                 </tbody>
                             </table>
                         </div>
+                        {% else %}
+                        <div class="empty-state">
+                            <i class="fas fa-city"></i>
+                            <h4>No Civilizations Yet</h4>
+                            <p>Once players create civilizations, they will appear here.</p>
+                            <p>Encourage players to use the <code>.start</code> command to begin!</p>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -560,41 +551,29 @@
                         <h4><i class="fas fa-newspaper"></i> Recent Events</h4>
                     </div>
                     <div class="card-body p-0">
+                        {% if recent_events %}
                         <div class="event-timeline">
+                            {% for event in recent_events %}
                             <div class="event-item">
-                                <div class="event-icon">⚔️</div>
+                                <div class="event-icon">{{ event.event_icon }}</div>
                                 <div class="event-content">
-                                    <div class="event-title">Battle Victory</div>
-                                    <div class="event-description">Eastern Empire defeated Northern Federation in a decisive battle</div>
+                                    <div class="event-title">{{ event.event_icon }} {{ event.title }}</div>
+                                    <div class="event-description">{{ event.description }}</div>
                                     <div class="event-meta">
-                                        <span class="event-civ">Eastern Empire</span>
-                                        <span class="event-time">2 hours ago</span>
+                                        <span class="event-civ">{{ event.civilization }}</span>
+                                        <span class="event-time">{{ event.time_ago }}</span>
                                     </div>
                                 </div>
                             </div>
-                            <div class="event-item">
-                                <div class="event-icon">🤝</div>
-                                <div class="event-content">
-                                    <div class="event-title">Peace Treaty Signed</div>
-                                    <div class="event-description">Southern Republic and Western Alliance signed a peace treaty</div>
-                                    <div class="event-meta">
-                                        <span class="event-civ">Diplomacy</span>
-                                        <span class="event-time">5 hours ago</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="event-item">
-                                <div class="event-icon">🏗️</div>
-                                <div class="event-content">
-                                    <div class="event-title">Construction Complete</div>
-                                    <div class="event-description">Great Wall construction has been completed in Eastern Empire</div>
-                                    <div class="event-meta">
-                                        <span class="event-civ">Infrastructure</span>
-                                        <span class="event-time">1 day ago</span>
-                                    </div>
-                                </div>
-                            </div>
+                            {% endfor %}
                         </div>
+                        {% else %}
+                        <div class="empty-state">
+                            <i class="fas fa-calendar-times"></i>
+                            <h4>No Recent Events</h4>
+                            <p>Events will appear here as civilizations interact with each other.</p>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -609,38 +588,23 @@
                         <h5><i class="fas fa-chart-pie"></i> Ideology Distribution</h5>
                     </div>
                     <div class="card-body">
-                        <div class="ideology-stat mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-democracy">
-                                    Democracy
-                                </span>
-                                <span class="badge bg-secondary">42</span>
+                        {% if stats.get('ideology_distribution', {}) %}
+                            {% for ideology, count in stats.get('ideology_distribution', {}).items() %}
+                            <div class="ideology-stat mb-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="ideology-badge ideology-{{ ideology.lower() }}">
+                                        {{ ideology.title() }}
+                                    </span>
+                                    <span class="badge bg-secondary">{{ count }}</span>
+                                </div>
                             </div>
+                            {% endfor %}
+                        {% else %}
+                        <div class="empty-state">
+                            <i class="fas fa-balance-scale"></i>
+                            <p>No ideology data available yet</p>
                         </div>
-                        <div class="ideology-stat mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-monarchy">
-                                    Monarchy
-                                </span>
-                                <span class="badge bg-secondary">28</span>
-                            </div>
-                        </div>
-                        <div class="ideology-stat mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-communism">
-                                    Communism
-                                </span>
-                                <span class="badge bg-secondary">19</span>
-                            </div>
-                        </div>
-                        <div class="ideology-stat mb-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-capitalism">
-                                    Capitalism
-                                </span>
-                                <span class="badge bg-secondary">15</span>
-                            </div>
-                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -652,6 +616,7 @@
                         <h5><i class="fas fa-handshake"></i> Active Alliances</h5>
                     </div>
                     <div class="card-body p-0">
+                        {% if alliances %}
                         <div class="table-responsive">
                             <table class="table table-hover mb-0">
                                 <thead>
@@ -663,45 +628,43 @@
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    {% for alliance in alliances %}
                                     <tr>
                                         <td>
-                                            <strong>Eastern Coalition</strong>
+                                            <strong>{{ alliance.name }}</strong>
                                         </td>
                                         <td>
-                                            <span class="badge bg-info">8 members</span>
+                                            <span class="badge bg-info">{{ alliance.member_count }} members</span>
                                             <br>
                                             <small class="text-muted">
-                                                Eastern Empire, Sun Kingdom, Mountain Clans
+                                                {{ alliance.member_names[:3]|join(", ") }}
+                                                {% if alliance.member_names|length > 3 %}
+                                                    and {{ alliance.member_names|length - 3 }} more
+                                                {% endif %}
                                             </small>
                                         </td>
                                         <td>
-                                            <span class="badge bg-danger">3</span>
+                                            {% if alliance.active_wars > 0 %}
+                                                <span class="badge bg-danger">{{ alliance.active_wars }}</span>
+                                            {% else %}
+                                                <span class="badge bg-success">Peaceful</span>
+                                            {% endif %}
                                         </td>
                                         <td>
-                                            <small class="text-muted">2023-10-15</small>
+                                            <small class="text-muted">{{ alliance.created_at[:10] }}</small>
                                         </td>
                                     </tr>
-                                    <tr>
-                                        <td>
-                                            <strong>Western Pact</strong>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-info">6 members</span>
-                                            <br>
-                                            <small class="text-muted">
-                                                Northern Federation, Riverlands, Desert Nomads
-                                            </small>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-danger">2</span>
-                                        </td>
-                                        <td>
-                                            <small class="text-muted">2023-09-22</small>
-                                        </td>
-                                    </tr>
+                                    {% endfor %}
                                 </tbody>
                             </table>
                         </div>
+                        {% else %}
+                        <div class="empty-state">
+                            <i class="fas fa-handshake-slash"></i>
+                            <h4>No Alliances Formed</h4>
+                            <p>Alliances will appear here once civilizations form them.</p>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
