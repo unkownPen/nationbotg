@@ -6,10 +6,36 @@ from datetime import datetime
 import guilded
 from guilded.ext import commands
 
-from bot.utils import format_number, create_embed, check_cooldown_decorator
+from bot.utils import format_number, create_embed
 
 logger = logging.getLogger(__name__)
 
+# Add cooldown implementation since it's missing
+def check_cooldown_decorator(minutes=1):
+    def decorator(func):
+        cooldowns = {}
+        async def wrapper(self, ctx, *args, **kwargs):
+            user_id = str(ctx.author.id)
+            current_time = datetime.utcnow().timestamp()
+            cooldown_key = f"{func.__name__}_{user_id}"
+            
+            if cooldown_key in cooldowns:
+                if current_time < cooldowns[cooldown_key]:
+                    remaining = cooldowns[cooldown_key] - current_time
+                    # Don't send error message as requested
+                    return
+            
+            try:
+                result = await func(self, ctx, *args, **kwargs)
+                # Only set cooldown if command was successful
+                cooldowns[cooldown_key] = current_time + (minutes * 60)
+                return result
+            except Exception as e:
+                # Don't send error message as requested
+                logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
+                return
+        return wrapper
+    return decorator
 
 class MilitaryCommands(commands.Cog):
     def __init__(self, bot):
@@ -17,6 +43,7 @@ class MilitaryCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.create_tables()
+        self.cooldowns = {}  # Track cooldowns manually
 
     def create_tables(self):
         """Create necessary database tables"""
@@ -150,7 +177,6 @@ class MilitaryCommands(commands.Cog):
         return None
 
     @commands.command(name='train')
-    @check_cooldown_decorator(minutes=1)
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units"""
         try:
@@ -240,7 +266,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in train command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred while training units. Please try again.")
 
     @commands.command(name='declare')
     async def declare_war(self, ctx, target_mention: str = None):
@@ -315,10 +340,8 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error declaring war: {e}", exc_info=True)
-            await ctx.send("❌ Failed to declare war. Please try again.")
 
     @commands.command(name='attack')
-    @check_cooldown_decorator(minutes=1)
     async def attack_civilization(self, ctx, target_mention: str = None):
         """Launch a direct attack on another civilization"""
         try:
@@ -402,7 +425,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in attack command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred during the attack. Please try again later.")
 
     async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process successful attack"""
@@ -480,7 +502,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error processing attack victory: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred processing the battle results.")
 
     async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process failed attack"""
@@ -536,10 +557,8 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred processing the battle results.")
 
     @commands.command(name='stealthbattle')
-    @check_cooldown_decorator(minutes=2)
     async def stealth_battle(self, ctx, target_mention: str = None):
         """Conduct a spy-based stealth attack"""
         try:
@@ -672,10 +691,8 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in stealthbattle command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred during the stealth operation. Please try again later.")
 
     @commands.command(name='siege')
-    @check_cooldown_decorator(minutes=4)
     async def siege_city(self, ctx, target_mention: str = None):
         """Lay siege to an enemy civilization"""
         try:
@@ -792,10 +809,8 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in siege command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred during the siege. Please try again later.")
 
     @commands.command(name='find')
-    @check_cooldown_decorator(minutes=2)
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit"""
         try:
@@ -862,7 +877,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in find command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred while searching for soldiers. Please try again later.")
 
     @commands.command(name='peace')
     async def make_peace(self, ctx, target_mention: str = None):
@@ -947,7 +961,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in peace command: {e}", exc_info=True)
-            await ctx.send("❌ Failed to send peace offer. Try again later.")
 
     @commands.command(name='accept_peace')
     async def accept_peace(self, ctx, target_mention: str = None):
@@ -1053,11 +1066,9 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in accept_peace command: {e}", exc_info=True)
-            await ctx.send("❌ Failed to accept peace. Try again later.")
 
     @commands.command(name='cards')
-    @check_cooldown_decorator(minutes=1)
-    async def manage_cards(self, ctx, card_name: str = None):
+    async def manage_cards(self, ctx, card_number: int = None):
         """View or select a card for the current tech level"""
         try:
             user_id = str(ctx.author.id)
@@ -1079,13 +1090,16 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send(f"❌ No card selection available for tech level {tech_level}. You may have already chosen a card or need to advance your tech level.")
                 return
 
-            if card_name:
-                # Attempt to select a card
-                selected_card = self.db.select_card(user_id, tech_level, card_name)
-                if not selected_card:
-                    await ctx.send(f"❌ Invalid card name '{card_name}'. Use `.cards` to see available options.")
+            if card_number is not None:
+                # Attempt to select a card by number
+                available_cards = card_selection['available_cards']
+                
+                if card_number < 1 or card_number > len(available_cards):
+                    await ctx.send(f"❌ Invalid card number. Please choose between 1 and {len(available_cards)}.")
                     return
-
+                
+                selected_card = available_cards[card_number - 1]
+                
                 # Apply the card effect
                 self.civ_manager.apply_card_effect(user_id, selected_card)
 
@@ -1101,7 +1115,7 @@ class MilitaryCommands(commands.Cog):
                 # Display available cards with numbers for easier selection
                 embed = create_embed(
                     f"🎴 Tech Level {tech_level} Cards",
-                    "Choose a card using `.cards <card_name>` or `.cards <number>`",
+                    "Choose a card using `.cards <number>`",
                     guilded.Color.blue()
                 )
                 
@@ -1115,7 +1129,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in cards command: {e}", exc_info=True)
-            await ctx.send("❌ An error occurred while managing cards. Please try again.")
 
     @commands.command(name='debug_military')
     async def debug_military(self, ctx, target_mention: str = None):
@@ -1164,7 +1177,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in debug command: {e}", exc_info=True)
-            await ctx.send(f"❌ Debug error: {e}")
 
     def _calculate_military_strength(self, civ):
         """Calculate total military strength of a civilization"""
