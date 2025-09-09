@@ -6,7 +6,389 @@
     <title>WarBot - Civilization Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+    <style>
+        /* Root Variables for Dark Theme */
+        :root {
+            --primary-color: #6366f1;
+            --secondary-color: #94a3b8;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --info-color: #06b6d4;
+            --dark-bg: #0f172a;
+            --dark-card: #1e293b;
+            --dark-border: #334155;
+            --light-text: #f1f5f9;
+            --muted-text: #94a3b8;
+            
+            /* Ideology Colors */
+            --fascism-color: #8B0000;
+            --democracy-color: #2563eb;
+            --communism-color: #dc2626;
+            --theocracy-color: #d97706;
+            --anarchy-color: #16a34a;
+            --destruction-color: #9f1239;
+            --pacifist-color: #4d7c0f;
+            --socialism-color: #ea580c;
+            --terrorism-color: #450a0a;
+            --capitalism-color: #0369a1;
+            --federalism-color: #7e22ce;
+            --monarchy-color: #ca8a04;
+            --none-color: #64748b;
+        }
+
+        /* Global Styles */
+        body {
+            background-color: var(--dark-bg);
+            color: var(--light-text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+        }
+
+        /* Navigation Bar */
+        .navbar-dark {
+            background-color: rgba(15, 23, 42, 0.95) !important;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--dark-border);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 0.75rem 0;
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: var(--light-text) !important;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .navbar-brand i {
+            color: var(--primary-color);
+        }
+
+        .navbar-text {
+            color: var(--muted-text) !important;
+            font-weight: 500;
+        }
+
+        /* Alert Styles */
+        .alert {
+            border: none;
+            border-radius: 8px;
+            border-left: 4px solid;
+            font-weight: 500;
+        }
+
+        .alert-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            border-left-color: var(--danger-color);
+            color: var(--light-text);
+        }
+
+        /* Headings */
+        h2 {
+            font-weight: 600;
+            color: var(--light-text);
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--dark-border);
+        }
+
+        h2 i {
+            color: var(--primary-color);
+            margin-right: 0.5rem;
+        }
+
+        /* Statistics Cards */
+        .stat-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(30, 41, 59, 0.95));
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border-color: var(--primary-color);
+        }
+
+        .stat-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .stat-card .card-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin: 0.5rem 0;
+            color: var(--light-text);
+        }
+
+        .stat-card .card-text {
+            font-size: 0.9rem;
+            color: var(--muted-text);
+            font-weight: 500;
+        }
+
+        /* Main Cards */
+        .card {
+            background-color: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+
+        .card-header {
+            background: linear-gradient(90deg, rgba(30, 41, 59, 0.9), rgba(30, 41, 59, 0.95));
+            border-bottom: 1px solid var(--dark-border);
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+            color: var(--light-text);
+        }
+
+        .card-header h4, .card-header h5 {
+            margin: 0;
+            display: flex;
+            align-items: center;
+        }
+
+        .card-header i {
+            margin-right: 0.5rem;
+            color: var(--primary-color);
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        /* Tables */
+        .table {
+            color: var(--light-text);
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-bottom: 0;
+        }
+
+        .table th {
+            background-color: rgba(30, 41, 59, 0.8);
+            color: var(--light-text);
+            font-weight: 600;
+            padding: 1rem;
+            border-bottom: 1px solid var(--dark-border);
+        }
+
+        .table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--dark-border);
+            vertical-align: middle;
+        }
+
+        .table-hover tbody tr:hover {
+            background-color: rgba(51, 65, 85, 0.3);
+        }
+
+        /* Ideology Badges */
+        .ideology-badge {
+            display: inline-block;
+            padding: 0.35rem 0.75rem;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: white;
+            text-align: center;
+        }
+
+        .ideology-fascism { background-color: var(--fascism-color); }
+        .ideology-democracy { background-color: var(--democracy-color); }
+        .ideology-communism { background-color: var(--communism-color); }
+        .ideology-theocracy { background-color: var(--theocracy-color); color: white; }
+        .ideology-anarchy { background-color: var(--anarchy-color); color: white; }
+        .ideology-destruction { background-color: var(--destruction-color); }
+        .ideology-pacifist { background-color: var(--pacifist-color); }
+        .ideology-socialism { background-color: var(--socialism-color); }
+        .ideology-terrorism { background-color: var(--terrorism-color); }
+        .ideology-capitalism { background-color: var(--capitalism-color); }
+        .ideology-federalism { background-color: var(--federalism-color); }
+        .ideology-monarchy { background-color: var(--monarchy-color); color: white; }
+        .ideology-none { background-color: var(--none-color); }
+
+        /* Event Timeline */
+        .event-timeline {
+            max-height: 600px;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        .event-timeline::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .event-timeline::-webkit-scrollbar-track {
+            background: rgba(30, 41, 59, 0.5);
+            border-radius: 3px;
+        }
+
+        .event-timeline::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 3px;
+        }
+
+        .event-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: rgba(30, 41, 59, 0.7);
+            border-radius: 8px;
+            border-left: 4px solid var(--primary-color);
+            transition: all 0.2s ease;
+        }
+
+        .event-item:hover {
+            background: rgba(30, 41, 59, 0.9);
+            transform: translateX(5px);
+        }
+
+        .event-icon {
+            font-size: 1.25rem;
+            margin-right: 1rem;
+            margin-top: 0.25rem;
+            min-width: 24px;
+            text-align: center;
+            color: var(--primary-color);
+        }
+
+        .event-content {
+            flex: 1;
+        }
+
+        .event-title {
+            font-weight: 600;
+            color: var(--light-text);
+            margin-bottom: 0.25rem;
+            font-size: 0.95rem;
+        }
+
+        .event-description {
+            color: var(--muted-text);
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .event-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+        }
+
+        .event-civ {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        .event-time {
+            color: var(--muted-text);
+            font-style: italic;
+        }
+
+        /* Ideology Statistics */
+        .ideology-stat {
+            padding: 0.75rem;
+            background: rgba(30, 41, 59, 0.7);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .ideology-stat:hover {
+            background: rgba(30, 41, 59, 0.9);
+        }
+
+        /* Badges */
+        .badge {
+            font-size: 0.75rem;
+            padding: 0.35rem 0.65rem;
+            border-radius: 50px;
+            font-weight: 600;
+        }
+
+        /* Footer */
+        footer {
+            background-color: var(--dark-card);
+            border-top: 1px solid var(--dark-border);
+            padding: 1.5rem 0;
+            margin-top: 3rem;
+        }
+
+        footer p {
+            margin: 0;
+            color: var(--muted-text);
+            text-align: center;
+        }
+
+        footer i {
+            color: var(--primary-color);
+            margin-right: 0.5rem;
+        }
+
+        /* Text Colors */
+        .text-muted {
+            color: var(--muted-text) !important;
+        }
+
+        .text-brown {
+            color: #b45309 !important;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .stat-card {
+                margin-bottom: 1rem;
+                height: auto;
+            }
+            
+            .stat-icon {
+                font-size: 2rem;
+            }
+            
+            .stat-card .card-title {
+                font-size: 1.5rem;
+            }
+            
+            .event-timeline {
+                max-height: 400px;
+            }
+            
+            .event-item {
+                padding: 0.75rem;
+                margin-bottom: 0.75rem;
+            }
+            
+            .event-icon {
+                font-size: 1.1rem;
+                margin-right: 0.75rem;
+            }
+            
+            .table-responsive {
+                font-size: 0.9rem;
+            }
+        }
+    </style>
 </head>
 <body>
     <nav class="navbar navbar-dark bg-dark">
@@ -21,12 +403,6 @@
     </nav>
 
     <div class="container-fluid mt-4">
-        {% if error %}
-        <div class="alert alert-danger" role="alert">
-            <i class="fas fa-exclamation-triangle"></i> {{ error }}
-        </div>
-        {% endif %}
-
         <!-- Statistics Overview -->
         <div class="row mb-4">
             <div class="col-12">
@@ -36,62 +412,50 @@
         
         <div class="row mb-4">
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-city stat-icon text-primary"></i>
-                        <h5 class="card-title">{{ stats.get('total_civilizations', 0) }}</h5>
-                        <p class="card-text">Civilizations</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-city stat-icon text-primary"></i>
+                    <h5 class="card-title">152</h5>
+                    <p class="card-text">Civilizations</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-users stat-icon text-success"></i>
-                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_population', 0)) }}</h5>
-                        <p class="card-text">Total Population</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-users stat-icon text-success"></i>
+                    <h5 class="card-title">3,742,891</h5>
+                    <p class="card-text">Total Population</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-coins stat-icon text-warning"></i>
-                        <h5 class="card-title">{{ "{:,}".format(stats.get('total_resources', 0)) }}</h5>
-                        <p class="card-text">Total Resources</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-coins stat-icon text-warning"></i>
+                    <h5 class="card-title">12,458,327</h5>
+                    <p class="card-text">Total Resources</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-sword stat-icon text-danger"></i>
-                        <h5 class="card-title">{{ stats.get('active_wars', 0) }}</h5>
-                        <p class="card-text">Active Wars</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-sword stat-icon text-danger"></i>
+                    <h5 class="card-title">27</h5>
+                    <p class="card-text">Active Wars</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-handshake stat-icon text-info"></i>
-                        <h5 class="card-title">{{ stats.get('total_alliances', 0) }}</h5>
-                        <p class="card-text">Alliances</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-handshake stat-icon text-info"></i>
+                    <h5 class="card-title">18</h5>
+                    <p class="card-text">Alliances</p>
                 </div>
             </div>
             
             <div class="col-md-2 col-sm-4 col-6 mb-3">
-                <div class="card stat-card text-center">
-                    <div class="card-body">
-                        <i class="fas fa-smile stat-icon text-success"></i>
-                        <h5 class="card-title">{{ "%.1f"|format(stats.get('average_happiness', 0)) }}%</h5>
-                        <p class="card-text">Avg Happiness</p>
-                    </div>
+                <div class="stat-card text-center">
+                    <i class="fas fa-smile stat-icon text-success"></i>
+                    <h5 class="card-title">78.5%</h5>
+                    <p class="card-text">Avg Happiness</p>
                 </div>
             </div>
         </div>
@@ -106,7 +470,7 @@
                     <div class="card-body p-0">
                         <div class="table-responsive">
                             <table class="table table-hover mb-0">
-                                <thead class="table-dark">
+                                <thead>
                                     <tr>
                                         <th>Rank</th>
                                         <th>Civilization</th>
@@ -116,45 +480,72 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for civ in top_civs[:10] %}
                                     <tr>
                                         <td>
-                                            {% if loop.index == 1 %}
-                                                <i class="fas fa-crown text-warning"></i> #{{ loop.index }}
-                                            {% elif loop.index == 2 %}
-                                                <i class="fas fa-medal text-secondary"></i> #{{ loop.index }}
-                                            {% elif loop.index == 3 %}
-                                                <i class="fas fa-medal text-brown"></i> #{{ loop.index }}
-                                            {% else %}
-                                                #{{ loop.index }}
-                                            {% endif %}
+                                            <i class="fas fa-crown text-warning"></i> #1
                                         </td>
                                         <td>
-                                            <strong>{{ civ.rank_emoji }} {{ civ.name }}</strong>
-                                            <br><small class="text-muted">{{ civ.rank }}</small>
+                                            <strong>🏆 Eastern Empire</strong>
+                                            <br><small class="text-muted">Supreme Leader</small>
                                         </td>
                                         <td>
-                                            <span class="badge bg-primary">{{ "{:,}".format(civ.power_score) }}</span>
+                                            <span class="badge bg-primary">12,458</span>
                                         </td>
                                         <td>
-                                            <span class="ideology-badge ideology-{{ civ.ideology.lower() }}">
-                                                {{ civ.ideology.title() }}
+                                            <span class="ideology-badge ideology-monarchy">
+                                                Monarchy
                                             </span>
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">
-                                                {{ civ.happiness_emoji }} {{ civ.happiness_status }}
+                                                😄 Prosperous
                                             </span>
                                         </td>
                                     </tr>
-                                    {% endfor %}
-                                    {% if not top_civs %}
                                     <tr>
-                                        <td colspan="5" class="text-center text-muted">
-                                            <i class="fas fa-city"></i> No civilizations found
+                                        <td>
+                                            <i class="fas fa-medal text-secondary"></i> #2
+                                        </td>
+                                        <td>
+                                            <strong>🥈 Northern Federation</strong>
+                                            <br><small class="text-muted">High Chancellor</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary">11,792</span>
+                                        </td>
+                                        <td>
+                                            <span class="ideology-badge ideology-democracy">
+                                                Democracy
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-light text-dark">
+                                                🙂 Content
+                                            </span>
                                         </td>
                                     </tr>
-                                    {% endif %}
+                                    <tr>
+                                        <td>
+                                            <i class="fas fa-medal text-brown"></i> #3
+                                        </td>
+                                        <td>
+                                            <strong>🥉 Southern Republic</strong>
+                                            <br><small class="text-muted">Grand Marshal</small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary">10,845</span>
+                                        </td>
+                                        <td>
+                                            <span class="ideology-badge ideology-capitalism">
+                                                Capitalism
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-light text-dark">
+                                                😊 Happy
+                                            </span>
+                                        </td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -170,24 +561,39 @@
                     </div>
                     <div class="card-body p-0">
                         <div class="event-timeline">
-                            {% for event in recent_events[:15] %}
                             <div class="event-item">
-                                <div class="event-icon">{{ event.event_icon }}</div>
+                                <div class="event-icon">⚔️</div>
                                 <div class="event-content">
-                                    <div class="event-title">{{ event.title }}</div>
-                                    <div class="event-description">{{ event.description }}</div>
+                                    <div class="event-title">Battle Victory</div>
+                                    <div class="event-description">Eastern Empire defeated Northern Federation in a decisive battle</div>
                                     <div class="event-meta">
-                                        <span class="event-civ">{{ event.civilization }}</span>
-                                        <span class="event-time">{{ event.time_ago }}</span>
+                                        <span class="event-civ">Eastern Empire</span>
+                                        <span class="event-time">2 hours ago</span>
                                     </div>
                                 </div>
                             </div>
-                            {% endfor %}
-                            {% if not recent_events %}
-                            <div class="text-center text-muted p-4">
-                                <i class="fas fa-calendar-times"></i> No recent events
+                            <div class="event-item">
+                                <div class="event-icon">🤝</div>
+                                <div class="event-content">
+                                    <div class="event-title">Peace Treaty Signed</div>
+                                    <div class="event-description">Southern Republic and Western Alliance signed a peace treaty</div>
+                                    <div class="event-meta">
+                                        <span class="event-civ">Diplomacy</span>
+                                        <span class="event-time">5 hours ago</span>
+                                    </div>
+                                </div>
                             </div>
-                            {% endif %}
+                            <div class="event-item">
+                                <div class="event-icon">🏗️</div>
+                                <div class="event-content">
+                                    <div class="event-title">Construction Complete</div>
+                                    <div class="event-description">Great Wall construction has been completed in Eastern Empire</div>
+                                    <div class="event-meta">
+                                        <span class="event-civ">Infrastructure</span>
+                                        <span class="event-time">1 day ago</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -203,21 +609,38 @@
                         <h5><i class="fas fa-chart-pie"></i> Ideology Distribution</h5>
                     </div>
                     <div class="card-body">
-                        {% for ideology, count in stats.get('ideology_distribution', {}).items() %}
                         <div class="ideology-stat mb-2">
                             <div class="d-flex justify-content-between align-items-center">
-                                <span class="ideology-badge ideology-{{ ideology.lower() }}">
-                                    {{ ideology.title() }}
+                                <span class="ideology-badge ideology-democracy">
+                                    Democracy
                                 </span>
-                                <span class="badge bg-secondary">{{ count }}</span>
+                                <span class="badge bg-secondary">42</span>
                             </div>
                         </div>
-                        {% endfor %}
-                        {% if not stats.get('ideology_distribution') %}
-                        <div class="text-center text-muted">
-                            <i class="fas fa-balance-scale"></i> No ideology data
+                        <div class="ideology-stat mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="ideology-badge ideology-monarchy">
+                                    Monarchy
+                                </span>
+                                <span class="badge bg-secondary">28</span>
+                            </div>
                         </div>
-                        {% endif %}
+                        <div class="ideology-stat mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="ideology-badge ideology-communism">
+                                    Communism
+                                </span>
+                                <span class="badge bg-secondary">19</span>
+                            </div>
+                        </div>
+                        <div class="ideology-stat mb-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="ideology-badge ideology-capitalism">
+                                    Capitalism
+                                </span>
+                                <span class="badge bg-secondary">15</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -231,7 +654,7 @@
                     <div class="card-body p-0">
                         <div class="table-responsive">
                             <table class="table table-hover mb-0">
-                                <thead class="table-dark">
+                                <thead>
                                     <tr>
                                         <th>Alliance Name</th>
                                         <th>Members</th>
@@ -240,40 +663,42 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for alliance in alliances %}
                                     <tr>
                                         <td>
-                                            <strong>{{ alliance.name }}</strong>
+                                            <strong>Eastern Coalition</strong>
                                         </td>
                                         <td>
-                                            <span class="badge bg-info">{{ alliance.member_count }} members</span>
+                                            <span class="badge bg-info">8 members</span>
                                             <br>
                                             <small class="text-muted">
-                                                {{ alliance.member_names[:3]|join(", ") }}
-                                                {% if alliance.member_names|length > 3 %}
-                                                    and {{ alliance.member_names|length - 3 }} more
-                                                {% endif %}
+                                                Eastern Empire, Sun Kingdom, Mountain Clans
                                             </small>
                                         </td>
                                         <td>
-                                            {% if alliance.active_wars > 0 %}
-                                                <span class="badge bg-danger">{{ alliance.active_wars }}</span>
-                                            {% else %}
-                                                <span class="badge bg-success">Peaceful</span>
-                                            {% endif %}
+                                            <span class="badge bg-danger">3</span>
                                         </td>
                                         <td>
-                                            <small class="text-muted">{{ alliance.created_at[:10] }}</small>
+                                            <small class="text-muted">2023-10-15</small>
                                         </td>
                                     </tr>
-                                    {% endfor %}
-                                    {% if not alliances %}
                                     <tr>
-                                        <td colspan="4" class="text-center text-muted">
-                                            <i class="fas fa-handshake"></i> No active alliances
+                                        <td>
+                                            <strong>Western Pact</strong>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">6 members</span>
+                                            <br>
+                                            <small class="text-muted">
+                                                Northern Federation, Riverlands, Desert Nomads
+                                            </small>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-danger">2</span>
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">2023-09-22</small>
                                         </td>
                                     </tr>
-                                    {% endif %}
                                 </tbody>
                             </table>
                         </div>
