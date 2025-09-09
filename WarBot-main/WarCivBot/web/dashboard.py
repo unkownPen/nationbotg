@@ -161,6 +161,9 @@ def get_dashboard_stats():
         ideology_count = {}
         for civ in civilizations:
             ideology = civ.get('ideology', 'None')
+            # Handle None ideology
+            if ideology is None:
+                ideology = "None"
             ideology_count[ideology] = ideology_count.get(ideology, 0) + 1
         
         return {
@@ -191,13 +194,18 @@ def get_top_civilizations(limit=10):
             rank, rank_emoji = get_civilization_rank(power_score)
             happiness_status, happiness_emoji = get_happiness_status(civ['population']['happiness'])
             
+            # Handle None ideology
+            ideology = civ.get('ideology', 'None')
+            if ideology is None:
+                ideology = "None"
+            
             civ_scores.append({
                 "name": civ['name'],
                 "user_id": civ['user_id'],
                 "power_score": power_score,
                 "rank": rank,
                 "rank_emoji": rank_emoji,
-                "ideology": civ.get('ideology', 'None'),
+                "ideology": ideology,
                 "population": civ['population']['citizens'],
                 "happiness": civ['population']['happiness'],
                 "happiness_status": happiness_status,
@@ -303,10 +311,15 @@ def get_leaderboard_by_category(category, limit=20):
         
         leaderboard = []
         for civ in civilizations:
+            # Handle None ideology
+            ideology = civ.get('ideology', 'None')
+            if ideology is None:
+                ideology = "None"
+                
             entry = {
                 "name": civ['name'],
                 "user_id": civ['user_id'],
-                "ideology": civ.get('ideology', 'None')
+                "ideology": ideology
             }
             
             if category == 'power':
