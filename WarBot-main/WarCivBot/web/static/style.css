@@ -1,491 +1,545 @@
-/* WarBot Civilization Dashboard - Custom Styles */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WarBot Dark Theme Preview</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Root Variables for Dark Theme */
+        :root {
+            --primary-color: #6366f1;
+            --secondary-color: #94a3b8;
+            --success-color: #10b981;
+            --danger-color: #ef4444;
+            --warning-color: #f59e0b;
+            --info-color: #06b6d4;
+            --dark-bg: #0f172a;
+            --dark-card: #1e293b;
+            --dark-border: #334155;
+            --light-text: #f1f5f9;
+            --muted-text: #94a3b8;
+            
+            /* Ideology Colors */
+            --fascism-color: #8B0000;
+            --democracy-color: #2563eb;
+            --communism-color: #dc2626;
+            --theocracy-color: #d97706;
+            --anarchy-color: #16a34a;
+            --destruction-color: #9f1239;
+            --pacifist-color: #4d7c0f;
+            --socialism-color: #ea580c;
+            --terrorism-color: #450a0a;
+            --capitalism-color: #0369a1;
+            --federalism-color: #7e22ce;
+            --monarchy-color: #ca8a04;
+            --none-color: #64748b;
+        }
 
-/* Root Variables for Theme Consistency */
-:root {
-    --primary-color: #0d6efd;
-    --secondary-color: #6c757d;
-    --success-color: #198754;
-    --danger-color: #dc3545;
-    --warning-color: #ffc107;
-    --info-color: #0dcaf0;
-    --dark-color: #212529;
-    --light-color: #f8f9fa;
-    
-    /* Custom WarBot Colors */
-    --warbot-gold: #ffd700;
-    --warbot-bronze: #cd7f32;
-    --warbot-silver: #c0c0c0;
-    --warbot-dark-bg: #1a1a1a;
-    --warbot-card-bg: #2d2d2d;
-    
-    /* Ideology Colors */
-    --fascism-color: #8B0000;
-    --democracy-color: #0066CC;
-    --communism-color: #CC0000;
-    --theocracy-color: #FFD700;
-    --anarchy-color: #32CD32;
-    --none-color: #6c757d;
-}
+        /* Global Styles */
+        body {
+            background-color: var(--dark-bg);
+            color: var(--light-text);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
 
-/* Body and Global Styles */
-body {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-}
+        /* Navigation Bar */
+        .navbar-dark {
+            background-color: rgba(15, 23, 42, 0.95) !important;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--dark-border);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 0.75rem 0;
+        }
 
-/* Navigation Bar Enhancements */
-.navbar-dark {
-    background: linear-gradient(90deg, #1a1a1a 0%, #2d2d2d 100%) !important;
-    border-bottom: 3px solid var(--warbot-gold);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-}
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: var(--light-text) !important;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
 
-.navbar-brand {
-    font-weight: bold;
-    font-size: 1.5rem;
-    color: var(--warbot-gold) !important;
-}
+        .navbar-brand i {
+            color: var(--primary-color);
+        }
 
-.navbar-brand i {
-    color: var(--warbot-gold);
-    margin-right: 10px;
-}
+        .nav-link {
+            color: var(--muted-text) !important;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
 
-/* Statistics Cards */
-.stat-card {
-    background: rgba(255, 255, 255, 0.95);
-    border: none;
-    border-radius: 15px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    backdrop-filter: blur(8px);
-    transition: all 0.3s ease;
-    height: 120px;
-}
+        .nav-link:hover {
+            color: var(--light-text) !important;
+        }
 
-.stat-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
-}
+        /* Card Styles */
+        .card {
+            background-color: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
 
-.stat-icon {
-    font-size: 2.5rem;
-    margin-bottom: 10px;
-}
+        .card-header {
+            background: linear-gradient(90deg, rgba(30, 41, 59, 0.9), rgba(30, 41, 59, 0.95));
+            border-bottom: 1px solid var(--dark-border);
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+            color: var(--light-text);
+        }
 
-.stat-card .card-title {
-    font-size: 1.8rem;
-    font-weight: bold;
-    margin: 5px 0;
-}
+        .card-body {
+            padding: 1.5rem;
+        }
 
-.stat-card .card-text {
-    font-size: 0.9rem;
-    color: #6c757d;
-    font-weight: 500;
-}
+        /* Statistics Cards */
+        .stat-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(30, 41, 59, 0.95));
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
 
-/* Main Cards */
-.card {
-    background: rgba(255, 255, 255, 0.95);
-    border: none;
-    border-radius: 15px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    backdrop-filter: blur(8px);
-    margin-bottom: 20px;
-}
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border-color: var(--primary-color);
+        }
 
-.card-header {
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 15px 15px 0 0 !important;
-    padding: 15px 20px;
-    font-weight: 600;
-}
+        .stat-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
 
-.card-header h4, .card-header h5 {
-    margin: 0;
-    display: flex;
-    align-items: center;
-}
+        .stat-card .card-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin: 0.5rem 0;
+            color: var(--light-text);
+        }
 
-.card-header i {
-    margin-right: 10px;
-    font-size: 1.2em;
-}
+        .stat-card .card-text {
+            font-size: 0.9rem;
+            color: var(--muted-text);
+            font-weight: 500;
+        }
 
-/* Tables */
-.table {
-    margin-bottom: 0;
-}
+        /* Tables */
+        .table {
+            color: var(--light-text);
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
 
-.table-hover tbody tr:hover {
-    background-color: rgba(102, 126, 234, 0.1);
-}
+        .table th {
+            background-color: rgba(30, 41, 59, 0.8);
+            color: var(--light-text);
+            font-weight: 600;
+            padding: 1rem;
+            border-bottom: 1px solid var(--dark-border);
+        }
 
-.table-dark th {
-    background: linear-gradient(90deg, #1a1a1a 0%, #2d2d2d 100%);
-    border: none;
-    color: white;
-    font-weight: 600;
-}
+        .table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--dark-border);
+            vertical-align: middle;
+        }
 
-/* Ideology Badges */
-.ideology-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: white;
-    min-width: 80px;
-    text-align: center;
-}
+        .table-hover tbody tr:hover {
+            background-color: rgba(51, 65, 85, 0.3);
+        }
 
-.ideology-fascism { background-color: var(--fascism-color); }
-.ideology-democracy { background-color: var(--democracy-color); }
-.ideology-communism { background-color: var(--communism-color); }
-.ideology-theocracy { background-color: var(--theocracy-color); color: black; }
-.ideology-anarchy { background-color: var(--anarchy-color); color: black; }
-.ideology-none { background-color: var(--none-color); }
+        /* Ideology Badges */
+        .ideology-badge {
+            display: inline-block;
+            padding: 0.35rem 0.75rem;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: white;
+            text-align: center;
+        }
 
-/* Event Timeline */
-.event-timeline {
-    max-height: 600px;
-    overflow-y: auto;
-    padding: 10px;
-}
+        .ideology-fascism { background-color: var(--fascism-color); }
+        .ideology-democracy { background-color: var(--democracy-color); }
+        .ideology-communism { background-color: var(--communism-color); }
+        .ideology-theocracy { background-color: var(--theocracy-color); color: white; }
+        .ideology-anarchy { background-color: var(--anarchy-color); color: white; }
+        .ideology-destruction { background-color: var(--destruction-color); }
+        .ideology-pacifist { background-color: var(--pacifist-color); }
+        .ideology-socialism { background-color: var(--socialism-color); }
+        .ideology-terrorism { background-color: var(--terrorism-color); }
+        .ideology-capitalism { background-color: var(--capitalism-color); }
+        .ideology-federalism { background-color: var(--federalism-color); }
+        .ideology-monarchy { background-color: var(--monarchy-color); color: white; }
+        .ideology-none { background-color: var(--none-color); }
 
-.event-timeline::-webkit-scrollbar {
-    width: 6px;
-}
+        /* Event Timeline */
+        .event-timeline {
+            max-height: 600px;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
 
-.event-timeline::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 3px;
-}
+        .event-timeline::-webkit-scrollbar {
+            width: 6px;
+        }
 
-.event-timeline::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 3px;
-}
+        .event-timeline::-webkit-scrollbar-track {
+            background: rgba(30, 41, 59, 0.5);
+            border-radius: 3px;
+        }
 
-.event-timeline::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-}
+        .event-timeline::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 3px;
+        }
 
-.event-item {
-    display: flex;
-    align-items: flex-start;
-    margin-bottom: 15px;
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 10px;
-    border-left: 4px solid var(--primary-color);
-    transition: all 0.2s ease;
-}
+        .event-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: rgba(30, 41, 59, 0.7);
+            border-radius: 8px;
+            border-left: 4px solid var(--primary-color);
+            transition: all 0.2s ease;
+        }
 
-.event-item:hover {
-    background: rgba(255, 255, 255, 0.9);
-    transform: translateX(5px);
-}
+        .event-item:hover {
+            background: rgba(30, 41, 59, 0.9);
+            transform: translateX(5px);
+        }
 
-.event-icon {
-    font-size: 1.5rem;
-    margin-right: 15px;
-    margin-top: 2px;
-    min-width: 30px;
-    text-align: center;
-}
+        .event-icon {
+            font-size: 1.25rem;
+            margin-right: 1rem;
+            margin-top: 0.25rem;
+            min-width: 24px;
+            text-align: center;
+            color: var(--primary-color);
+        }
 
-.event-content {
-    flex: 1;
-}
+        .event-content {
+            flex: 1;
+        }
 
-.event-title {
-    font-weight: 600;
-    color: #2d3436;
-    margin-bottom: 4px;
-    font-size: 0.95rem;
-}
+        .event-title {
+            font-weight: 600;
+            color: var(--light-text);
+            margin-bottom: 0.25rem;
+            font-size: 0.95rem;
+        }
 
-.event-description {
-    color: #636e72;
-    margin-bottom: 6px;
-    font-size: 0.85rem;
-    line-height: 1.4;
-}
+        .event-description {
+            color: var(--muted-text);
+            margin-bottom: 0.5rem;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
 
-.event-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.75rem;
-}
+        .event-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+        }
 
-.event-civ {
-    color: var(--primary-color);
-    font-weight: 600;
-}
+        .event-civ {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
 
-.event-time {
-    color: #74b9ff;
-    font-style: italic;
-}
+        .event-time {
+            color: var(--muted-text);
+            font-style: italic;
+        }
 
-/* Ranking Enhancements */
-.table tbody tr:first-child {
-    background: linear-gradient(90deg, rgba(255, 215, 0, 0.2), rgba(255, 215, 0, 0.1));
-    font-weight: 600;
-}
+        /* Footer */
+        footer {
+            background-color: var(--dark-card);
+            border-top: 1px solid var(--dark-border);
+            padding: 1.5rem 0;
+            margin-top: 3rem;
+        }
 
-.table tbody tr:nth-child(2) {
-    background: linear-gradient(90deg, rgba(192, 192, 192, 0.2), rgba(192, 192, 192, 0.1));
-    font-weight: 500;
-}
+        footer p {
+            margin: 0;
+            color: var(--muted-text);
+            text-align: center;
+        }
 
-.table tbody tr:nth-child(3) {
-    background: linear-gradient(90deg, rgba(205, 127, 50, 0.2), rgba(205, 127, 50, 0.1));
-    font-weight: 500;
-}
+        footer i {
+            color: var(--primary-color);
+            margin-right: 0.5rem;
+        }
 
-/* Badge Enhancements */
-.badge {
-    font-size: 0.75rem;
-    padding: 6px 12px;
-    border-radius: 20px;
-}
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .stat-card {
+                margin-bottom: 1rem;
+                height: auto;
+            }
+            
+            .stat-icon {
+                font-size: 2rem;
+            }
+            
+            .stat-card .card-title {
+                font-size: 1.5rem;
+            }
+            
+            .event-timeline {
+                max-height: 400px;
+            }
+            
+            .event-item {
+                padding: 0.75rem;
+                margin-bottom: 0.75rem;
+            }
+            
+            .event-icon {
+                font-size: 1.1rem;
+                margin-right: 0.75rem;
+            }
+            
+            .table-responsive {
+                font-size: 0.9rem;
+            }
+        }
 
-/* Ideology Statistics */
-.ideology-stat {
-    padding: 8px 12px;
-    background: rgba(255, 255, 255, 0.7);
-    border-radius: 8px;
-    margin-bottom: 8px;
-}
+        /* Preview Styling */
+        .preview-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
 
-.ideology-stat:hover {
-    background: rgba(255, 255, 255, 0.9);
-}
+        .preview-section {
+            margin-bottom: 3rem;
+        }
 
-/* Alert Enhancements */
-.alert {
-    border: none;
-    border-radius: 10px;
-    border-left: 5px solid;
-    font-weight: 500;
-}
+        .preview-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: var(--light-text);
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--dark-border);
+        }
 
-.alert-danger {
-    background: rgba(220, 53, 69, 0.1);
-    border-left-color: var(--danger-color);
-    color: #721c24;
-}
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            margin: 0 -0.75rem;
+        }
 
-/* Footer */
-footer {
-    background: linear-gradient(90deg, #1a1a1a 0%, #2d2d2d 100%) !important;
-    border-top: 3px solid var(--warbot-gold);
-    margin-top: auto;
-}
+        .col {
+            flex: 1;
+            padding: 0 0.75rem;
+            margin-bottom: 1.5rem;
+        }
 
-footer p {
-    margin: 0;
-    color: #e9ecef;
-}
+        .col-4 {
+            flex: 0 0 33.333333%;
+            max-width: 33.333333%;
+        }
 
-footer i {
-    color: var(--warbot-gold);
-    margin-right: 5px;
-}
+        .col-6 {
+            flex: 0 0 50%;
+            max-width: 50%;
+        }
 
-/* Responsive Design */
-@media (max-width: 768px) {
-    .stat-card {
-        margin-bottom: 15px;
-        height: auto;
-    }
-    
-    .stat-icon {
-        font-size: 2rem;
-    }
-    
-    .stat-card .card-title {
-        font-size: 1.5rem;
-    }
-    
-    .event-timeline {
-        max-height: 400px;
-    }
-    
-    .event-item {
-        padding: 10px;
-        margin-bottom: 10px;
-    }
-    
-    .event-icon {
-        font-size: 1.2rem;
-        margin-right: 10px;
-    }
-    
-    .table-responsive {
-        font-size: 0.9rem;
-    }
-    
-    .ideology-badge {
-        min-width: 70px;
-        font-size: 0.7rem;
-        padding: 3px 8px;
-    }
-}
+        .col-12 {
+            flex: 0 0 100%;
+            max-width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <!-- Preview of various elements -->
+    <div class="preview-container">
+        <h1 class="text-center mb-4">WarBot Dark Theme Preview</h1>
+        
+        <!-- Statistics Cards -->
+        <section class="preview-section">
+            <h2 class="preview-title">Statistics Cards</h2>
+            <div class="row">
+                <div class="col-4">
+                    <div class="stat-card">
+                        <i class="fas fa-coins stat-icon"></i>
+                        <h3 class="card-title">12,458</h3>
+                        <p class="card-text">Total Gold</p>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="stat-card">
+                        <i class="fas fa-users stat-icon"></i>
+                        <h3 class="card-title">3,742</h3>
+                        <p class="card-text">Population</p>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="stat-card">
+                        <i class="fas fa-shield-alt stat-icon"></i>
+                        <h3 class="card-title">856</h3>
+                        <p class="card-text">Soldiers</p>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-@media (max-width: 576px) {
-    .navbar-brand {
-        font-size: 1.2rem;
-    }
-    
-    .stat-icon {
-        font-size: 1.8rem;
-    }
-    
-    .stat-card .card-title {
-        font-size: 1.3rem;
-    }
-    
-    .card-header h4, .card-header h5 {
-        font-size: 1rem;
-    }
-    
-    .event-meta {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 2px;
-    }
-    
-    .table td, .table th {
-        padding: 8px 4px;
-        font-size: 0.8rem;
-    }
-}
+        <!-- Ideology Badges -->
+        <section class="preview-section">
+            <h2 class="preview-title">Ideology Badges</h2>
+            <div class="row">
+                <div class="col">
+                    <span class="ideology-badge ideology-fascism">Fascism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-democracy">Democracy</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-communism">Communism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-theocracy">Theocracy</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-anarchy">Anarchy</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-destruction">Destruction</span>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col">
+                    <span class="ideology-badge ideology-pacifist">Pacifist</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-socialism">Socialism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-terrorism">Terrorism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-capitalism">Capitalism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-federalism">Federalism</span>
+                </div>
+                <div class="col">
+                    <span class="ideology-badge ideology-monarchy">Monarchy</span>
+                </div>
+            </div>
+        </section>
 
-/* Loading Animation for Auto-refresh */
-.refresh-indicator {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: var(--warbot-gold);
-    color: black;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    z-index: 1000;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
+        <!-- Event Timeline -->
+        <section class="preview-section">
+            <h2 class="preview-title">Event Timeline</h2>
+            <div class="card">
+                <div class="card-header">
+                    <h4><i class="fas fa-history"></i> Recent Events</h4>
+                </div>
+                <div class="card-body">
+                    <div class="event-timeline">
+                        <div class="event-item">
+                            <div class="event-icon"><i class="fas fa-battle-net"></i></div>
+                            <div class="event-content">
+                                <div class="event-title">Battle Victory</div>
+                                <div class="event-description">Your forces defeated the Roman Empire in a decisive battle</div>
+                                <div class="event-meta">
+                                    <span class="event-civ">Your Civilization</span>
+                                    <span class="event-time">2 hours ago</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="event-item">
+                            <div class="event-icon"><i class="fas fa-handshake"></i></div>
+                            <div class="event-content">
+                                <div class="event-title">Peace Treaty Signed</div>
+                                <div class="event-description">Signed a peace treaty with the Byzantine Empire</div>
+                                <div class="event-meta">
+                                    <span class="event-civ">Diplomacy</span>
+                                    <span class="event-time">5 hours ago</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="event-item">
+                            <div class="event-icon"><i class="fas fa-hard-hat"></i></div>
+                            <div class="event-content">
+                                <div class="event-title">Construction Complete</div>
+                                <div class="event-description">Great Wall construction has been completed</div>
+                                <div class="event-meta">
+                                    <span class="event-civ">Infrastructure</span>
+                                    <span class="event-time">1 day ago</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-.refresh-indicator.show {
-    opacity: 1;
-}
-
-/* Custom Animations */
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translate3d(0, 40px, 0);
-    }
-    to {
-        opacity: 1;
-        transform: translate3d(0, 0, 0);
-    }
-}
-
-.card {
-    animation: fadeInUp 0.6s ease;
-}
-
-.stat-card:nth-child(1) { animation-delay: 0.1s; }
-.stat-card:nth-child(2) { animation-delay: 0.2s; }
-.stat-card:nth-child(3) { animation-delay: 0.3s; }
-.stat-card:nth-child(4) { animation-delay: 0.4s; }
-.stat-card:nth-child(5) { animation-delay: 0.5s; }
-.stat-card:nth-child(6) { animation-delay: 0.6s; }
-
-/* Special Effects for High Ranks */
-.fa-crown {
-    animation: glow 2s ease-in-out infinite alternate;
-}
-
-@keyframes glow {
-    from {
-        text-shadow: 0 0 5px var(--warbot-gold), 0 0 10px var(--warbot-gold);
-    }
-    to {
-        text-shadow: 0 0 10px var(--warbot-gold), 0 0 20px var(--warbot-gold);
-    }
-}
-
-/* Text Color for Bronze Medal */
-.text-brown {
-    color: var(--warbot-bronze) !important;
-}
-
-/* Civilization Rank Styling */
-tbody tr td strong {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-tbody tr td strong small {
-    font-weight: normal;
-}
-
-/* Enhanced Hover Effects */
-.card:hover {
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.15);
-    transform: translateY(-2px);
-}
-
-/* Custom Scrollbar for Tables */
-.table-responsive::-webkit-scrollbar {
-    height: 8px;
-}
-
-.table-responsive::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 4px;
-}
-
-.table-responsive::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 4px;
-}
-
-.table-responsive::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-}
-
-/* Print Styles */
-@media print {
-    .navbar, footer {
-        display: none !important;
-    }
-    
-    .card {
-        break-inside: avoid;
-        box-shadow: none;
-        border: 1px solid #dee2e6;
-    }
-    
-    .stat-card {
-        box-shadow: none;
-        border: 1px solid #dee2e6;
-    }
-    
-    body {
-        background: white !important;
-    }
-}
+        <!-- Table -->
+        <section class="preview-section">
+            <h2 class="preview-title">Ranking Table</h2>
+            <div class="card">
+                <div class="card-header">
+                    <h4><i class="fas fa-trophy"></i> Top Civilizations</h4>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Civilization</th>
+                                    <th>Ideology</th>
+                                    <th>Score</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>1</td>
+                                    <td>Eastern Empire</td>
+                                    <td><span class="ideology-badge ideology-monarchy">Monarchy</span></td>
+                                    <td>12,458</td>
+                                </tr>
+                                <tr>
+                                    <td>2</td>
+                                    <td>Northern Federation</td>
+                                    <td><span class="ideology-badge ideology-democracy">Democracy</span></td>
+                                    <td>11,792</td>
+                                </tr>
+                                <tr>
+                                    <td>3</td>
+                                    <td>Southern Republic</td>
+                                    <td><span class="ideology-badge ideology-capitalism">Capitalism</span></td>
+                                    <td>10,845</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>
