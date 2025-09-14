@@ -46,13 +46,14 @@ def dashboard():
     try:
         db, civ_manager = initialize_services()
         
+        # Check if services are properly initialized
         if db is None or civ_manager is None:
             return render_template('index.html', 
-                                 stats=get_sample_stats(),
-                                 top_civs=get_sample_civilizations(),
-                                 recent_events=get_sample_events(),
-                                 alliances=get_sample_alliances(),
-                                 error="Database connection failed - displaying sample data")
+                                 stats=get_empty_stats(),
+                                 top_civs=[],
+                                 recent_events=[],
+                                 alliances=[],
+                                 error="Database connection failed")
         
         # Get statistics
         stats = get_dashboard_stats()
@@ -66,14 +67,6 @@ def dashboard():
         # Get alliance information
         alliances = get_alliance_info()
         
-        # If no data found, use sample data
-        if not top_civs:
-            logger.warning("No civilization data found, using sample data")
-            stats = get_sample_stats()
-            top_civs = get_sample_civilizations()
-            recent_events = get_sample_events()
-            alliances = get_sample_alliances()
-        
         return render_template('index.html', 
                              stats=stats,
                              top_civs=top_civs,
@@ -82,11 +75,11 @@ def dashboard():
     except Exception as e:
         logger.error(f"Error loading dashboard: {e}")
         return render_template('index.html', 
-                             stats=get_sample_stats(), 
-                             top_civs=get_sample_civilizations(), 
-                             recent_events=get_sample_events(), 
-                             alliances=get_sample_alliances(),
-                             error="Dashboard temporarily unavailable - displaying sample data")
+                             stats=get_empty_stats(), 
+                             top_civs=[], 
+                             recent_events=[], 
+                             alliances=[],
+                             error="Dashboard temporarily unavailable")
 
 @app.route('/api/stats')
 def api_stats():
@@ -94,11 +87,11 @@ def api_stats():
     try:
         db, civ_manager = initialize_services()
         if db is None or civ_manager is None:
-            return jsonify(get_sample_stats())
+            return jsonify(get_empty_stats())
         return jsonify(get_dashboard_stats())
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        return jsonify(get_sample_stats())
+        return jsonify(get_empty_stats())
 
 @app.route('/api/civilizations')
 def api_civilizations():
@@ -106,12 +99,12 @@ def api_civilizations():
     try:
         db, civ_manager = initialize_services()
         if db is None or civ_manager is None:
-            return jsonify(get_sample_civilizations(50))
-        civs = get_top_civilizations(50)  # Get more for API
-        return jsonify(civs if civs else get_sample_civilizations(50))
+            return jsonify([])
+        civs = get_top_civilizations(50)
+        return jsonify(civs)
     except Exception as e:
         logger.error(f"Error getting civilizations: {e}")
-        return jsonify(get_sample_civilizations(50))
+        return jsonify([])
 
 @app.route('/api/events')
 def api_events():
@@ -119,12 +112,12 @@ def api_events():
     try:
         db, civ_manager = initialize_services()
         if db is None or civ_manager is None:
-            return jsonify(get_sample_events(100))
-        events = get_recent_events(100)  # Get more for API
-        return jsonify(events if events else get_sample_events(100))
+            return jsonify([])
+        events = get_recent_events(100)
+        return jsonify(events)
     except Exception as e:
         logger.error(f"Error getting events: {e}")
-        return jsonify(get_sample_events(100))
+        return jsonify([])
 
 @app.route('/api/leaderboard/<category>')
 def api_leaderboard(category):
@@ -137,13 +130,13 @@ def api_leaderboard(category):
             
         db, civ_manager = initialize_services()
         if db is None or civ_manager is None:
-            return jsonify(get_sample_leaderboard(category, 20))
+            return jsonify([])
             
         leaderboard = get_leaderboard_by_category(category, 20)
-        return jsonify(leaderboard if leaderboard else get_sample_leaderboard(category, 20))
+        return jsonify(leaderboard)
     except Exception as e:
         logger.error(f"Error getting leaderboard for {category}: {e}")
-        return jsonify(get_sample_leaderboard(category, 20))
+        return jsonify([])
 
 @app.route('/health')
 def health_check():
@@ -165,8 +158,8 @@ def get_dashboard_stats():
         civilizations = db.get_all_civilizations()
         
         if not civilizations:
-            logger.warning("No civilizations found in database")
-            return get_sample_stats()
+            logger.info("No civilizations found in database - returning empty stats")
+            return get_empty_stats()
         
         # Calculate totals
         total_population = sum(civ['population']['citizens'] for civ in civilizations)
@@ -178,17 +171,19 @@ def get_dashboard_stats():
         conn = db.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM wars WHERE result = 'ongoing'")
-        active_wars = cursor.fetchone()[0] if cursor.fetchone() else 0
+        result = cursor.fetchone()
+        active_wars = result[0] if result else 0
         
         # Get total alliances
         cursor.execute("SELECT COUNT(*) FROM alliances")
-        total_alliances = cursor.fetchone()[0] if cursor.fetchone() else 0
+        result = cursor.fetchone()
+        total_alliances = result[0] if result else 0
         
         # Get recent events count (last 24 hours)
         yesterday = datetime.now() - timedelta(days=1)
         cursor.execute("SELECT COUNT(*) FROM events WHERE timestamp > ?", (yesterday,))
-        recent_events_result = cursor.fetchone()
-        recent_events = recent_events_result[0] if recent_events_result else 0
+        result = cursor.fetchone()
+        recent_events = result[0] if result else 0
         
         # Calculate average happiness
         avg_happiness = sum(civ['population']['happiness'] for civ in civilizations) / len(civilizations)
@@ -215,7 +210,7 @@ def get_dashboard_stats():
         
     except Exception as e:
         logger.error(f"Error calculating dashboard stats: {e}")
-        return get_sample_stats()
+        return get_empty_stats()
 
 def get_top_civilizations(limit=10):
     """Get top civilizations by power score"""
@@ -223,8 +218,8 @@ def get_top_civilizations(limit=10):
         civilizations = db.get_all_civilizations()
         
         if not civilizations:
-            logger.warning("No civilizations found for leaderboard")
-            return get_sample_civilizations(limit)
+            logger.info("No civilizations found for leaderboard")
+            return []
         
         # Calculate power scores and sort
         civ_scores = []
@@ -263,7 +258,7 @@ def get_top_civilizations(limit=10):
         
     except Exception as e:
         logger.error(f"Error getting top civilizations: {e}")
-        return get_sample_civilizations(limit)
+        return []
 
 def get_recent_events(limit=20):
     """Get recent events with formatting"""
@@ -271,8 +266,8 @@ def get_recent_events(limit=20):
         events = db.get_recent_events(limit)
         
         if not events:
-            logger.warning("No events found in database")
-            return get_sample_events(limit)
+            logger.info("No events found in database")
+            return []
         
         formatted_events = []
         for event in events:
@@ -298,7 +293,7 @@ def get_recent_events(limit=20):
         
     except Exception as e:
         logger.error(f"Error getting recent events: {e}")
-        return get_sample_events(limit)
+        return []
 
 def get_alliance_info():
     """Get alliance information"""
@@ -319,8 +314,8 @@ def get_alliance_info():
         
         rows = cursor.fetchall()
         if not rows:
-            logger.warning("No alliances found in database")
-            return get_sample_alliances()
+            logger.info("No alliances found in database")
+            return []
         
         alliances = []
         for row in rows:
@@ -347,7 +342,7 @@ def get_alliance_info():
         
     except Exception as e:
         logger.error(f"Error getting alliance info: {e}")
-        return get_sample_alliances()
+        return []
 
 def get_leaderboard_by_category(category, limit=20):
     """Get leaderboard for specific category"""
@@ -355,8 +350,8 @@ def get_leaderboard_by_category(category, limit=20):
         civilizations = db.get_all_civilizations()
         
         if not civilizations:
-            logger.warning("No civilizations found for leaderboard")
-            return get_sample_leaderboard(category, limit)
+            logger.info("No civilizations found for leaderboard")
+            return []
         
         leaderboard = []
         for civ in civilizations:
@@ -396,7 +391,7 @@ def get_leaderboard_by_category(category, limit=20):
         
     except Exception as e:
         logger.error(f"Error getting {category} leaderboard: {e}")
-        return get_sample_leaderboard(category, limit)
+        return []
 
 def get_time_ago(timestamp):
     """Get human-readable time ago string"""
@@ -439,9 +434,8 @@ def get_event_icon(event_type):
     
     return event_icons.get(event_type, "📰")
 
-# Sample data functions for when real data is unavailable
-def get_sample_stats():
-    """Return sample statistics for testing"""
+def get_empty_stats():
+    """Return empty statistics for when no data is available"""
     return {
         "total_civilizations": 0,
         "total_population": 0,
@@ -453,39 +447,23 @@ def get_sample_stats():
         "ideology_distribution": {}
     }
 
-def get_sample_civilizations(limit=10):
-    """Return sample civilizations for testing"""
-    return []
-
-def get_sample_events(limit=20):
-    """Return sample events for testing"""
-    return []
-
-def get_sample_alliances():
-    """Return sample alliances for testing"""
-    return []
-
-def get_sample_leaderboard(category, limit=20):
-    """Return sample leaderboard for testing"""
-    return []
-
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
     return render_template('index.html', 
-                         stats=get_sample_stats(), 
-                         top_civs=get_sample_civilizations(), 
-                         recent_events=get_sample_events(), 
-                         alliances=get_sample_alliances(),
+                         stats=get_empty_stats(), 
+                         top_civs=[], 
+                         recent_events=[], 
+                         alliances=[],
                          error="Page not found"), 404
 
 @app.errorhandler(500)
 def internal_error(error):
     return render_template('index.html', 
-                         stats=get_sample_stats(), 
-                         top_civs=get_sample_civilizations(), 
-                         recent_events=get_sample_events(), 
-                         alliances=get_sample_alliances(),
+                         stats=get_empty_stats(), 
+                         top_civs=[], 
+                         recent_events=[], 
+                         alliances=[],
                          error="Internal server error"), 500
 
 if __name__ == '__main__':
