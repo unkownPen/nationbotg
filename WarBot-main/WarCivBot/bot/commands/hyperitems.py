@@ -20,6 +20,26 @@ class HyperItemCommands(commands.Cog):
             return False
         return item_name in civ.get('hyper_items', [])
 
+    async def _block_with_shield(self, ctx, target_id: str, target_civ, attacker_civ, attack_type: str):
+        """Generic shield block handler for all attacks"""
+        self.civ_manager.use_hyper_item(target_id, "Anti-Nuke Shield")
+        
+        embed = create_embed(
+            "🛡️ Attack Completely Blocked!",
+            f"**{target_civ['name']}**'s Anti-Nuke Shield has nullified the {attack_type} from **{attacker_civ['name']}**!",
+            guilded.Color.blue()
+        )
+        embed.add_field(name="Result", value="Zero damage taken. Shield consumed on activation.", inline=False)
+        
+        await ctx.send(embed=embed)
+        
+        # Notify target
+        try:
+            target_user = await self.bot.fetch_user(int(target_id))
+            await target_user.send(f"🛡️ **Shield Popped Off!** Your Anti-Nuke Shield straight-up blocked that {attack_type} from {attacker_civ['name']}. You're safe, fr.")
+        except:
+            pass
+
     async def _announce_global_attack(self, ctx, attacker_name: str, target_name: str, attack_type: str):
         """Announce world-ending attacks globally"""
         embed = create_embed(
@@ -68,28 +88,10 @@ class HyperItemCommands(commands.Cog):
         if not target_civ:
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
-            
-        # Check if target has Anti-Nuke Shield
+        
+        # Check shield first - now blocks ALL attacks
         if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
-            # Shield blocks the nuke
-            self.civ_manager.use_hyper_item(target_id, "Anti-Nuke Shield")
-            
-            embed = create_embed(
-                "🛡️ Nuclear Strike Blocked!",
-                f"**{target_civ['name']}**'s Anti-Nuke Shield completely blocked the nuclear attack!",
-                guilded.Color.blue()
-            )
-            embed.add_field(name="Result", value="No damage was dealt. The shield was consumed.", inline=False)
-            
-            await ctx.send(embed=embed)
-            
-            # Notify target
-            try:
-                target_user = await self.bot.fetch_user(int(target_id))
-                await target_user.send(f"🛡️ **Shield Activated!** Your Anti-Nuke Shield blocked a nuclear attack from {civ['name']}!")
-            except:
-                pass
-                
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "nuclear strike")
             return
             
         # Consume the Nuclear Warhead
@@ -178,6 +180,11 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
+        # Check shield first - now blocks ALL attacks
+        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "HyperLaser obliteration")
+            return
+        
         # Consume the HyperLaser
         self.civ_manager.use_hyper_item(user_id, "HyperLaser")
         
@@ -223,7 +230,7 @@ class HyperItemCommands(commands.Cog):
 
     @commands.command(name='shield')
     async def activate_shield(self, ctx):
-        """Display Anti-Nuke Shield status"""
+        """Display Anti-Nuke Shield status - now protects against EVERYTHING"""
         user_id = str(ctx.author.id)
         
         if not self._has_hyperitem(user_id, "Anti-Nuke Shield"):
@@ -233,20 +240,20 @@ class HyperItemCommands(commands.Cog):
         civ = self.civ_manager.get_civilization(user_id)
         
         embed = create_embed(
-            "🛡️ Anti-Nuke Shield",
-            f"**{civ['name']}** is protected by an Anti-Nuke Shield!",
+            "🛡️ Ultimate Anti-Nuke Shield",
+            f"**{civ['name']}** is locked down with the Anti-Nuke Shield!",
             guilded.Color.blue()
         )
         
         embed.add_field(
             name="Shield Status",
-            value="✅ **ACTIVE** - Will automatically block the next nuclear attack",
+            value="✅ **ACTIVE** - Auto-blocks the next ANY attack (nukes, lasers, spies, bombs, you name it)",
             inline=False
         )
         
         embed.add_field(
-            name="Protection",
-            value="• Completely blocks one nuclear strike\n• Shield is consumed after use\n• No damage taken when activated",
+            name="God-Tier Protection",
+            value="• Blocks nukes, obliteration, missiles, assassinations, propaganda, spy ops\n• Consumed after one block\n• Zero damage, full stop",
             inline=False
         )
         
@@ -316,6 +323,11 @@ class HyperItemCommands(commands.Cog):
             return
             
         civ = self.civ_manager.get_civilization(user_id)
+        
+        # Check shield first - now blocks ALL attacks
+        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "propaganda campaign")
+            return
         
         # Consume Propaganda Kit
         self.civ_manager.use_hyper_item(user_id, "Propaganda Kit")
@@ -554,6 +566,11 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
+        # Check shield first - now blocks ALL attacks
+        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "super spy mission")
+            return
+        
         # Consume Spy Network
         self.civ_manager.use_hyper_item(user_id, "Spy Network")
         
@@ -673,6 +690,11 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
+        # Check shield first - now blocks ALL attacks
+        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "assassination attempt")
+            return
+        
         # Consume Dagger
         self.civ_manager.use_hyper_item(user_id, "Dagger")
         
@@ -756,6 +778,11 @@ class HyperItemCommands(commands.Cog):
             return
             
         civ = self.civ_manager.get_civilization(user_id)
+        
+        # Check shield first - now blocks ALL attacks
+        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            await self._block_with_shield(ctx, target_id, target_civ, civ, "missile strike")
+            return
         
         # Consume Missiles
         self.civ_manager.use_hyper_item(user_id, "Missiles")
