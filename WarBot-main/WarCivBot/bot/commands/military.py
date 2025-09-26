@@ -21,8 +21,7 @@ def check_cooldown_decorator(minutes=1):
             
             if cooldown_key in cooldowns:
                 if current_time < cooldowns[cooldown_key]:
-                    remaining = cooldowns[cooldown_key] - current_time
-                    # Don't send error message as requested
+                    # Do not send a message; just silently return as earlier design suggested
                     return
             
             try:
@@ -31,7 +30,6 @@ def check_cooldown_decorator(minutes=1):
                 cooldowns[cooldown_key] = current_time + (minutes * 60)
                 return result
             except Exception as e:
-                # Don't send error message as requested
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
                 return
         return wrapper
@@ -44,6 +42,10 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
         self.create_tables()
         self.cooldowns = {}  # Track cooldowns manually
+
+        # In-memory border tracking (for persistence you'd store in DB)
+        self.borders = {}  # {user_id: set(border_user_id, ...)}
+        self.border_troops = {}  # {user_id: {border_user_id: percent_allocation}}
 
     def create_tables(self):
         """Create necessary database tables"""
@@ -103,7 +105,7 @@ class MilitaryCommands(commands.Cog):
 
         return None
 
-    async def _get_member_from_mention(self, ctx, mention: str):
+    async def _get_member_from_mention(self, ctx, mention: str = None):
         """
         Robustly resolve a mention string (or usage where user typed/displayed name)
         to a Member object.
@@ -343,10 +345,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='attack')
     async def attack_civilization(self, ctx, target_mention: str = None):
-        """Launch a direct attack on another civilization"""
+        """Launch a direct attack on another civilization (requires border troops)"""
         try:
             if not target_mention:
-                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first!")
+                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first and sufficient border troops!")
                 return
 
             user_id = str(ctx.author.id)
@@ -377,6 +379,18 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send("❌ Target user doesn't have a civilization!")
                 return
 
+            # Border check
+            borders = self.borders.get(user_id, set())
+            if target_id not in borders:
+                await ctx.send("❌ You cannot attack a country you do not border! Use `.addborder @user` first.")
+                return
+
+            # Check troop allocation at that border (percentage)
+            troop_alloc = self.border_troops.setdefault(user_id, {}).setdefault(target_id, 100)
+            if troop_alloc < 10:
+                await ctx.send("❌ You must have at least 10% of your troops at the border to attack!")
+                return
+
             # Check if war declared
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
@@ -391,9 +405,12 @@ class MilitaryCommands(commands.Cog):
                     await ctx.send("❌ You must declare war first! Use `.declare @user`")
                     return
 
-            # Calculate battle strength
-            attacker_strength = self._calculate_military_strength(civ)
-            defender_strength = self._calculate_military_strength(target_civ)
+            # Calculate battle strength; apply border allocation
+            attacker_strength = self._calculate_military_strength(civ) * (troop_alloc / 100)
+
+            # Defender allocation (how many of their troops are at that border)
+            defender_alloc = self.border_troops.setdefault(target_id, {}).setdefault(user_id, 100)
+            defender_strength = self._calculate_military_strength(target_civ) * (defender_alloc / 100)
 
             # Apply random factors and modifiers
             attacker_roll = random.uniform(0.8, 1.2)
@@ -415,18 +432,26 @@ class MilitaryCommands(commands.Cog):
             final_attacker_strength = attacker_strength * attacker_roll
             final_defender_strength = defender_strength * defender_roll
 
+            ghost_event = False
+            # 25% chance for "ghost" soldier event
+            if random.random() < 0.25:
+                # Small, bounded bonus to the attacker's strength
+                ghost_bonus = random.randint(100, 500)
+                final_attacker_strength += ghost_bonus
+                ghost_event = True
+
             # Determine outcome
             if final_attacker_strength > final_defender_strength:
                 victory_margin = final_attacker_strength / max(1, final_defender_strength)
-                await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin)
+                await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin, ghost_event)
             else:
                 defeat_margin = final_defender_strength / max(1, final_attacker_strength)
-                await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
+                await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin, ghost_event)
 
         except Exception as e:
             logger.error(f"Error in attack command: {e}", exc_info=True)
 
-    async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
+    async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin, ghost_event=False):
         """Process successful attack"""
         try:
             attacker_losses = min(random.randint(2, 8), attacker_civ['military']['soldiers'])
@@ -470,6 +495,11 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Spoils of War", value=spoils_text or "None", inline=True)
             embed.add_field(name="Territory Gained", value=f"🏞️ {format_number(territory_gained)} km²", inline=True)
 
+            if ghost_event:
+                embed.add_field(name="Ghost Soldier!",
+                                value="👻 A mysterious soldier called 'the Ghost' assassinated enemy leaders and assisted your army!",
+                                inline=False)
+
             # Destruction ideology bonus
             if attacker_civ.get('ideology') == 'destruction':
                 extra_damage = min(int(defender_civ['resources']['gold'] * 0.05), defender_civ['resources']['gold'])
@@ -486,7 +516,6 @@ class MilitaryCommands(commands.Cog):
 
             # Try to mention the defender
             try:
-                # guilded mention should work via member mention; try to fetch member first
                 member = None
                 try:
                     member = await ctx.guild.fetch_member(defender_id)
@@ -503,7 +532,7 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error processing attack victory: {e}", exc_info=True)
 
-    async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
+    async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin, ghost_event=False):
         """Process failed attack"""
         try:
             attacker_losses = min(int(random.randint(5, 15) * margin), attacker_civ['military']['soldiers'])
@@ -526,6 +555,9 @@ class MilitaryCommands(commands.Cog):
                            value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers",
                            inline=True)
             embed.add_field(name="Consequences", value="Your people are demoralized! (-10 happiness)", inline=False)
+
+            if ghost_event:
+                embed.add_field(name="Ghost Soldier!", value="👻 A mysterious soldier called 'the Ghost' appeared but did not assist your side.", inline=False)
 
             # Pacifist defender bonus
             if defender_civ.get('ideology') == 'pacifist':
@@ -955,9 +987,9 @@ class MilitaryCommands(commands.Cog):
 
             # Try to mention the target
             try:
-                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
+                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept.")
             except Exception:
-                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
+                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept.")
 
         except Exception as e:
             logger.error(f"Error in peace command: {e}", exc_info=True)
