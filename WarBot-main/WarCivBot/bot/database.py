@@ -6,15 +6,94 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import time
+import dropbox
+from dropbox.exceptions import ApiError, AuthError
+import os
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self, db_path: str = 'nationbot.db'):
+    def __init__(self, db_path: str = 'nationbot.db', dropbox_refresh_token: str = None, 
+                 dropbox_app_key: str = None, dropbox_app_secret: str = None):
         self.db_path = db_path
         self.local = threading.local()
+        self.dropbox_refresh_token = dropbox_refresh_token or os.getenv('DROPBOX_REFRESH_TOKEN')
+        self.dropbox_app_key = dropbox_app_key or os.getenv('DROPBOX_APP_KEY')
+        self.dropbox_app_secret = dropbox_app_secret or os.getenv('DROPBOX_APP_SECRET')
+        self.dropbox_client = None
+        if self.dropbox_refresh_token and self.dropbox_app_key and self.dropbox_app_secret:
+            self.init_dropbox()
+        self.download_database()
         self.init_database()
         self.setup_cleanup_scheduler()
+
+    def init_dropbox(self):
+        """Initialize Dropbox client with refresh token"""
+        try:
+            dbx = dropbox.Dropbox(
+                oauth2_refresh_token=self.dropbox_refresh_token,
+                app_key=self.dropbox_app_key,
+                app_secret=self.dropbox_app_secret
+            )
+            dbx.check_user()  # Verify connection
+            self.dropbox_client = dbx
+            logger.info("Dropbox client initialized successfully")
+        except AuthError as e:
+            logger.error(f"Dropbox auth error: {e}")
+            self.dropbox_client = None
+        except Exception as e:
+            logger.error(f"Error initializing Dropbox: {e}")
+            self.dropbox_client = None
+
+    def download_database(self):
+        """Download the database file from Dropbox if it exists"""
+        if not self.dropbox_client:
+            logger.warning("No Dropbox client, using local file or creating new")
+            return
+        try:
+            dropbox_path = f"/{os.path.basename(self.db_path)}"
+            self.dropbox_client.files_download_to_file(self.db_path, dropbox_path)
+            logger.info(f"Downloaded database from Dropbox: {dropbox_path}")
+        except ApiError as e:
+            if e.error.is_path() and e.error.get_path().is_not_found():
+                logger.info("No database found in Dropbox, starting fresh")
+            else:
+                logger.error(f"Error downloading database: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error downloading database: {e}")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def upload_database(self):
+        """Upload the database file to Dropbox"""
+        if not self.dropbox_client:
+            logger.warning("No Dropbox client, skipping upload")
+            return
+        try:
+            # Check integrity
+            cursor = self.get_connection().cursor()
+            cursor.execute("PRAGMA integrity_check")
+            if cursor.fetchone()[0] != "ok":
+                logger.error("Database corrupted, skipping upload")
+                return
+            dropbox_path = f"/{os.path.basename(self.db_path)}"
+            with open(self.db_path, 'rb') as f:
+                self.dropbox_client.files_upload(
+                    f.read(),
+                    dropbox_path,
+                    mode=dropbox.files.WriteMode('overwrite')
+                )
+            logger.info(f"Uploaded database to Dropbox: {dropbox_path}")
+        except Exception as e:
+            logger.error(f"Error uploading database to Dropbox: {e}")
+            raise
+
+    def get_connection(self):
+        """Get thread-local database connection"""
+        if not hasattr(self.local, 'connection'):
+            self.local.connection = sqlite3.connect(self.db_path)
+            self.local.connection.row_factory = sqlite3.Row
+        return self.local.connection
 
     def setup_cleanup_scheduler(self):
         """Schedule daily cleanup of expired requests"""
@@ -25,13 +104,6 @@ class Database:
         
         threading.Timer(60, cleanup_task).start()
         logger.info("Scheduled cleanup task initialized")
-
-    def get_connection(self):
-        """Get thread-local database connection"""
-        if not hasattr(self.local, 'connection'):
-            self.local.connection = sqlite3.connect(self.db_path)
-            self.local.connection.row_factory = sqlite3.Row
-        return self.local.connection
 
     def init_database(self):
         """Initialize database tables"""
@@ -131,7 +203,7 @@ class Database:
         
         # Trade requests table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trade_requests (
+            CREATE TABLE IF NOT NOT EXISTS trade_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id TEXT NOT NULL,
                 recipient_id TEXT NOT NULL,
@@ -184,6 +256,7 @@ class Database:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)')
         
         conn.commit()
+        self.upload_database()
         logger.info("Database initialized successfully")
 
     def create_civilization(self, user_id: str, name: str, bonus_resources: Dict = None, bonuses: Dict = None, hyper_item: str = None) -> bool:
@@ -245,6 +318,7 @@ class Database:
             self.generate_card_selection(user_id, 1)
             
             conn.commit()
+            self.upload_database()
             logger.info(f"Created civilization '{name}' for user {user_id}")
             return True
             
@@ -306,6 +380,7 @@ class Database:
             cursor.execute(query, values)
             
             conn.commit()
+            self.upload_database()
             return True
             
         except Exception as e:
@@ -360,6 +435,7 @@ class Database:
             ''', (user_id, command, timestamp.isoformat()))
             
             conn.commit()
+            self.upload_database()
             return True
             
         except Exception as e:
@@ -404,6 +480,7 @@ class Database:
             ''', (user_id, tech_level, json.dumps(available_cards), 'pending'))
             
             conn.commit()
+            self.upload_database()
             logger.info(f"Generated card selection for user {user_id} at tech level {tech_level}")
             return True
             
@@ -453,6 +530,7 @@ class Database:
             ''', (user_id, tech_level))
             
             conn.commit()
+            self.upload_database()
             logger.info(f"User {user_id} selected card '{card_name}' at tech level {tech_level}")
             return selected_card
             
@@ -499,6 +577,7 @@ class Database:
             ''', (name, leader_id, json.dumps([leader_id]), description))
             
             conn.commit()
+            self.upload_database()
             logger.info(f"Created alliance '{name}' led by {leader_id}")
             return True
             
@@ -521,6 +600,7 @@ class Database:
             ''', (user_id, event_type, title, description, json.dumps(effects or {})))
             
             conn.commit()
+            self.upload_database()
             logger.debug(f"Logged event: {title} for user {user_id}")
             
         except Exception as e:
@@ -563,6 +643,7 @@ class Database:
                 VALUES (?, ?, ?, ?)
             ''', (sender_id, recipient_id, json.dumps(offer), json.dumps(request)))
             conn.commit()
+            self.upload_database()
             logger.info(f"Trade request created from {sender_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -619,6 +700,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM trade_requests WHERE id = ?', (request_id,))
             conn.commit()
+            self.upload_database()
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting trade request: {e}")
@@ -634,6 +716,7 @@ class Database:
                 VALUES (?, ?, ?)
             ''', (alliance_id, sender_id, recipient_id))
             conn.commit()
+            self.upload_database()
             logger.info(f"Alliance invite created: alliance={alliance_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -680,6 +763,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM alliance_invitations WHERE id = ?', (invite_id,))
             conn.commit()
+            self.upload_database()
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting alliance invite: {e}")
@@ -695,6 +779,7 @@ class Database:
                 VALUES (?, ?, ?)
             ''', (sender_id, recipient_id, message))
             conn.commit()
+            self.upload_database()
             logger.info(f"Message sent from {sender_id} to {recipient_id}")
             return True
         except Exception as e:
@@ -725,6 +810,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM messages WHERE id = ?', (message_id,))
             conn.commit()
+            self.upload_database()
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting message: {e}")
@@ -786,6 +872,7 @@ class Database:
             ''', (json.dumps(members), json.dumps(join_requests), alliance_id))
             
             conn.commit()
+            self.upload_database()
             return True
         except Exception as e:
             logger.error(f"Error adding alliance member: {e}")
@@ -865,6 +952,7 @@ class Database:
                 VALUES (?, ?)
             ''', (offerer_id, receiver_id))
             conn.commit()
+            self.upload_database()
             logger.info(f"Peace offer created from {offerer_id} to {receiver_id}")
             return True
         except Exception as e:
@@ -882,6 +970,7 @@ class Database:
                 WHERE id = ?
             ''', (status, offer_id))
             conn.commit()
+            self.upload_database()
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error updating peace offer: {e}")
@@ -900,6 +989,7 @@ class Database:
             ''', (result, attacker_id, defender_id, defender_id, attacker_id))
             
             conn.commit()
+            self.upload_database()
             return cursor.rowcount > 0
         except Exception as e:
             logger.error(f"Error ending war: {e}")
@@ -973,7 +1063,6 @@ class Database:
             cursor = conn.cursor()
             
             if category == 'power':
-                # Calculate total power score
                 cursor.execute('''
                     SELECT user_id, name, resources, military, territory
                     FROM civilizations
@@ -1087,6 +1176,7 @@ class Database:
             message_count = cursor.rowcount
             
             conn.commit()
+            self.upload_database()
             logger.info(f"Cleaned up expired requests: "
                        f"{trade_count} trades, {invite_count} invites, "
                        f"{message_count} messages removed")
@@ -1105,9 +1195,18 @@ class Database:
             
             import shutil
             shutil.copy2(self.db_path, backup_path)
-            logger.info(f"Database backed up to {backup_path}")
-            return True
+            logger.info(f"Database backed up locally to {backup_path}")
             
+            if self.dropbox_client:
+                dropbox_path = f"/backups/{os.path.basename(backup_path)}"
+                with open(backup_path, 'rb') as f:
+                    self.dropbox_client.files_upload(
+                        f.read(),
+                        dropbox_path,
+                        mode=dropbox.files.WriteMode('add')
+                    )
+                logger.info(f"Database backed up to Dropbox: {dropbox_path}")
+            return True
         except Exception as e:
             logger.error(f"Error backing up database: {e}")
             return False
