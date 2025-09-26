@@ -4,3 +4,4 @@ aiohttp
 SQLAlchemy
 websockets
 dropbox
+requests
