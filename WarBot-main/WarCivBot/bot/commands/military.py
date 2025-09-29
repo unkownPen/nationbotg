@@ -21,7 +21,8 @@ def check_cooldown_decorator(minutes=1):
             
             if cooldown_key in cooldowns:
                 if current_time < cooldowns[cooldown_key]:
-                    # Do not send a message; just silently return as earlier design suggested
+                    remaining = cooldowns[cooldown_key] - current_time
+                    # Don't send error message as requested
                     return
             
             try:
@@ -30,6 +31,7 @@ def check_cooldown_decorator(minutes=1):
                 cooldowns[cooldown_key] = current_time + (minutes * 60)
                 return result
             except Exception as e:
+                # Don't send error message as requested
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
                 return
         return wrapper
@@ -42,10 +44,7 @@ class MilitaryCommands(commands.Cog):
         self.civ_manager = bot.civ_manager
         self.create_tables()
         self.cooldowns = {}  # Track cooldowns manually
-
-        # In-memory border tracking (for persistence you'd store in DB)
-        self.borders = {}  # {user_id: set(border_user_id, ...)}
-        self.border_troops = {}  # {user_id: {border_user_id: percent_allocation}}
+        self.card_unlock_chance = 0.2  # 20% chance to unlock card after military command
 
     def create_tables(self):
         """Create necessary database tables"""
@@ -71,6 +70,26 @@ class MilitaryCommands(commands.Cog):
                         status TEXT NOT NULL DEFAULT 'pending',
                         offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         responded_at TIMESTAMP
+                    )
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS borders (
+                        user_id TEXT PRIMARY KEY,
+                        has_border BOOLEAN DEFAULT FALSE,
+                        border_strength INTEGER DEFAULT 0,
+                        border_soldiers INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS unlocked_cards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        card_name TEXT NOT NULL,
+                        unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        used BOOLEAN DEFAULT FALSE,
+                        UNIQUE(user_id, card_name)
                     )
                 ''')
                 conn.commit()
@@ -105,7 +124,7 @@ class MilitaryCommands(commands.Cog):
 
         return None
 
-    async def _get_member_from_mention(self, ctx, mention: str = None):
+    async def _get_member_from_mention(self, ctx, mention: str):
         """
         Robustly resolve a mention string (or usage where user typed/displayed name)
         to a Member object.
@@ -177,6 +196,74 @@ class MilitaryCommands(commands.Cog):
             pass
 
         return None
+
+    async def _try_unlock_card(self, user_id: str):
+        """Try to unlock a card with 20% chance after military commands"""
+        try:
+            if random.random() < self.card_unlock_chance:
+                available_cards = [
+                    {
+                        "name": "Gamble Card",
+                        "description": "Lose 50% of your population for a 0.1% chance of destroying a nation of a selected user.",
+                        "effect": "gamble"
+                    },
+                    {
+                        "name": "Resource Heist",
+                        "description": "Steal 25% of a target's resources, but 10% chance they steal yours instead!",
+                        "effect": "resource_heist"
+                    },
+                    {
+                        "name": "Population Swap",
+                        "description": "Swap populations with another civilization. Could be good or bad!",
+                        "effect": "population_swap"
+                    },
+                    {
+                        "name": "Military Coup",
+                        "description": "50% chance to double your military, 50% chance to lose it all!",
+                        "effect": "military_coup"
+                    },
+                    {
+                        "name": "Territory Gambit",
+                        "description": "Bet your territory in a high-risk high-reward expansion gamble.",
+                        "effect": "territory_gambit"
+                    },
+                    {
+                        "name": "Spy Infiltration",
+                        "description": "Your spies have a 30% chance to instantly win a war, or be discovered and executed.",
+                        "effect": "spy_infiltration"
+                    },
+                    {
+                        "name": "Economic Collapse",
+                        "description": "Cause your economy to collapse but get massive military bonuses as a distraction.",
+                        "effect": "economic_collapse"
+                    },
+                    {
+                        "name": "Alliance Roulette",
+                        "description": "Randomly make peace with one enemy and declare war on one ally.",
+                        "effect": "alliance_roulette"
+                    }
+                ]
+                
+                # Get a random card that user doesn't have yet
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT card_name FROM unlocked_cards WHERE user_id = ?', (user_id,))
+                    existing_cards = [row[0] for row in cursor.fetchall()]
+                    
+                    available_new_cards = [card for card in available_cards if card['name'] not in existing_cards]
+                    
+                    if available_new_cards:
+                        new_card = random.choice(available_new_cards)
+                        cursor.execute(
+                            'INSERT OR IGNORE INTO unlocked_cards (user_id, card_name) VALUES (?, ?)',
+                            (user_id, new_card['name'])
+                        )
+                        conn.commit()
+                        return new_card
+            return None
+        except Exception as e:
+            logger.error(f"Error in _try_unlock_card: {e}", exc_info=True)
+            return None
 
     @commands.command(name='train')
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
@@ -264,6 +351,13 @@ class MilitaryCommands(commands.Cog):
             if penalty_units > 0:
                 embed.add_field(name="Training Issues", value=f"⚠️ Ideology penalty lost {penalty_units} units during training", inline=True)
 
+            # Try to unlock a card
+            unlocked_card = await self._try_unlock_card(user_id)
+            if unlocked_card:
+                embed.add_field(name="🎴 New Card Unlocked!", 
+                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
+                              inline=False)
+
             await ctx.send(embed=embed)
 
         except Exception as e:
@@ -333,6 +427,13 @@ class MilitaryCommands(commands.Cog):
             )
             embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, `.stealthbattle`, or `.cards` to gain advantages.", inline=False)
 
+            # Try to unlock a card
+            unlocked_card = await self._try_unlock_card(user_id)
+            if unlocked_card:
+                embed.add_field(name="🎴 New Card Unlocked!", 
+                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
+                              inline=False)
+
             await ctx.send(embed=embed)
             # safe mention
             try:
@@ -345,10 +446,10 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='attack')
     async def attack_civilization(self, ctx, target_mention: str = None):
-        """Launch a direct attack on another civilization (requires border troops)"""
+        """Launch a direct attack on another civilization"""
         try:
             if not target_mention:
-                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first and sufficient border troops!")
+                await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first!")
                 return
 
             user_id = str(ctx.author.id)
@@ -379,18 +480,6 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send("❌ Target user doesn't have a civilization!")
                 return
 
-            # Border check
-            borders = self.borders.get(user_id, set())
-            if target_id not in borders:
-                await ctx.send("❌ You cannot attack a country you do not border! Use `.addborder @user` first.")
-                return
-
-            # Check troop allocation at that border (percentage)
-            troop_alloc = self.border_troops.setdefault(user_id, {}).setdefault(target_id, 100)
-            if troop_alloc < 10:
-                await ctx.send("❌ You must have at least 10% of your troops at the border to attack!")
-                return
-
             # Check if war declared
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
@@ -405,12 +494,9 @@ class MilitaryCommands(commands.Cog):
                     await ctx.send("❌ You must declare war first! Use `.declare @user`")
                     return
 
-            # Calculate battle strength; apply border allocation
-            attacker_strength = self._calculate_military_strength(civ) * (troop_alloc / 100)
-
-            # Defender allocation (how many of their troops are at that border)
-            defender_alloc = self.border_troops.setdefault(target_id, {}).setdefault(user_id, 100)
-            defender_strength = self._calculate_military_strength(target_civ) * (defender_alloc / 100)
+            # Calculate battle strength
+            attacker_strength = self._calculate_military_strength(civ)
+            defender_strength = self._calculate_military_strength(target_civ)
 
             # Apply random factors and modifiers
             attacker_roll = random.uniform(0.8, 1.2)
@@ -432,26 +518,23 @@ class MilitaryCommands(commands.Cog):
             final_attacker_strength = attacker_strength * attacker_roll
             final_defender_strength = defender_strength * defender_roll
 
-            ghost_event = False
-            # 25% chance for "ghost" soldier event
-            if random.random() < 0.25:
-                # Small, bounded bonus to the attacker's strength
-                ghost_bonus = random.randint(100, 500)
-                final_attacker_strength += ghost_bonus
-                ghost_event = True
-
             # Determine outcome
             if final_attacker_strength > final_defender_strength:
                 victory_margin = final_attacker_strength / max(1, final_defender_strength)
-                await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin, ghost_event)
+                await self._process_attack_victory(ctx, user_id, target_id, civ, target_civ, victory_margin)
             else:
                 defeat_margin = final_defender_strength / max(1, final_attacker_strength)
-                await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin, ghost_event)
+                await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
+
+            # Try to unlock a card
+            unlocked_card = await self._try_unlock_card(user_id)
+            if unlocked_card:
+                await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
 
         except Exception as e:
             logger.error(f"Error in attack command: {e}", exc_info=True)
 
-    async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin, ghost_event=False):
+    async def _process_attack_victory(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process successful attack"""
         try:
             attacker_losses = min(random.randint(2, 8), attacker_civ['military']['soldiers'])
@@ -495,11 +578,6 @@ class MilitaryCommands(commands.Cog):
             embed.add_field(name="Spoils of War", value=spoils_text or "None", inline=True)
             embed.add_field(name="Territory Gained", value=f"🏞️ {format_number(territory_gained)} km²", inline=True)
 
-            if ghost_event:
-                embed.add_field(name="Ghost Soldier!",
-                                value="👻 A mysterious soldier called 'the Ghost' assassinated enemy leaders and assisted your army!",
-                                inline=False)
-
             # Destruction ideology bonus
             if attacker_civ.get('ideology') == 'destruction':
                 extra_damage = min(int(defender_civ['resources']['gold'] * 0.05), defender_civ['resources']['gold'])
@@ -516,6 +594,7 @@ class MilitaryCommands(commands.Cog):
 
             # Try to mention the defender
             try:
+                # guilded mention should work via member mention; try to fetch member first
                 member = None
                 try:
                     member = await ctx.guild.fetch_member(defender_id)
@@ -532,7 +611,7 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error processing attack victory: {e}", exc_info=True)
 
-    async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin, ghost_event=False):
+    async def _process_attack_defeat(self, ctx, attacker_id, defender_id, attacker_civ, defender_civ, margin):
         """Process failed attack"""
         try:
             attacker_losses = min(int(random.randint(5, 15) * margin), attacker_civ['military']['soldiers'])
@@ -555,9 +634,6 @@ class MilitaryCommands(commands.Cog):
                            value=f"Your Losses: {attacker_losses} soldiers\nEnemy Losses: {defender_losses} soldiers",
                            inline=True)
             embed.add_field(name="Consequences", value="Your people are demoralized! (-10 happiness)", inline=False)
-
-            if ghost_event:
-                embed.add_field(name="Ghost Soldier!", value="👻 A mysterious soldier called 'the Ghost' appeared but did not assist your side.", inline=False)
 
             # Pacifist defender bonus
             if defender_civ.get('ideology') == 'pacifist':
@@ -696,6 +772,11 @@ class MilitaryCommands(commands.Cog):
 
                 await ctx.send(embed=embed)
 
+                # Try to unlock a card
+                unlocked_card = await self._try_unlock_card(user_id)
+                if unlocked_card:
+                    await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
+
                 # Try to mention the target
                 try:
                     await ctx.send(f"{target.mention} 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
@@ -714,6 +795,11 @@ class MilitaryCommands(commands.Cog):
                 )
 
                 await ctx.send(embed=embed)
+
+                # Try to unlock a card
+                unlocked_card = await self._try_unlock_card(user_id)
+                if unlocked_card:
+                    await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
 
                 # Try to mention the target
                 try:
@@ -829,6 +915,11 @@ class MilitaryCommands(commands.Cog):
 
             await ctx.send(embed=embed)
 
+            # Try to unlock a card
+            unlocked_card = await self._try_unlock_card(user_id)
+            if unlocked_card:
+                await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
+
             # Log the siege
             self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
             self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
@@ -904,6 +995,13 @@ class MilitaryCommands(commands.Cog):
                     embed.add_field(name="Destruction Backfire",
                                   value="Your reputation scared away potential recruits.",
                                   inline=False)
+
+            # Try to unlock a card
+            unlocked_card = await self._try_unlock_card(user_id)
+            if unlocked_card:
+                embed.add_field(name="🎴 New Card Unlocked!", 
+                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
+                              inline=False)
 
             await ctx.send(embed=embed)
 
@@ -987,9 +1085,9 @@ class MilitaryCommands(commands.Cog):
 
             # Try to mention the target
             try:
-                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept.")
+                await ctx.send(f"{target.mention} 🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
             except Exception:
-                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept.")
+                await ctx.send(f"🕊️ **Peace Offer Received!** {civ['name']} (led by {ctx.author.display_name}) has offered peace to end the war. Use `.accept_peace @{ctx.author.display_name}` to accept!")
 
         except Exception as e:
             logger.error(f"Error in peace command: {e}", exc_info=True)
@@ -1100,8 +1198,8 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error in accept_peace command: {e}", exc_info=True)
 
     @commands.command(name='cards')
-    async def manage_cards(self, ctx, card_number: int = None):
-        """View or select a card for the current tech level"""
+    async def manage_cards(self, ctx, action: str = None, card_name: str = None, target_mention: str = None):
+        """View or use your unlocked cards"""
         try:
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
@@ -1110,57 +1208,465 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send("❌ You need to start a civilization first! Use `.start`")
                 return
 
-            tech_level = civ['military']['tech_level']
-
-            if tech_level > 10:
-                await ctx.send("❌ You have reached the maximum tech level (10). No more cards available!")
-                return
-
-            card_selection = self.db.get_card_selection(user_id, tech_level)
-
-            if not card_selection:
-                await ctx.send(f"❌ No card selection available for tech level {tech_level}. You may have already chosen a card or need to advance your tech level.")
-                return
-
-            if card_number is not None:
-                # Attempt to select a card by number
-                available_cards = card_selection['available_cards']
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
                 
-                if card_number < 1 or card_number > len(available_cards):
-                    await ctx.send(f"❌ Invalid card number. Please choose between 1 and {len(available_cards)}.")
+                if action is None:
+                    # Show all unlocked cards
+                    cursor.execute('''
+                        SELECT card_name, used FROM unlocked_cards 
+                        WHERE user_id = ? ORDER BY unlocked_at DESC
+                    ''', (user_id,))
+                    
+                    cards = cursor.fetchall()
+                    
+                    if not cards:
+                        embed = create_embed(
+                            "🎴 Your Cards",
+                            "You haven't unlocked any cards yet! Use military commands to unlock cards with a 20% chance.",
+                            guilded.Color.blue()
+                        )
+                    else:
+                        embed = create_embed(
+                            "🎴 Your Cards",
+                            f"You have {len(cards)} unlocked card(s):",
+                            guilded.Color.blue()
+                        )
+                        
+                        for card_name, used in cards:
+                            status = "✅ Used" if used else "🟢 Available"
+                            embed.add_field(name=card_name, value=status, inline=True)
+                        
+                        embed.add_field(
+                            name="How to Use", 
+                            value="Use `.cards use <card_name> [@target]` to use a card. Some cards require targets.", 
+                            inline=False
+                        )
+                    
+                    await ctx.send(embed=embed)
                     return
                 
-                selected_card = available_cards[card_number - 1]
-                
-                # Apply the card effect
-                self.civ_manager.apply_card_effect(user_id, selected_card)
-
-                embed = create_embed(
-                    "🎴 Card Selected!",
-                    f"You have chosen **{selected_card['name']}**: {selected_card['description']}",
-                    guilded.Color.gold()
-                )
-                self.db.log_event(user_id, "card_selected", f"Card Selected: {selected_card['name']}",
-                                  selected_card['description'], selected_card['effect'])
-                await ctx.send(embed=embed)
-            else:
-                # Display available cards with numbers for easier selection
-                embed = create_embed(
-                    f"🎴 Tech Level {tech_level} Cards",
-                    "Choose a card using `.cards <number>`",
-                    guilded.Color.blue()
-                )
-                
-                cards = card_selection['available_cards']
-                cards_text = ""
-                for i, card in enumerate(cards, 1):
-                    cards_text += f"{i}. **{card['name']}**: {card['description']}\n"
-                
-                embed.add_field(name="Available Cards", value=cards_text or "No cards available", inline=False)
-                await ctx.send(embed=embed)
+                elif action.lower() == 'use' and card_name:
+                    # Use a specific card
+                    card_name = card_name.lower()
+                    
+                    cursor.execute('''
+                        SELECT card_name, used FROM unlocked_cards 
+                        WHERE user_id = ? AND LOWER(card_name) = ?
+                    ''', (user_id, card_name))
+                    
+                    card_data = cursor.fetchone()
+                    
+                    if not card_data:
+                        await ctx.send("❌ You don't have that card or it doesn't exist!")
+                        return
+                    
+                    if card_data[1]:  # If card is already used
+                        await ctx.send("❌ You've already used this card!")
+                        return
+                    
+                    # Process card effects
+                    if card_name == "gamble card":
+                        if not target_mention:
+                            await ctx.send("❌ Gamble Card requires a target! Usage: `.cards use gamble @user`")
+                            return
+                        
+                        target = await self._get_member_from_mention(ctx, target_mention)
+                        if not target:
+                            await ctx.send("❌ Could not find that user.")
+                            return
+                            
+                        target_id = str(target.id)
+                        target_civ = self.civ_manager.get_civilization(target_id)
+                        
+                        if not target_civ:
+                            await ctx.send("❌ Target doesn't have a civilization!")
+                            return
+                        
+                        # Gamble effect
+                        population_loss = civ['population']['total'] // 2
+                        self.civ_manager.update_population(user_id, {"total": -population_loss})
+                        
+                        if random.random() < 0.001:  # 0.1% chance
+                            # Destroy target civilization
+                            self.civ_manager.reset_civilization(target_id)
+                            result = f"🎰 **JACKPOT!** You sacrificed {format_number(population_loss)} people and **COMPLETELY DESTROYED {target_civ['name'].upper()}!** 🎰"
+                        else:
+                            result = f"💀 You sacrificed {format_number(population_loss)} people for nothing... The gamble failed."
+                        
+                        await ctx.send(result)
+                        
+                    elif card_name == "resource heist":
+                        if not target_mention:
+                            await ctx.send("❌ Resource Heist requires a target! Usage: `.cards use resourceheist @user`")
+                            return
+                        
+                        target = await self._get_member_from_mention(ctx, target_mention)
+                        if not target:
+                            await ctx.send("❌ Could not find that user.")
+                            return
+                            
+                        target_id = str(target.id)
+                        target_civ = self.civ_manager.get_civilization(target_id)
+                        
+                        if not target_civ:
+                            await ctx.send("❌ Target doesn't have a civilization!")
+                            return
+                        
+                        if random.random() < 0.1:  # 10% chance of backfire
+                            # Backfire - you lose resources instead
+                            stolen = {
+                                "gold": civ['resources']['gold'] // 4,
+                                "food": civ['resources']['food'] // 4,
+                                "stone": civ['resources']['stone'] // 4,
+                                "wood": civ['resources']['wood'] // 4
+                            }
+                            self.civ_manager.update_resources(user_id, {k: -v for k, v in stolen.items()})
+                            self.civ_manager.update_resources(target_id, stolen)
+                            result = f"😱 **HEIST BACKFIRED!** {target_civ['name']} stole your resources instead!"
+                        else:
+                            # Successful heist
+                            stolen = {
+                                "gold": target_civ['resources']['gold'] // 4,
+                                "food": target_civ['resources']['food'] // 4,
+                                "stone": target_civ['resources']['stone'] // 4,
+                                "wood": target_civ['resources']['wood'] // 4
+                            }
+                            self.civ_manager.update_resources(user_id, stolen)
+                            self.civ_manager.update_resources(target_id, {k: -v for k, v in stolen.items()})
+                            result = f"💰 **Successful Heist!** Stole 25% of {target_civ['name']}'s resources!"
+                        
+                        await ctx.send(result)
+                    
+                    elif card_name == "military coup":
+                        if random.random() < 0.5:  # 50% chance
+                            # Double military
+                            self.civ_manager.update_military(user_id, {
+                                "soldiers": civ['military']['soldiers'],
+                                "spies": civ['military']['spies']
+                            })
+                            result = "🎖️ **Successful Coup!** Your military has doubled in size!"
+                        else:
+                            # Lose all military
+                            self.civ_manager.update_military(user_id, {
+                                "soldiers": -civ['military']['soldiers'],
+                                "spies": -civ['military']['spies']
+                            })
+                            result = "💥 **Coup Failed!** Your military has been disbanded!"
+                        
+                        await ctx.send(result)
+                    
+                    elif card_name == "territory gambit":
+                        current_territory = civ['territory']['land_size']
+                        if random.random() < 0.3:  # 30% chance
+                            # Win big
+                            new_territory = current_territory * 3
+                            self.civ_manager.update_territory(user_id, {"land_size": new_territory - current_territory})
+                            result = f"🎯 **Gambit Success!** Your territory tripled from {format_number(current_territory)} to {format_number(new_territory)} km²!"
+                        else:
+                            # Lose territory
+                            lost_territory = current_territory // 2
+                            self.civ_manager.update_territory(user_id, {"land_size": -lost_territory})
+                            result = f"💸 **Gambit Failed!** You lost half your territory, now at {format_number(current_territory - lost_territory)} km²."
+                        
+                        await ctx.send(result)
+                    
+                    else:
+                        await ctx.send("❌ That card hasn't been implemented yet!")
+                        return
+                    
+                    # Mark card as used
+                    cursor.execute('''
+                        UPDATE unlocked_cards SET used = 1 
+                        WHERE user_id = ? AND LOWER(card_name) = ?
+                    ''', (user_id, card_name))
+                    conn.commit()
+                    
+                    # Log card usage
+                    self.db.log_event(user_id, "card_used", f"Card Used: {card_name}", result)
+                    
+                else:
+                    await ctx.send("❌ Invalid action! Use `.cards` to view your cards or `.cards use <card_name> [@target]` to use a card.")
 
         except Exception as e:
             logger.error(f"Error in cards command: {e}", exc_info=True)
+
+    @commands.command(name='addborder')
+    async def add_border(self, ctx):
+        """Add a defensive border to your territory"""
+        try:
+            user_id = str(ctx.author.id)
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            # Check cost
+            border_cost = {
+                "gold": 1000,
+                "stone": 500,
+                "wood": 300
+            }
+
+            if not self.civ_manager.can_afford(user_id, border_cost):
+                await ctx.send(f"❌ Not enough resources! Need {format_number(border_cost['gold'])} gold, {format_number(border_cost['stone'])} stone, and {format_number(border_cost['wood'])} wood.")
+                return
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT has_border FROM borders WHERE user_id = ?', (user_id,))
+                existing_border = cursor.fetchone()
+
+                if existing_border and existing_border[0]:
+                    await ctx.send("❌ You already have a border! Use `.removeborder` to remove it first.")
+                    return
+
+                # Spend resources
+                self.civ_manager.spend_resources(user_id, border_cost)
+
+                # Create border
+                cursor.execute('''
+                    INSERT OR REPLACE INTO borders (user_id, has_border, border_strength, border_soldiers)
+                    VALUES (?, TRUE, 100, 0)
+                ''', (user_id,))
+                conn.commit()
+
+            embed = create_embed(
+                "🛡️ Border Established!",
+                f"**{civ['name']}** has built a defensive border around their territory!",
+                guilded.Color.green()
+            )
+            embed.add_field(name="Border Strength", value="100/100", inline=True)
+            embed.add_field(name="Cost", value=f"🪙 1,000 Gold\n🪨 500 Stone\n🪵 300 Wood", inline=True)
+            embed.add_field(name="Next Steps", value="Use `.rectract <percentage>` to assign soldiers to your border for extra defense!", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in addborder command: {e}", exc_info=True)
+
+    @commands.command(name='removeborder')
+    async def remove_border(self, ctx):
+        """Remove your defensive border and retrieve all soldiers"""
+        try:
+            user_id = str(ctx.author.id)
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT border_soldiers FROM borders WHERE user_id = ? AND has_border = TRUE', (user_id,))
+                border_data = cursor.fetchone()
+
+                if not border_data:
+                    await ctx.send("❌ You don't have a border to remove!")
+                    return
+
+                # Return soldiers to main army
+                soldiers_to_return = border_data[0]
+                if soldiers_to_return > 0:
+                    self.civ_manager.update_military(user_id, {"soldiers": soldiers_to_return})
+
+                # Remove border
+                cursor.execute('DELETE FROM borders WHERE user_id = ?', (user_id,))
+                conn.commit()
+
+            embed = create_embed(
+                "🛡️ Border Removed!",
+                f"**{civ['name']}** has dismantled their defensive border.",
+                guilded.Color.blue()
+            )
+            
+            if soldiers_to_return > 0:
+                embed.add_field(name="Soldiers Returned", value=f"⚔️ {format_number(soldiers_to_return)} soldiers have returned to your main army.", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in removeborder command: {e}", exc_info=True)
+
+    @commands.command(name='rectract')
+    async def rectract_soldiers(self, ctx, percentage: int = None):
+        """Assign a percentage of your soldiers to the border"""
+        try:
+            if percentage is None or percentage < 1 or percentage > 100:
+                await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.rectract <percentage>`")
+                return
+
+            user_id = str(ctx.author.id)
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT border_strength, border_soldiers FROM borders WHERE user_id = ? AND has_border = TRUE', (user_id,))
+                border_data = cursor.fetchone()
+
+                if not border_data:
+                    await ctx.send("❌ You need to build a border first! Use `.addborder`")
+                    return
+
+            current_border_strength, current_border_soldiers = border_data
+            available_soldiers = civ['military']['soldiers']
+            
+            if available_soldiers == 0:
+                await ctx.send("❌ You don't have any soldiers to assign to the border!")
+                return
+
+            soldiers_to_assign = min((available_soldiers * percentage) // 100, available_soldiers)
+            
+            if soldiers_to_assign == 0:
+                await ctx.send("❌ That percentage would assign 0 soldiers. Try a higher percentage or train more soldiers.")
+                return
+
+            # Update border and military
+            new_border_soldiers = current_border_soldiers + soldiers_to_assign
+            border_strength_increase = soldiers_to_assign * 2  # Each soldier adds 2 strength
+            
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE borders 
+                    SET border_soldiers = ?, border_strength = ?, updated_at = ?
+                    WHERE user_id = ?
+                ''', (new_border_soldiers, current_border_strength + border_strength_increase, datetime.utcnow(), user_id))
+                conn.commit()
+
+            # Remove soldiers from main army
+            self.civ_manager.update_military(user_id, {"soldiers": -soldiers_to_assign})
+
+            embed = create_embed(
+                "🛡️ Soldiers Assigned to Border!",
+                f"**{civ['name']}** has assigned {format_number(soldiers_to_assign)} soldiers to reinforce the border.",
+                guilded.Color.green()
+            )
+            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)} total", inline=True)
+            embed.add_field(name="Border Strength", value=f"🛡️ {format_number(current_border_strength + border_strength_increase)}", inline=True)
+            embed.add_field(name="Main Army", value=f"⚔️ {format_number(available_soldiers - soldiers_to_assign)} soldiers remaining", inline=True)
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in rectract command: {e}", exc_info=True)
+
+    @commands.command(name='retrieve')
+    async def retrieve_soldiers(self, ctx, percentage: int = None):
+        """Retrieve a percentage of soldiers from the border"""
+        try:
+            if percentage is None or percentage < 1 or percentage > 100:
+                await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.retrieve <percentage>`")
+                return
+
+            user_id = str(ctx.author.id)
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT border_strength, border_soldiers FROM borders WHERE user_id = ? AND has_border = TRUE', (user_id,))
+                border_data = cursor.fetchone()
+
+                if not border_data:
+                    await ctx.send("❌ You need to build a border first! Use `.addborder`")
+                    return
+
+            current_border_strength, current_border_soldiers = border_data
+            
+            if current_border_soldiers == 0:
+                await ctx.send("❌ You don't have any soldiers assigned to your border!")
+                return
+
+            soldiers_to_retrieve = min((current_border_soldiers * percentage) // 100, current_border_soldiers)
+            
+            # Calculate strength loss (proportional to soldiers removed)
+            strength_loss = (current_border_strength * soldiers_to_retrieve) // current_border_soldiers
+            new_border_strength = max(1, current_border_strength - strength_loss)  # Keep at least 1 strength
+            new_border_soldiers = current_border_soldiers - soldiers_to_retrieve
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE borders 
+                    SET border_soldiers = ?, border_strength = ?, updated_at = ?
+                    WHERE user_id = ?
+                ''', (new_border_soldiers, new_border_strength, datetime.utcnow(), user_id))
+                conn.commit()
+
+            # Return soldiers to main army
+            self.civ_manager.update_military(user_id, {"soldiers": soldiers_to_retrieve})
+
+            embed = create_embed(
+                "🛡️ Soldiers Retrieved from Border!",
+                f"**{civ['name']}** has retrieved {format_number(soldiers_to_retrieve)} soldiers from the border.",
+                guilded.Color.blue()
+            )
+            embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(new_border_soldiers)} remaining", inline=True)
+            embed.add_field(name="Border Strength", value=f"🛡️ {format_number(new_border_strength)}", inline=True)
+            embed.add_field(name="Main Army", value=f"⚔️ +{format_number(soldiers_to_retrieve)} soldiers", inline=True)
+
+            if new_border_strength < 50:
+                embed.add_field(name="⚠️ Warning", value="Your border strength is low! Consider reinforcing it.", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in retrieve command: {e}", exc_info=True)
+
+    @commands.command(name='borderinfo')
+    async def border_info(self, ctx):
+        """Check your border status"""
+        try:
+            user_id = str(ctx.author.id)
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT border_strength, border_soldiers, created_at FROM borders WHERE user_id = ? AND has_border = TRUE', (user_id,))
+                border_data = cursor.fetchone()
+
+            if not border_data:
+                embed = create_embed(
+                    "🛡️ Border Status",
+                    "You don't have a defensive border yet!",
+                    guilded.Color.blue()
+                )
+                embed.add_field(name="How to Build", value="Use `.addborder` to build a defensive border (costs resources).", inline=False)
+            else:
+                border_strength, border_soldiers, created_at = border_data
+                
+                embed = create_embed(
+                    "🛡️ Border Status",
+                    f"**{civ['name']}**'s defensive border",
+                    guilded.Color.green()
+                )
+                embed.add_field(name="Border Strength", value=f"🛡️ {format_number(border_strength)}", inline=True)
+                embed.add_field(name="Border Soldiers", value=f"⚔️ {format_number(border_soldiers)}", inline=True)
+                embed.add_field(name="Main Army", value=f"⚔️ {format_number(civ['military']['soldiers'])}", inline=True)
+                
+                # Calculate defense bonus
+                defense_bonus = min(50, border_strength // 10)  # Max 50% bonus
+                embed.add_field(name="Defense Bonus", value=f"🛡️ +{defense_bonus}% in defensive battles", inline=False)
+                
+                embed.add_field(name="Management", value="Use `.rectract <percentage>` to assign soldiers\nUse `.retrieve <percentage>` to retrieve soldiers", inline=False)
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in borderinfo command: {e}", exc_info=True)
 
     @commands.command(name='debug_military')
     async def debug_military(self, ctx, target_mention: str = None):
