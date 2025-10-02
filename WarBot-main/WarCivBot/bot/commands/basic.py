@@ -209,7 +209,30 @@ EconomyCommands: (short)
   extrawork, extrastore, extrainventory, extragamble, extracards, slots, blackjack, give, setbalance
 
 MilitaryCommands & Diplomacy:
-  Use `.warhelp Military` or `.warhelp Diplomacy` to see full lists.
+  train         Train soldiers or spies
+  find          Search for wandering soldiers
+  declare       Declare war on another civilization
+  attack        Launch direct attack
+  siege         Lay siege to enemy territory
+  stealthbattle Spy-based stealth attack
+  cards         View/use unlocked cards (20% chance from military commands)
+  peace         Offer peace
+  accept_peace  Accept peace offer
+  addborder     Build defensive border
+  removeborder  Remove border and retrieve soldiers
+  rectract      Assign percentage of soldiers to border
+  retrieve      Retrieve percentage of soldiers from border
+  borderinfo    Check border status
+
+Border Management:
+  - Borders provide defensive bonuses in battles
+  - Soldiers assigned to border increase border strength
+  - Strategic trade-off between border defense and offensive capability
+
+Card System:
+  - Cards unlock with 20% chance after military commands
+  - Cards provide powerful but risky effects
+  - Use `.cards` to view and use unlocked cards
 
 You are helpful, encouraging, and strategic. Keep responses concise and focused on gameplay.
 If asked about non-game topics, politely decline. Use brief Discord-style formatting.
@@ -358,7 +381,7 @@ Remember to keep responses engaging but focused on the game.
     @commands.command(name='regions')
     async def regions_command(self, ctx, region_name: str = None):
         """View or select your civilization's region"""
-        # Define available regions with bonuses
+        # Define available regions with bonuses (using underscores for names)
         regions = {
             "asia": {
                 "name": "Asia",
@@ -375,17 +398,17 @@ Remember to keep responses engaging but focused on the game.
                 "bonuses": {"stone": 150, "wood": 150},
                 "description": "🌍 **Africa**: Rich in natural resources and mineral wealth."
             },
-            "north america": {
+            "north_america": {
                 "name": "North America",
                 "bonuses": {"gold": 200, "food": 200},
                 "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."
             },
-            "south america": {
+            "south_america": {
                 "name": "South America",
                 "bonuses": {"food": 300, "wood": 100},
                 "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."
             },
-            "middle east": {
+            "middle_east": {
                 "name": "Middle East",
                 "bonuses": {"gold": 400},
                 "description": "🌅 **Middle East**: Vast oil reserves creating immense wealth."
@@ -427,7 +450,7 @@ Remember to keep responses engaging but focused on the game.
             
             embed.add_field(
                 name="Usage",
-                value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)",
+                value="Use `.regions <region_name>` to select a region (e.g., `.regions asia`)\nAvailable regions: asia, europe, africa, north_america, south_america, middle_east, oceania, antarctica",
                 inline=False
             )
             
@@ -500,8 +523,8 @@ Remember to keep responses engaging but focused on the game.
             )
             
             embed.add_field(
-                name="Next Steps",
-                value="Use `.status` to view your updated civilization stats or `.warhelp` to see available commands.",
+                name="🎉 Nation Complete!",
+                value="Your civilization is now fully established! Use `.status` to view your complete stats and `.warhelp` to see all available commands.",
                 inline=False
             )
             
@@ -650,8 +673,8 @@ Remember to keep responses engaging but focused on the game.
             color=0x00ff00
         )
         embed.add_field(
-            name="✅ Civilization Complete!",
-            value="Your civilization is now ready. Use `.status` to view your progress and `.warhelp` for available commands.",
+            name="🎉 Nation Almost Complete!",
+            value="Your civilization is nearly ready! **Select your region with `.regions`** to complete your nation setup and receive regional bonuses.",
             inline=False
         )
         
@@ -801,9 +824,14 @@ Remember to keep responses engaging but focused on the game.
             "• `.attack @user` — Launch a direct attack ⚔️\n"
             "• `.siege @user` — Lay siege to enemy territory 🏰\n"
             "• `.stealthbattle @user` — Spy-based stealth attack 🕶️\n"
-            "• `.cards` — View/select tech/military cards 🃏\n"
+            "• `.cards` — View/use unlocked cards (20% chance from military commands) 🃏\n"
             "• `.accept_peace @user` — Accept a peace offer ✌️\n"
             "• `.peace @user` — Offer peace 🤝\n"
+            "• `.addborder` — Build defensive border 🛡️\n"
+            "• `.removeborder` — Remove border and retrieve soldiers 🔄\n"
+            "• `.rectract <percentage>` — Assign percentage of soldiers to border 📊\n"
+            "• `.retrieve <percentage>` — Retrieve percentage of soldiers from border 📥\n"
+            "• `.borderinfo` — Check border status and strength 📈\n"
             "• `.debug_military` — Debug military & user data (admin/dev) 🛠️"
         )
 
