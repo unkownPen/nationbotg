@@ -40,6 +40,32 @@ class HyperItemCommands(commands.Cog):
         except:
             pass
 
+    async def _reflect_with_mirror(self, ctx, target_id: str, target_civ, attacker_civ, attack_type: str):
+        """Generic mirror reflection handler for all attacks"""
+        self.civ_manager.use_hyper_item(target_id, "Mirror")
+        
+        embed = create_embed(
+            "🪞 ATTACK REFLECTED!",
+            f"**{target_civ['name']}**'s Mirror has reflected the {attack_type} back at **{attacker_civ['name']}**!",
+            guilded.Color.purple()
+        )
+        embed.add_field(name="Result", value="Attack completely reflected back to the attacker! Mirror consumed.", inline=False)
+        
+        await ctx.send(embed=embed)
+        
+        # Notify both parties
+        try:
+            target_user = await self.bot.fetch_user(int(target_id))
+            await target_user.send(f"🪞 **Attack Reflected!** Your Mirror reflected the {attack_type} from {attacker_civ['name']} back at them!")
+        except:
+            pass
+            
+        try:
+            attacker_user = await self.bot.fetch_user(int(attacker_civ['user_id']))
+            await attacker_user.send(f"🪞 **ATTACK REFLECTED!** Your {attack_type} was reflected back at you by {target_civ['name']}'s Mirror!")
+        except:
+            pass
+
     async def _announce_global_attack(self, ctx, attacker_name: str, target_name: str, attack_type: str):
         """Announce world-ending attacks globally"""
         embed = create_embed(
@@ -49,7 +75,271 @@ class HyperItemCommands(commands.Cog):
         )
         embed.add_field(name="⚠️ World Event", value="This attack affects the global balance of power!", inline=False)
         
-        # In a real implementation, this would send to all registered channels
+        await ctx.send(embed=embed)
+
+    def _check_defenses(self, target_id: str, attack_type: str):
+        """Check if target has any defensive HyperItems and return which one"""
+        if self._has_hyperitem(target_id, "Mirror"):
+            return "mirror"
+        elif self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+            return "shield"
+        return None
+
+    @commands.command(name='laststand')
+    @check_cooldown_decorator(minutes=60)
+    async def last_stand(self, ctx):
+        """Use Last Stand when under 500 gold for ultimate military power"""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first!")
+            return
+            
+        if not self._has_hyperitem(user_id, "Last Stand"):
+            await ctx.send("❌ You need a **Last Stand** HyperItem to use this command!")
+            return
+            
+        # Check gold requirement
+        if civ['resources']['gold'] >= 500:
+            await ctx.send("❌ **Last Stand** can only be used when you have less than 500 gold! This is a desperate measure.")
+            return
+            
+        # Consume Last Stand
+        self.civ_manager.use_hyper_item(user_id, "Last Stand")
+        
+        # Calculate desperate military boost based on how poor you are
+        poverty_factor = max(0.1, (500 - civ['resources']['gold']) / 500)  # 0.1 to 1.0 based on poverty
+        military_boost_multiplier = 3.0 + (poverty_factor * 7.0)  # 3x to 10x boost based on desperation
+        
+        soldiers_boost = int(civ['military']['soldiers'] * military_boost_multiplier)
+        spies_boost = int(civ['military']['spies'] * military_boost_multiplier)
+        tech_boost = random.randint(3, 8)
+        
+        # Apply massive military boost
+        self.civ_manager.update_military(user_id, {
+            "soldiers": soldiers_boost,
+            "spies": spies_boost,
+            "tech_level": tech_boost
+        })
+        
+        # Desperation happiness boost
+        self.civ_manager.update_population(user_id, {"happiness": 40})
+        
+        embed = create_embed(
+            "💥 LAST STAND ACTIVATED!",
+            f"**{civ['name']}** makes a desperate final stand with nothing left to lose!",
+            guilded.Color.dark_red()
+        )
+        
+        embed.add_field(
+            name="Desperation Bonus",
+            value=f"Poverty Multiplier: {poverty_factor:.1f}x → Total Boost: {military_boost_multiplier:.1f}x",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Military Reinforcements",
+            value=f"⚔️ {format_number(soldiers_boost)} soldiers\n🕵️ {format_number(spies_boost)} spies\n🔬 +{tech_boost} tech levels",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Morale Surge",
+            value="😊 +40 Happiness from desperate unity",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="⚠️ Warning",
+            value="This power comes from having nothing left to lose. Use it wisely!",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='sacrifice')
+    @check_cooldown_decorator(minutes=1440)  # 24 hour cooldown - this is a nuclear option
+    async def mutual_destruction(self, ctx, target: str = None):
+        """Use Sacrifice to destroy both your civilization and another (MUTUAL DESTRUCTION)"""
+        if not target:
+            await ctx.send("💀 **MUTUAL DESTRUCTION**\nUsage: `.sacrifice @user`\nRequires: Sacrifice HyperItem\n⚠️ COMPLETELY DESTROYS BOTH CIVILIZATIONS!")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        if not self._has_hyperitem(user_id, "Sacrifice"):
+            await ctx.send("❌ You need a **Sacrifice** HyperItem to use this command!")
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first!")
+            return
+            
+        # Parse target
+        if target.startswith('<@') and target.endswith('>'):
+            target_id = target[2:-1]
+            if target_id.startswith('!'):
+                target_id = target_id[1:]
+        else:
+            await ctx.send("❌ Please mention a valid user to sacrifice with!")
+            return
+            
+        if target_id == user_id:
+            await ctx.send("❌ You cannot sacrifice with yourself!")
+            return
+            
+        target_civ = self.civ_manager.get_civilization(target_id)
+        if not target_civ:
+            await ctx.send("❌ Target user doesn't have a civilization!")
+            return
+        
+        # Check for Mirror (Sacrifice can be reflected!)
+        defense = self._check_defenses(target_id, "sacrifice")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "mutual destruction sacrifice")
+            # If reflected, the original attacker gets destroyed alone
+            try:
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
+                conn.commit()
+                
+                await ctx.send("💀 **SACRIFICE REFLECTED!** You were destroyed by your own reflected sacrifice!")
+                
+                # Notify attacker
+                try:
+                    attacker_user = await self.bot.fetch_user(int(user_id))
+                    await attacker_user.send("💀 **SACRIFICE REFLECTED!** Your mutual destruction attempt was reflected back at you by a Mirror! Your civilization has been destroyed.")
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.error(f"Error in reflected sacrifice: {e}")
+                
+            return
+            
+        # Confirm this is really what they want to do
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id and m.content.lower() == 'confirm'
+        
+        embed = create_embed(
+            "💀 FINAL WARNING: MUTUAL DESTRUCTION",
+            f"**This will COMPLETELY DESTROY both {civ['name']} and {target_civ['name']}!**",
+            guilded.Color.dark_red()
+        )
+        
+        embed.add_field(
+            name="CONFIRMATION REQUIRED",
+            value="Type `confirm` in the next 30 seconds to proceed with mutual annihilation.",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Effects",
+            value="• Both civilizations permanently deleted\n• All progress lost\n• No going back\n• Complete mutual destruction",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+        
+        try:
+            await self.bot.wait_for('message', timeout=30.0, check=check)
+        except asyncio.TimeoutError:
+            await ctx.send("❌ Mutual destruction cancelled - confirmation timeout.")
+            return
+        
+        # Consume Sacrifice HyperItem
+        self.civ_manager.use_hyper_item(user_id, "Sacrifice")
+        
+        # DESTROY BOTH CIVILIZATIONS
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete both civilizations
+            cursor.execute('DELETE FROM civilizations WHERE user_id IN (?, ?)', (user_id, target_id))
+            conn.commit()
+            
+            # Global announcement
+            await self._announce_global_attack(ctx, civ['name'], target_civ['name'], "Mutual Destruction Sacrifice")
+            
+            embed = create_embed(
+                "💀 MUTUAL DESTRUCTION COMPLETE",
+                f"**{civ['name']}** and **{target_civ['name']}** have been completely annihilated!",
+                guilded.Color.dark_red()
+            )
+            
+            embed.add_field(
+                name="Total Annihilation",
+                value="Both civilizations have been erased from existence. The sacrifice is complete.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Aftermath",
+                value="All progress lost. Both players must start anew with `.start <name>`",
+                inline=False
+            )
+            
+            await ctx.send(embed=embed)
+            
+            # Notify both players
+            try:
+                target_user = await self.bot.fetch_user(int(target_id))
+                await target_user.send(f"💀 **MUTUAL DESTRUCTION!** Your civilization has been completely destroyed in a mutual sacrifice with {civ['name']}! Use `.start <name>` to begin anew.")
+            except:
+                pass
+                
+            try:
+                user = await self.bot.fetch_user(int(user_id))
+                await user.send(f"💀 **SACRIFICE COMPLETE!** You have destroyed both your civilization and {target_civ['name']} in mutual destruction. Use `.start <name>` to begin anew.")
+            except:
+                pass
+                
+            # Log the mutual destruction
+            self.db.log_event(user_id, "mutual_destruction", "Mutual Destruction", f"Destroyed both {civ['name']} and {target_civ['name']}")
+            
+        except Exception as e:
+            logger.error(f"Error in mutual destruction: {e}")
+            await ctx.send("❌ Failed to execute mutual destruction. Please try again.")
+
+    @commands.command(name='mirror')
+    async def mirror_status(self, ctx):
+        """Display Mirror status - reflects ANY attack back to attacker"""
+        user_id = str(ctx.author.id)
+        
+        if not self._has_hyperitem(user_id, "Mirror"):
+            await ctx.send("❌ You don't have a **Mirror** HyperItem!")
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        embed = create_embed(
+            "🪞 Ultimate Mirror of Reflection",
+            f"**{civ['name']}** is protected by the all-reflecting Mirror!",
+            guilded.Color.purple()
+        )
+        
+        embed.add_field(
+            name="Mirror Status",
+            value="✅ **ACTIVE** - Will reflect the next ANY attack back to the attacker",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="God-Tier Reflection",
+            value="• Reflects nukes, obliteration, missiles, assassinations\n• Reflects propaganda, spy ops, sacrifice\n• Reflects EVERY HyperItem attack\n• Sends the full attack back to the original attacker\n• Consumed after one reflection",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="⚠️ Ultimate Defense",
+            value="The Mirror is the only defense that can reflect the Sacrifice HyperItem!",
+            inline=False
+        )
+        
         await ctx.send(embed=embed)
 
     @commands.command(name='nuke')
@@ -89,8 +379,39 @@ class HyperItemCommands(commands.Cog):
             await ctx.send("❌ Target user doesn't have a civilization!")
             return
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "nuclear strike")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "nuclear strike")
+            # After reflection, apply the nuke to the original attacker
+            population_loss = int(civ['population']['citizens'] * random.uniform(0.4, 0.7))
+            military_loss = int(civ['military']['soldiers'] * random.uniform(0.6, 0.9))
+            resource_destruction = {
+                "gold": int(civ['resources']['gold'] * random.uniform(0.3, 0.6)),
+                "food": int(civ['resources']['food'] * random.uniform(0.5, 0.8)),
+                "wood": int(civ['resources']['wood'] * random.uniform(0.4, 0.7)),
+                "stone": int(civ['resources']['stone'] * random.uniform(0.4, 0.7))
+            }
+            territory_loss = int(civ['territory']['land_size'] * random.uniform(0.2, 0.4))
+            
+            self.civ_manager.update_population(user_id, {
+                "citizens": -population_loss,
+                "happiness": -50,
+                "hunger": 30
+            })
+            
+            self.civ_manager.update_military(user_id, {
+                "soldiers": -military_loss,
+                "spies": -int(civ['military']['spies'] * 0.5)
+            })
+            
+            negative_resources = {res: -amt for res, amt in resource_destruction.items()}
+            self.civ_manager.update_resources(user_id, negative_resources)
+            self.civ_manager.update_territory(user_id, {"land_size": -territory_loss})
+            
+            await ctx.send("💥 **NUCLEAR STRIKE REFLECTED!** Your own nuke was reflected back at you!")
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "nuclear strike")
             return
             
@@ -123,7 +444,7 @@ class HyperItemCommands(commands.Cog):
         negative_resources = {res: -amt for res, amt in resource_destruction.items()}
         self.civ_manager.update_resources(target_id, negative_resources)
         
-        self.civ_manager.update_resources(target_id, {"territory": {"land_size": -territory_loss}})
+        self.civ_manager.update_territory(target_id, {"land_size": -territory_loss})
         
         # Global announcement
         await self._announce_global_attack(ctx, civ['name'], target_civ['name'], "Nuclear Strike")
@@ -180,8 +501,30 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "HyperLaser obliteration")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "HyperLaser obliteration")
+            # After reflection, the original attacker gets obliterated
+            try:
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
+                conn.commit()
+                
+                await ctx.send("💥 **OBLITERATION REFLECTED!** You were destroyed by your own reflected HyperLaser!")
+                
+                try:
+                    attacker_user = await self.bot.fetch_user(int(user_id))
+                    await attacker_user.send("💥 **OBLITERATION REFLECTED!** Your HyperLaser was reflected back at you by a Mirror! Your civilization has been destroyed.")
+                except:
+                    pass
+                    
+            except Exception as e:
+                logger.error(f"Error in reflected obliteration: {e}")
+                
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "HyperLaser obliteration")
             return
         
@@ -272,7 +615,7 @@ class HyperItemCommands(commands.Cog):
         # Consume the Lucky Charm
         self.civ_manager.use_hyper_item(user_id, "Lucky Charm")
         
-        # Apply temporary luck bonus (would need to implement in actual game logic)
+        # Apply temporary luck bonus
         civ = self.civ_manager.get_civilization(user_id)
         bonuses = civ.get('bonuses', {})
         bonuses['next_action_critical'] = True
@@ -324,8 +667,18 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "propaganda campaign")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "propaganda campaign")
+            # After reflection, the original attacker loses soldiers to themselves
+            soldiers_stolen = int(civ['military']['soldiers'] * random.uniform(0.15, 0.35))
+            if soldiers_stolen < 1:
+                soldiers_stolen = 1
+            self.civ_manager.update_military(user_id, {"soldiers": -soldiers_stolen})
+            await ctx.send(f"📢 **PROPAGANDA REFLECTED!** Your own propaganda turned {soldiers_stolen} of your soldiers against you!")
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "propaganda campaign")
             return
         
@@ -550,7 +903,7 @@ class HyperItemCommands(commands.Cog):
             await ctx.send("❌ You need a **Spy Network** HyperItem to use this command!")
             return
             
-        # Parse target (same logic as other commands)
+        # Parse target
         if target.startswith('<@') and target.endswith('>'):
             target_id = target[2:-1]
             if target_id.startswith('!'):
@@ -566,8 +919,22 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "super spy mission")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "super spy mission")
+            # After reflection, the spy mission affects the attacker
+            tech_stolen = 1
+            stolen_gold = int(civ['resources']['gold'] * random.uniform(0.1, 0.25))
+            soldiers_sabotaged = int(civ['military']['soldiers'] * random.uniform(0.05, 0.15))
+            
+            self.civ_manager.update_military(user_id, {"tech_level": -tech_stolen})
+            self.civ_manager.update_resources(user_id, {"gold": -stolen_gold})
+            self.civ_manager.update_military(user_id, {"soldiers": -soldiers_sabotaged})
+            
+            await ctx.send("🕵️ **SPY MISSION REFLECTED!** Your elite spies were turned against you!")
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "super spy mission")
             return
         
@@ -690,8 +1057,24 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "assassination attempt")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "assassination attempt")
+            # After reflection, the original attacker suffers the assassination effects
+            leadership_crisis = {
+                "happiness": -30,
+                "citizens": -int(civ['population']['citizens'] * 0.1)
+            }
+            military_chaos = {
+                "soldiers": -int(civ['military']['soldiers'] * 0.2),
+                "spies": -int(civ['military']['spies'] * 0.3)
+            }
+            self.civ_manager.update_population(user_id, leadership_crisis)
+            self.civ_manager.update_military(user_id, military_chaos)
+            await ctx.send("🗡️ **ASSASSINATION REFLECTED!** Your own assassination attempt backfired on you!")
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "assassination attempt")
             return
         
@@ -763,7 +1146,7 @@ class HyperItemCommands(commands.Cog):
             await ctx.send("❌ You need **Missiles** HyperItem to use this command!")
             return
             
-        # Parse target (same logic)
+        # Parse target
         if target.startswith('<@') and target.endswith('>'):
             target_id = target[2:-1]
             if target_id.startswith('!'):
@@ -779,8 +1162,32 @@ class HyperItemCommands(commands.Cog):
             
         civ = self.civ_manager.get_civilization(user_id)
         
-        # Check shield first - now blocks ALL attacks
-        if self._has_hyperitem(target_id, "Anti-Nuke Shield"):
+        # Check defenses in order: Mirror first, then Shield
+        defense = self._check_defenses(target_id, "missile strike")
+        if defense == "mirror":
+            await self._reflect_with_mirror(ctx, target_id, target_civ, civ, "missile strike")
+            # After reflection, the missile hits the attacker
+            population_loss = int(civ['population']['citizens'] * random.uniform(0.1, 0.25))
+            military_loss = int(civ['military']['soldiers'] * random.uniform(0.2, 0.4))
+            resource_damage = {
+                "gold": int(civ['resources']['gold'] * random.uniform(0.1, 0.2)),
+                "wood": int(civ['resources']['wood'] * random.uniform(0.15, 0.3)),
+                "stone": int(civ['resources']['stone'] * random.uniform(0.15, 0.3))
+            }
+            
+            self.civ_manager.update_population(user_id, {
+                "citizens": -population_loss,
+                "happiness": -20
+            })
+            
+            self.civ_manager.update_military(user_id, {"soldiers": -military_loss})
+            
+            negative_resources = {res: -amt for res, amt in resource_damage.items()}
+            self.civ_manager.update_resources(user_id, negative_resources)
+            
+            await ctx.send("🚀 **MISSILE STRIKE REFLECTED!** Your own missiles were turned back on you!")
+            return
+        elif defense == "shield":
             await self._block_with_shield(ctx, target_id, target_civ, civ, "missile strike")
             return
         
@@ -828,3 +1235,6 @@ class HyperItemCommands(commands.Cog):
             await target_user.send(f"🚀 **Missile Attack!** Your civilization has been bombed by {civ['name']}!")
         except:
             pass
+
+def setup(bot):
+    bot.add_cog(HyperItemCommands(bot))
