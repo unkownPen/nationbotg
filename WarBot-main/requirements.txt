@@ -5,3 +5,4 @@ SQLAlchemy
 websockets
 dropbox
 requests
+tenacity
