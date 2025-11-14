@@ -145,7 +145,7 @@ class Database:
                 user_id TEXT,
                 tech_level INTEGER,
                 available_cards TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'selected'
+                status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, tech_level)
             )
@@ -201,9 +201,9 @@ class Database:
             )
         ''')
         
-        # Trade requests table
+        # Trade requests table - FIXED: removed double "NOT"
         cursor.execute('''
-            CREATE TABLE IF NOT NOT EXISTS trade_requests (
+            CREATE TABLE IF NOT EXISTS trade_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id TEXT NOT NULL,
                 recipient_id TEXT NOT NULL,
