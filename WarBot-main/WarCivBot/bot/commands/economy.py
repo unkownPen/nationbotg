@@ -41,11 +41,35 @@ class EconomyCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
 
+    async def check_civil_war_and_proceed(self, ctx, user_id: str) -> bool:
+        """Check for civil war risk and proceed if safe"""
+        try:
+            if self.civ_manager.check_civil_war_risk(user_id):
+                # Civil war occurred - send message and stop command execution
+                civ = self.civ_manager.get_civilization(user_id)
+                if civ:
+                    embed = create_embed(
+                        "💥 CIVIL WAR!",
+                        "Your civilization has been torn apart by internal conflict! Check your events with `.events` to see the damage.",
+                        guilded.Color.red()
+                    )
+                    await ctx.send(embed=embed)
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking civil war for {user_id}: {e}")
+            return True
+
     @commands.command(name='gather')
     @check_cooldown_decorator(minutes=1)
     async def gather_resources(self, ctx):
         """Gather random resources from your territory"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -104,6 +128,11 @@ class EconomyCommands(commands.Cog):
             return
             
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -147,6 +176,11 @@ class EconomyCommands(commands.Cog):
     async def farm_food(self, ctx):
         """Farm food for your civilization"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -193,6 +227,11 @@ class EconomyCommands(commands.Cog):
     async def mine_resources(self, ctx):
         """Mine stone and wood from your territory"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -240,6 +279,11 @@ class EconomyCommands(commands.Cog):
     async def harvest_food(self, ctx):
         """Large harvest with longer cooldown"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -276,6 +320,11 @@ class EconomyCommands(commands.Cog):
     async def drill_minerals(self, ctx):
         """Extract rare minerals with advanced drilling"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -319,6 +368,11 @@ class EconomyCommands(commands.Cog):
     async def fish_resources(self, ctx):
         """Fish for food or occasionally find treasure"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -350,8 +404,13 @@ class EconomyCommands(commands.Cog):
     @commands.command(name='tax')
     @check_cooldown_decorator(minutes=5)
     async def collect_taxes(self, ctx):
-        """Collect taxes from your citizens"""
+        """Collect taxes from your citizens with risk of population loss"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -382,6 +441,12 @@ class EconomyCommands(commands.Cog):
         # Slight happiness decrease from taxation
         self.civ_manager.update_population(user_id, {"happiness": -2})
         
+        # Risk of population loss due to unhappy citizens
+        population_loss = 0
+        if population['happiness'] < 40 and random.random() < 0.3:  # 30% chance if happiness is low
+            population_loss = random.randint(5, 20)
+            self.civ_manager.update_population(user_id, {"citizens": -population_loss})
+        
         embed = create_embed(
             "💰 Tax Collection",
             f"Collected {format_number(total_tax)} gold in taxes from your citizens.",
@@ -390,6 +455,11 @@ class EconomyCommands(commands.Cog):
         
         if ideology == 'fascism':
             embed.add_field(name="Regime Effect", value="Forced taxation decreased happiness by 5!", inline=False)
+        
+        if population_loss > 0:
+            embed.add_field(name="⚠️ Population Loss", 
+                           value=f"{population_loss} citizens emigrated in protest against high taxes!", 
+                           inline=False)
             
         await ctx.send(embed=embed)
 
@@ -406,6 +476,11 @@ class EconomyCommands(commands.Cog):
             return
             
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -470,6 +545,11 @@ class EconomyCommands(commands.Cog):
             return
             
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -528,6 +608,11 @@ class EconomyCommands(commands.Cog):
     async def raid_caravan(self, ctx):
         """Raid NPC merchant caravans for loot"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -599,6 +684,11 @@ class EconomyCommands(commands.Cog):
             return
             
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -635,6 +725,11 @@ class EconomyCommands(commands.Cog):
     async def hold_festival(self, ctx):
         """Hold a grand festival to greatly boost citizen happiness"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -677,6 +772,11 @@ class EconomyCommands(commands.Cog):
     async def cheer_citizens(self, ctx):
         """Spread cheer to boost citizen happiness"""
         user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
         civ = self.civ_manager.get_civilization(user_id)
         
         if not civ:
@@ -712,6 +812,222 @@ class EconomyCommands(commands.Cog):
         if ideology == 'democracy':
             embed.add_field(name="Ideology Bonus", value="Democratic unity enhanced happiness!", inline=False)
             
+        await ctx.send(embed=embed)
+
+    # NEW CORE MECHANICS
+
+    @commands.command(name='sell')
+    async def sell_hyper_item(self, ctx, item_name: str = None):
+        """Sell hyper items to wandering merchants for gold"""
+        if not item_name:
+            await ctx.send("💰 **Sell Hyper Items**\nUsage: `.sell <item-name>`\nSell specific hyper items to wandering merchants for gold.")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        hyper_items = civ['hyper_items']
+        
+        # Check if user has the item
+        if item_name not in hyper_items:
+            await ctx.send(f"❌ You don't have the '{item_name}' hyper item!")
+            return
+            
+        # Determine gold value based on item rarity
+        item_values = {
+            "Lucky-Charm": random.randint(100, 200),
+            "Ancient-Relic": random.randint(200, 400),
+            "Crystal-Heart": random.randint(150, 300),
+            "Dragon-Scale": random.randint(250, 500),
+            "Phoenix-Feather": random.randint(300, 600)
+        }
+        
+        # Default value for unknown items
+        gold_value = item_values.get(item_name, random.randint(50, 150))
+        
+        # Remove item and give gold
+        self.civ_manager.use_hyper_item(user_id, item_name)
+        self.civ_manager.update_resources(user_id, {"gold": gold_value})
+        
+        embed = create_embed(
+            "💰 Item Sold!",
+            f"You sold the '{item_name}' to a wandering merchant for {format_number(gold_value)} gold!",
+            guilded.Color.gold()
+        )
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='advertise')
+    @check_cooldown_decorator(minutes=10)
+    async def advertise_civilization(self, ctx):
+        """Run promotional campaigns to attract new citizens"""
+        user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        # Check if enough gold for advertising
+        ad_cost = 50
+        if not self.civ_manager.can_afford(user_id, {"gold": ad_cost}):
+            await ctx.send(f"❌ You need {ad_cost} gold to run advertising campaigns!")
+            return
+            
+        # Spend gold
+        self.civ_manager.spend_resources(user_id, {"gold": ad_cost})
+        
+        # Calculate new citizens attracted
+        base_new_citizens = random.randint(100, 300)
+        happiness_bonus = civ['population']['happiness'] // 10  # Happiness attracts more people
+        territory_bonus = civ['territory']['land_size'] // 1000
+        
+        total_new_citizens = base_new_citizens + happiness_bonus + territory_bonus
+        
+        # Apply ideology bonuses
+        ideology = civ.get('ideology', '')
+        if ideology == 'democracy':
+            total_new_citizens = int(total_new_citizens * 1.2)  # Democracy is attractive
+        elif ideology == 'fascism':
+            total_new_citizens = int(total_new_citizens * 0.8)  # Fascism is less attractive
+            
+        # Add new citizens
+        self.civ_manager.update_population(user_id, {"citizens": total_new_citizens})
+        
+        embed = create_embed(
+            "📢 Advertising Campaign",
+            f"You advertised for free passports and {format_number(total_new_citizens)} people became citizens of your country!",
+            guilded.Color.green()
+        )
+        embed.add_field(name="Cost", value=f"🪙 {ad_cost} Gold", inline=True)
+        
+        if ideology == 'democracy':
+            embed.add_field(name="Ideology Bonus", value="Democratic values attracted more immigrants!", inline=False)
+        elif ideology == 'fascism':
+            embed.add_field(name="Ideology Penalty", value="Authoritarian regime discouraged some potential immigrants.", inline=False)
+            
+        await ctx.send(embed=embed)
+
+    @commands.command(name='census')
+    async def show_census(self, ctx):
+        """Display current gold and population status"""
+        user_id = str(ctx.author.id)
+        
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        resources = civ['resources']
+        population = civ['population']
+        employment_rate = self.civ_manager.get_employment_rate(user_id)
+        
+        embed = create_embed(
+            "📊 National Census Report",
+            f"Current status of {civ['name']}",
+            guilded.Color.blue()
+        )
+        
+        # Resource section
+        resource_text = (
+            f"🪙 **Gold**: {format_number(resources['gold'])}\n"
+            f"🌾 **Food**: {format_number(resources['food'])}\n"
+            f"🪵 **Wood**: {format_number(resources['wood'])}\n"
+            f"🪨 **Stone**: {format_number(resources['stone'])}"
+        )
+        embed.add_field(name="💰 Resources", value=resource_text, inline=True)
+        
+        # Population section
+        population_text = (
+            f"👥 **Total Citizens**: {format_number(population['citizens'])}\n"
+            f"💼 **Employed**: {format_number(population.get('employed', 0))}\n"
+            f"📈 **Employment Rate**: {employment_rate:.1f}%\n"
+            f"😊 **Happiness**: {population['happiness']}%\n"
+            f"🍽️ **Hunger**: {population['hunger']}%"
+        )
+        embed.add_field(name="👥 Population", value=population_text, inline=True)
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='recruit')
+    async def recruit_soldiers(self, ctx, number: int = None):
+        """Convert citizens into soldiers with risk of population loss"""
+        if number is None or number < 1:
+            await ctx.send("🎖️ **Recruitment Drive**\nUsage: `.recruit <number>`\nAttempt to convert citizens into soldiers. Higher numbers risk population loss if recruitment fails.")
+            return
+            
+        user_id = str(ctx.author.id)
+        
+        # Check for civil war first
+        if not await self.check_civil_war_and_proceed(ctx, user_id):
+            return
+            
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You need to start a civilization first! Use `.start <name>`")
+            return
+            
+        population = civ['population']
+        current_citizens = population['citizens']
+        
+        if number > current_citizens:
+            await ctx.send(f"❌ You only have {format_number(current_citizens)} citizens available for recruitment!")
+            return
+            
+        # Calculate success chance based on various factors
+        base_success = 0.7  # 70% base success rate
+        happiness_modifier = population['happiness'] / 100  # Happy citizens are more willing
+        population_ratio = number / current_citizens  # Higher ratio = higher risk
+        
+        # Penalty for recruiting too many at once
+        ratio_penalty = 0
+        if population_ratio > 0.1:  # More than 10% of population
+            ratio_penalty = (population_ratio - 0.1) * 2  # Significant penalty
+        
+        success_chance = base_success * happiness_modifier - ratio_penalty
+        success_chance = max(0.1, min(0.9, success_chance))  # Clamp between 10% and 90%
+        
+        if random.random() < success_chance:
+            # Successful recruitment
+            self.civ_manager.update_population(user_id, {"citizens": -number})
+            self.civ_manager.update_military(user_id, {"soldiers": number})
+            
+            embed = create_embed(
+                "🎖️ Recruitment Success!",
+                f"{format_number(number)} loyal citizens have enlisted as soldiers! Your military grows stronger.",
+                guilded.Color.green()
+            )
+            embed.add_field(name="New Military Strength", 
+                           value=f"🛡️ {format_number(civ['military']['soldiers'] + number)} Soldiers", 
+                           inline=True)
+        else:
+            # Failed recruitment - population flees
+            citizens_lost = min(number * 2, current_citizens // 2)  # Lose up to double the attempted number, but max half population
+            self.civ_manager.update_population(user_id, {"citizens": -citizens_lost, "happiness": -5})
+            
+            embed = create_embed(
+                "🎖️ Recruitment Failed!",
+                f"Your recruitment drive failed. {format_number(citizens_lost)} people, fearing conscription, have fled the country.",
+                guilded.Color.red()
+            )
+            embed.add_field(name="Morale Impact", value="Citizens are fearful of forced conscription. (-5 happiness)", inline=False)
+        
         await ctx.send(embed=embed)
 
 def setup(bot):
