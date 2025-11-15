@@ -29,6 +29,7 @@ class BasicCommands(commands.Cog):
         # Conversation tracking
         self.conversations = defaultdict(deque)  # user_id: deque of messages
         self.last_interaction = {}  # user_id: timestamp
+        self.saved_chats = set()  # user_ids with saved chats
 
     def _get_conversation_history(self, user_id):
         """Get formatted conversation history for a user"""
@@ -58,20 +59,146 @@ class BasicCommands(commands.Cog):
             self.conversations[user_id].clear()
             return False
             
-        # Clean up expired conversations
-        expired_users = []
-        for uid, last_time in list(self.last_interaction.items()):
-            if (now - last_time).total_seconds() > CONVERSATION_TIMEOUT:
-                expired_users.append(uid)
-                
-        for uid in expired_users:
-            try:
-                del self.conversations[uid]
-                del self.last_interaction[uid]
-            except KeyError:
-                pass
+        # Clean up expired conversations (only for non-saved chats)
+        if user_id not in self.saved_chats:
+            expired_users = []
+            for uid, last_time in list(self.last_interaction.items()):
+                if (now - last_time).total_seconds() > CONVERSATION_TIMEOUT:
+                    expired_users.append(uid)
+                    
+            for uid in expired_users:
+                try:
+                    del self.conversations[uid]
+                    del self.last_interaction[uid]
+                except KeyError:
+                    pass
             
         return True
+
+    @commands.command(name='reset')
+    async def reset_civilization(self, ctx):
+        """Reset your civilization (irreversible!)"""
+        user_id = str(ctx.author.id)
+        civ = self.civ_manager.get_civilization(user_id)
+        
+        if not civ:
+            await ctx.send("❌ You don't have a civilization to reset!")
+            return
+            
+        # Create confirmation embed
+        embed = guilded.Embed(
+            title="⚠️ **CIVILIZATION RESET CONFIRMATION** ⚠️",
+            description="**This action is PERMANENT and cannot be undone!**",
+            color=0xff0000
+        )
+        
+        embed.add_field(
+            name="You will lose:",
+            value="• All resources and progress\n• Your military and population\n• Your territory and items\n• Your region and ideology",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Confirmation Required:",
+            value="Type `CONFIRM RESET` exactly as shown to reset your civilization.",
+            inline=False
+        )
+        
+        embed.set_footer(text="This action cannot be reversed!")
+        
+        await ctx.send(embed=embed)
+        
+        # Wait for confirmation
+        def check(m):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+            
+        try:
+            msg = await self.bot.wait_for('message', timeout=30.0, check=check)
+            
+            if msg.content == "CONFIRM RESET":
+                # Reset civilization
+                if self.civ_manager.reset_civilization(user_id):
+                    # Also clear any saved chat
+                    if user_id in self.saved_chats:
+                        self.saved_chats.remove(user_id)
+                    if user_id in self.conversations:
+                        del self.conversations[user_id]
+                    if user_id in self.last_interaction:
+                        del self.last_interaction[user_id]
+                        
+                    success_embed = guilded.Embed(
+                        title="🗑️ Civilization Reset",
+                        description="Your civilization has been completely reset.",
+                        color=0x00ff00
+                    )
+                    success_embed.add_field(
+                        name="What's Next?",
+                        value="Use `.start <name>` to create a new civilization and begin your journey again!",
+                        inline=False
+                    )
+                    await ctx.send(embed=success_embed)
+                else:
+                    await ctx.send("❌ Failed to reset civilization. Please try again later.")
+            else:
+                await ctx.send("🛑 Reset cancelled. Your civilization is safe.")
+                
+        except asyncio.TimeoutError:
+            await ctx.send("🕒 Reset confirmation timed out. Your civilization is safe.")
+
+    @commands.command(name='sv')
+    async def start_saved_chat(self, ctx):
+        """Start a saved chat with the AI (no timeout)"""
+        user_id = str(ctx.author.id)
+        
+        if user_id in self.saved_chats:
+            await ctx.send("💾 You already have a saved chat running! Use `.svc` to close it.")
+            return
+            
+        self.saved_chats.add(user_id)
+        
+        # Initialize or preserve conversation
+        if user_id not in self.conversations:
+            self.conversations[user_id] = deque()
+            self.last_interaction[user_id] = datetime.now()
+        
+        embed = guilded.Embed(
+            title="💾 Saved Chat Started",
+            description="Your conversation will now be saved until you use `.svc` to close it.",
+            color=0x00ff00
+        )
+        
+        embed.add_field(
+            name="Features:",
+            value="• No 30-minute timeout\n• Persistent across bot restarts\n• Up to 100 messages\n• Use `.svc` to close and delete",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+
+    @commands.command(name='svc')
+    async def close_saved_chat(self, ctx):
+        """Close and delete your saved chat"""
+        user_id = str(ctx.author.id)
+        
+        if user_id not in self.saved_chats:
+            await ctx.send("❌ You don't have a saved chat running! Use `.sv` to start one.")
+            return
+            
+        # Clear conversation data
+        if user_id in self.conversations:
+            del self.conversations[user_id]
+        if user_id in self.last_interaction:
+            del self.last_interaction[user_id]
+            
+        self.saved_chats.remove(user_id)
+        
+        embed = guilded.Embed(
+            title="🗑️ Saved Chat Closed",
+            description="Your saved chat has been closed and all conversation history deleted.",
+            color=0x00ff00
+        )
+        
+        await ctx.send(embed=embed)
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -127,7 +254,7 @@ class BasicCommands(commands.Cog):
         # Handle replies - check if we've reached message limit
         if is_reply and user_id in self.conversations and len(self.conversations[user_id]) >= MAX_CONVERSATION_HISTORY:
             try:
-                await message.reply("💬 Saved chat limit reached! Please start a new chat by mentioning me again.")
+                await message.reply("💬 Chat limit reached! Starting new conversation.")
             except Exception:
                 logger.error("Failed to send chat limit message")
             # Clear the conversation
@@ -137,8 +264,8 @@ class BasicCommands(commands.Cog):
                 del self.last_interaction[user_id]
             return
             
-        # Reset conversation if it's a new mention (not a reply)
-        if bot_mentioned and not is_reply:
+        # Reset conversation if it's a new mention (not a reply) and not saved chat
+        if bot_mentioned and not is_reply and user_id not in self.saved_chats:
             self.conversations[user_id] = deque()
             self.last_interaction[user_id] = datetime.now()
             
@@ -197,6 +324,11 @@ Key Game Concepts:
 - Population: citizens, happiness, hunger
 - Territory: land_size
 - Ideologies: fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy
+
+**NEW COMMANDS:**
+- `.reset` - Reset your civilization (irreversible!)
+- `.sv` - Start saved chat (no timeout)
+- `.svc` - Close saved chat
 
 BasicCommands:
   ideology      Choose your civilization's government ideology
@@ -272,9 +404,10 @@ Remember to keep responses engaging but focused on the game.
             if not update_success:
                 # We reached the limit, add a note to the response
                 response += "\n\n💬 *Note: Chat history limit reached. Starting a new conversation.*"
-                # Clear and restart conversation
-                self.conversations[user_id] = deque()
-                self.last_interaction[user_id] = datetime.now()
+                # Clear and restart conversation (unless saved chat)
+                if user_id not in self.saved_chats:
+                    self.conversations[user_id] = deque()
+                    self.last_interaction[user_id] = datetime.now()
             
             # Update with AI response
             self._update_conversation(user_id, False, response)
@@ -378,9 +511,131 @@ Remember to keep responses engaging but focused on the game.
         return ("⚠️ AI is unavailable right now. Please make sure the bot has an API key set "
                 "via the OPENROUTER or OPENAI_API_KEY environment variable, and try again later.")
 
+    @commands.command(name='warhelp')
+    async def warbot_help_command(self, ctx, category: str = None):
+        """Display simplified, organized help menu"""
+        
+        # Define help categories
+        categories = {
+            "basic": {
+                "title": "🏛️ Basic Commands",
+                "description": "Essential civilization management",
+                "commands": {
+                    ".start <name>": "Begin your civilization journey",
+                    ".ideology <type>": "Choose government type",
+                    ".status": "View your civilization stats",
+                    ".regions": "Select your region for bonuses",
+                    ".reset": "⚠️ Reset your civilization (irreversible!)",
+                    ".sv": "💾 Start saved chat with AI",
+                    ".svc": "🗑️ Close saved chat"
+                }
+            },
+            "economy": {
+                "title": "💰 Economy Commands", 
+                "description": "Resource management & jobs",
+                "commands": {
+                    ".extrawork": "Work to earn gold (5min cd)",
+                    ".extrastore": "View special items shop",
+                    ".extrainventory": "Check your inventory",
+                    ".farm/.mine/.fish": "Gather resources",
+                    ".tax": "Collect taxes from citizens",
+                    ".invest <amt>": "Invest for future profit",
+                    ".job <type>": "Apply for special jobs"
+                }
+            },
+            "military": {
+                "title": "⚔️ Military Commands",
+                "description": "Warfare and defense",
+                "commands": {
+                    ".train soldiers/spies <amt>": "Train military units",
+                    ".declare @user": "Declare war on another civ",
+                    ".attack @user": "Launch direct attack", 
+                    ".siege @user": "Lay siege to territory",
+                    ".find": "Recruit wandering soldiers",
+                    ".addborder/.removeborder": "Manage defenses",
+                    ".cards": "Use unlocked battle cards"
+                }
+            },
+            "diplomacy": {
+                "title": "🤝 Diplomacy Commands",
+                "description": "Alliances and trade",
+                "commands": {
+                    ".ally @user": "Propose alliance",
+                    ".trade @user <offer> <request>": "Trade resources",
+                    ".peace @user": "Offer peace treaty",
+                    ".accept_peace @user": "Accept peace offer",
+                    ".mail @user <msg>": "Send diplomatic message",
+                    ".inbox": "Check pending requests"
+                }
+            },
+            "items": {
+                "title": "💎 HyperItem Commands",
+                "description": "Powerful special items",
+                "commands": {
+                    ".inventory": "View your HyperItems",
+                    ".blackmarket": "Risky item marketplace", 
+                    ".nuke @user": "Nuclear attack (Warhead)",
+                    ".shield": "Anti-nuke defense (Shield)",
+                    ".propaganda @user": "Steal soldiers (Kit)",
+                    ".luckystrike": "Guaranteed crit (Charm)"
+                }
+            }
+        }
+
+        # If no category specified, show main menu
+        if not category:
+            embed = guilded.Embed(
+                title="🤖 NationBot Help Menu",
+                description="**Use `.warhelp <category>` for detailed commands**\nExample: `.warhelp basic`",
+                color=0x1e90ff
+            )
+            
+            for cat_name, cat_data in categories.items():
+                embed.add_field(
+                    name=cat_data["title"],
+                    value=f"*{cat_data['description']}*\n`{cat_name}`",
+                    inline=True
+                )
+            
+            embed.add_field(
+                name="💡 Quick Tips",
+                value="• Mention me or reply for AI help\n• Use `.sv` for persistent chats\n• Check cooldowns with commands",
+                inline=False
+            )
+            
+            await ctx.send(embed=embed)
+            return
+
+        # Show specific category
+        category = category.lower()
+        if category in categories:
+            cat_data = categories[category]
+            
+            embed = guilded.Embed(
+                title=cat_data["title"],
+                description=cat_data["description"],
+                color=0x1e90ff
+            )
+            
+            for cmd, desc in cat_data["commands"].items():
+                embed.add_field(name=cmd, value=desc, inline=False)
+            
+            embed.set_footer(text=f"Use .warhelp for main menu | Total categories: {len(categories)}")
+            
+        else:
+            embed = guilded.Embed(
+                title="❌ Category Not Found",
+                description=f"Available categories: {', '.join(categories.keys())}",
+                color=0xff0000
+            )
+        
+        await ctx.send(embed=embed)
+
+    # ... rest of your existing commands (regions, start, ideology, status) remain the same ...
     @commands.command(name='regions')
     async def regions_command(self, ctx, region_name: str = None):
         """View or select your civilization's region"""
+        # [Existing regions command code remains unchanged]
         # Define available regions with bonuses (using underscores for names)
         regions = {
             "asia": {
@@ -389,7 +644,7 @@ Remember to keep responses engaging but focused on the game.
                 "description": "🌏 **Asia**: Fertile lands with abundant resources and large population capacity."
             },
             "europe": {
-                "name": "Europe",
+                "name": "Europe", 
                 "bonuses": {"gold": 300, "tech_level": 1},
                 "description": "🇪🇺 **Europe**: Advanced technological development and economic strength."
             },
@@ -404,7 +659,7 @@ Remember to keep responses engaging but focused on the game.
                 "description": "🇺🇸 **North America**: Balanced economy with strong agricultural and financial sectors."
             },
             "south_america": {
-                "name": "South America",
+                "name": "South America", 
                 "bonuses": {"food": 300, "wood": 100},
                 "description": "🇧🇷 **South America**: Lush rainforests and abundant agricultural potential."
             },
@@ -607,13 +862,13 @@ Remember to keep responses engaging but focused on the game.
         if not ideology_type:
             ideologies = {
                 "fascism": "+25% soldier training speed, -15% diplomacy success, -10% luck",
-                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)",
+                "democracy": "+20% happiness, +10% trade profit, slower soldier training (-15%)", 
                 "communism": "Equal resource distribution (+10% citizen productivity), -10% tech speed",
                 "theocracy": "+15% propaganda success, +5% happiness, -10% tech speed",
                 "anarchy": "Random events happen twice as often, 0 soldier upkeep, -20% spy success",
                 # NEW IDEOLOGIES
                 "destruction": "+35% combat strength, +40% soldier training, -25% resources, -30% happiness, -50% diplomacy",
-                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy",
+                "pacifist": "+35% happiness, +25% population growth, +20% trade profit, -60% soldier training, -40% combat, +25% diplomacy", 
                 "socialism": "+15% citizen productivity, +10% happiness from welfare, -10% trade profit",
                 "terrorism": "+40% guerrilla/raid effectiveness, +30% spy success, -50% diplomacy, increases unrest",
                 "capitalism": "+20% trade profit, +15% gold generation, -10% happiness due to inequality",
@@ -653,14 +908,14 @@ Remember to keep responses engaging but focused on the game.
         
         ideology_descriptions = {
             "fascism": "⚔️ **Fascism**: Your military grows strong, but diplomacy suffers.",
-            "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.",
+            "democracy": "🗳️ **Democracy**: Your people are happy and trade flourishes.", 
             "communism": "🏭 **Communism**: Workers unite for the collective good.",
             "theocracy": "⛪ **Theocracy**: Divine blessing guides your civilization.",
             "anarchy": "💥 **Anarchy**: Chaos reigns, but freedom has no limits.",
             # NEW IDEOLOGY DESCRIPTIONS
             "destruction": "💥 **Destruction**: Y o u. m o n s t e r.",
             "pacifist": "🕊️ **Pacifist**: Your civilization thrives in peace and harmony.",
-            "socialism": "🤝 **Socialism**: Welfare and shared prosperity — steady growth, modest trade penalties.",
+            "socialism": "🤝 **Socialism**: Welfare and shared prosperity — steady growth, modest trade penalties.", 
             "terrorism": "🔥 **Terrorism**: Operates from the shadows — excels at raids and covert ops but ruins diplomacy.",
             "capitalism": "💹 **Capitalism**: Commerce and wealth generation reign; inequality can lower happiness.",
             "federalism": "🏛️ **Federalism**: Regions manage themselves well — improved stability and diplomacy.",
@@ -723,150 +978,6 @@ Remember to keep responses engaging but focused on the game.
             inline=True
         )
         
-        await ctx.send(embed=embed)
-
-    @commands.command(name='warhelp')
-    async def warbot_help_command(self, ctx, category: str = None):
-        """Display comprehensive, emoji-rich help for every command group."""
-        embed = guilded.Embed(
-            title="🤖 NationBot — Complete Command Encyclopedia",
-            description="Use `.warhelp <category>` to jump to a section (e.g. `.warhelp Military`). Every command below is shown with a short, playful note. 🇺🇳",
-            color=0x1e90ff
-        )
-
-        basic = (
-            "🏛️ BasicCommands:\n"
-            "• `.start <name>` — Start a new civilization with a cinematic intro 🎬\n"
-            "• `.ideology <type>` — Choose your government (fascism, democracy, communism, theocracy, anarchy, destruction, pacifist, socialism, terrorism, capitalism, federalism, monarchy) 🏷️\n"
-            "• `.status` — View your civ's full status: resources, military, items 📊\n"
-            "• `.regions` — View or select your civilization's region 🌍\n"
-            "• `.warhelp` — Display this comprehensive help menu 📚"
-        )
-
-        diplomacy = (
-            "🤝 DiplomacyCommands:\n"
-            "• `.ally @user` — Propose an alliance 🤝\n"
-            "• `.acceptally @user` — Accept a pending alliance ✅\n"
-            "• `.rejectally @user` — Reject a pending alliance ❌\n"
-            "• `.accepttrade @user` — Accept a pending trade ✅\n"
-            "• `.rejecttrade @user` — Reject a pending trade ❌\n"
-            "• `.trade @user <offer> <request>` — Propose a resource trade 📦↔️📦\n"
-            "• `.send @user <resource> <amount>` — Send resources to an ally 🚚\n"
-            "• `.mail @user <message>` — Send a diplomatic message ✉️\n"
-            "• `.inbox` — Check pending alliances, trades & messages 📥\n"
-            "• `.break @user` — Break your current alliance or peace 🪓\n"
-            "• `.coalition <target>` — Form a coalition against another alliance ⚔️"
-        )
-
-        economy_cog = (
-            "💰 EconomyCog (ExtraEconomy & related):\n"
-            "• `.arrest <id>` — Police-only seizure attempt 🚓\n"
-            "• `.balance` — (legacy) Show civ gold 💳\n"
-            "• `.blackjack <amt>` — Quick blackjack vs dealer 🃏\n"
-            "• `.code` — Start coding projects (website/virus/messenger) 💻\n"
-            "• `.darkweb [item]` — Risky dark web buy (50% scam) 🌑\n"
-            "• `.extracards <amt>` — Cards mini-game (renamed from cards) 🂡\n"
-            "• `.extragamble <amt>` — Gamble (lose/win/jackpot) 🎲\n"
-            "• `.extrainventory` — Show your civ inventory 🎒\n"
-            "• `.extrastore` — View extrastore 🛒\n"
-            "• `.extrastore buy <item>` — Buy from extrastore (1m cd on success) 🛍️\n"
-            "• `.extrawork` — Work your job and earn civ gold (5m cd on success) 💼\n"
-            "• `.job <category>` — Apply for a job (bank/police/etc.) 📝\n"
-            "• `.jobs` — List job categories and roles 📋\n"
-            "• `.profile` — (legacy) Show civ profile 🪪\n"
-            "• `.rob <id>` — Criminal-only robbery attempt 🏴‍☠️\n"
-            "• `.setbalance <amt>` — Admin-only set civ gold 🔧\n"
-            "• `.slots <amt>` — Slot machine mini-game 🎰"
-        )
-
-        economy = (
-            "🌾 EconomyCommands (core economy):\n"
-            "• `.farm` — Farm food (cooldowns apply) 🌽\n"
-            "• `.fish` — Fish for food or treasure 🎣\n"
-            "• `.mine` — Mine stone & wood ⛏️\n"
-            "• `.gather` — Gather random resources 🌿\n"
-            "• `.harvest` — Large harvest (longer cooldown) 🌾\n"
-            "• `.drill` — Extract rare minerals with drilling 🛠️\n"
-            "• `.raidcaravan` — Raid NPC merchant caravans for loot 🛍️⚔️\n"
-            "• `.tax` — Collect taxes from citizens 🧾\n"
-            "• `.invest <amt>` — Invest gold for delayed profit 📈\n"
-            "• `.lottery <amt>` — Lottery gamble for jackpot 🎟️\n"
-            "• `.work` — Employ citizens for immediate gold 👷\n"
-            "• `.drive` — Unemploy citizens to free them up 🔄\n"
-            "• `.cheer` — Spread cheer to boost happiness 😊\n"
-            "• `.festival` — Grand festival for major happiness boost 🎉"
-        )
-
-        hyperitems = (
-            "💎 HyperItemCommands (powerful items):\n"
-            "• `.blackmarket` — Enter Black Market for random HyperItems 🕶️\n"
-            "• `.inventory` — View your HyperItems & store upgrades 📦\n"
-            "• `.backstab @user` — Use Dagger for assassination attempt 🗡️\n"
-            "• `.bomb @user` — Use Missiles for mid-tier strike 💣\n"
-            "• `.boosttech` — Ancient Scroll to instantly advance tech 📜\n"
-            "• `.hiremercs` — Mercenary Contract to hire soldiers 🪖\n"
-            "• `.luckystrike` — Lucky Charm for guaranteed critical success 🍀\n"
-            "• `.megainvent` — Tech Core to advance multiple tech levels ⚙️\n"
-            "• `.mintgold` — Gold Mint to generate large amounts of gold 🏦\n"
-            "• `.nuke @user` — Launch nuclear attack (Warhead required) ☢️\n"
-            "• `.obliterate @user` — Complete obliteration (HyperLaser) 🔥\n"
-            "• `.propaganda @user` — Use Propaganda Kit to steal soldiers 📣\n"
-            "• `.shield` — Display Anti-Nuke Shield status 🛡️\n"
-            "• `.superharvest` — Harvest Engine for massive food 🌾🚜\n"
-            "• `.superspy @user` — Spy Network for elite espionage 🕵️‍♀️"
-        )
-
-        military = (
-            "⚔️ MilitaryCommands:\n"
-            "• `.train soldiers|spies <amt>` — Train units (soldiers or spies) 🏋️‍♂️\n"
-            "• `.find` — Search for wandering soldiers to recruit 🔎\n"
-            "• `.declare @user` — Declare war on another civ 🪖\n"
-            "• `.attack @user` — Launch a direct attack ⚔️\n"
-            "• `.siege @user` — Lay siege to enemy territory 🏰\n"
-            "• `.stealthbattle @user` — Spy-based stealth attack 🕶️\n"
-            "• `.cards` — View/use unlocked cards (20% chance from military commands) 🃏\n"
-            "• `.accept_peace @user` — Accept a peace offer ✌️\n"
-            "• `.peace @user` — Offer peace 🤝\n"
-            "• `.addborder` — Build defensive border 🛡️\n"
-            "• `.removeborder` — Remove border and retrieve soldiers 🔄\n"
-            "• `.rectract <percentage>` — Assign percentage of soldiers to border 📊\n"
-            "• `.retrieve <percentage>` — Retrieve percentage of soldiers from border 📥\n"
-            "• `.borderinfo` — Check border status and strength 📈\n"
-            "• `.debug_military` — Debug military & user data (admin/dev) 🛠️"
-        )
-
-        store = (
-            "🏬 StoreCommands:\n"
-            "• `.store` — View civilization upgrades & store 🏪\n"
-            "• `.market` — Black Market information 🧾\n"
-            "• `.buy <item>` — Purchase store upgrades 🛒\n"
-            "• `.blackmarket` / `.extrastore` — Alternative markets for HyperItems & gear 🕳️"
-        )
-
-        misc = (
-            "ℹ️ No Category:\n"
-            "• `.help` — Show a short help message (this is the full `.warhelp`)\n\n"
-            "🔔 Notes:\n"
-            "• All commands use '.' prefix. Most economy/military commands require an existing civilization (use `.start`).\n"
-            "• Gold is stored on the civ record: civ['resources']['gold'] — persistence: bot.civ_manager -> Database -> JSON fallback.\n"
-            "• Cooldowns are applied ONLY after successful execution. If a command errors or you mistype, you will NOT be charged or placed on cooldown.\n"
-            "• Default economy/interact cooldown: ~60s on success; `.extrawork` uses 300s (5m). Some heavy actions have longer cooldowns.\n"
-            "• AI mentions: the assistant addresses you as 'President' and gives concise tactical guidance when mentioned.\n"
-            "• ExtraEconomy credit: (Huge Thanks To @pen)\n"
-        )
-
-        # Add fields to the embed
-        embed.add_field(name="Basic", value=basic, inline=False)
-        embed.add_field(name="Diplomacy", value=diplomacy, inline=False)
-        embed.add_field(name="EconomyCog", value=economy_cog, inline=False)
-        embed.add_field(name="Economy (Core)", value=economy, inline=False)
-        embed.add_field(name="HyperItems", value=hyperitems, inline=False)
-        embed.add_field(name="Military", value=military, inline=False)
-        embed.add_field(name="Store", value=store, inline=False)
-        embed.add_field(name="Misc & Notes", value=misc, inline=False)
-
-        embed.set_footer(text="🎯 Tip: Use `.warhelp <category>` to show just one section if this is too big for chat.")
-
         await ctx.send(embed=embed)
 
 def setup(bot):
