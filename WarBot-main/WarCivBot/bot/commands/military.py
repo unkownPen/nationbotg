@@ -1,7 +1,7 @@
 import random
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import guilded
 from guilded.ext import commands
@@ -10,30 +10,28 @@ from bot.utils import format_number, create_embed
 
 logger = logging.getLogger(__name__)
 
-# Add cooldown implementation since it's missing
+# Fixed cooldown decorator using database
 def check_cooldown_decorator(minutes=1):
     def decorator(func):
-        cooldowns = {}
         async def wrapper(self, ctx, *args, **kwargs):
             user_id = str(ctx.author.id)
-            current_time = datetime.utcnow().timestamp()
-            cooldown_key = f"{func.__name__}_{user_id}"
+            command_name = func.__name__
             
-            if cooldown_key in cooldowns:
-                if current_time < cooldowns[cooldown_key]:
-                    remaining = cooldowns[cooldown_key] - current_time
-                    # Don't send error message as requested
+            # Get last used time from database
+            last_used = self.db.get_command_cooldown(user_id, command_name)
+            
+            if last_used:
+                cooldown_end = last_used + timedelta(minutes=minutes)
+                if datetime.utcnow() < cooldown_end:
+                    remaining = cooldown_end - datetime.utcnow()
+                    mins = int(remaining.total_seconds() // 60)
+                    secs = int(remaining.total_seconds() % 60)
+                    await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
                     return
             
-            try:
-                result = await func(self, ctx, *args, **kwargs)
-                # Only set cooldown if command was successful
-                cooldowns[cooldown_key] = current_time + (minutes * 60)
-                return result
-            except Exception as e:
-                # Don't send error message as requested
-                logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
-                return
+            # Update cooldown in database
+            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
+            return await func(self, ctx, *args, **kwargs)
         return wrapper
     return decorator
 
@@ -43,8 +41,6 @@ class MilitaryCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.create_tables()
-        self.cooldowns = {}  # Track cooldowns manually
-        self.card_unlock_chance = 0.2  # 20% chance to unlock card after military command
 
     def create_tables(self):
         """Create necessary database tables"""
@@ -96,6 +92,25 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error creating tables: {e}", exc_info=True)
 
+    async def check_civil_war_and_proceed(self, ctx, user_id: str) -> bool:
+        """Check for civil war risk and proceed if safe"""
+        try:
+            if self.civ_manager.check_civil_war_risk(user_id):
+                # Civil war occurred - send message and stop command execution
+                civ = self.civ_manager.get_civilization(user_id)
+                if civ:
+                    embed = create_embed(
+                        "💥 CIVIL WAR!",
+                        "Your civilization has been torn apart by internal conflict! Check your events with `.events` to see the damage.",
+                        guilded.Color.red()
+                    )
+                    await ctx.send(embed=embed)
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking civil war for {user_id}: {e}")
+            return True
+
     def _extract_user_id(self, input_str: str) -> str:
         """
         Extract user ID from a mention string like <@id> (or <@!id>) or return
@@ -128,14 +143,6 @@ class MilitaryCommands(commands.Cog):
         """
         Robustly resolve a mention string (or usage where user typed/displayed name)
         to a Member object.
-
-        Priorities:
-        1. If ctx.mentions exists and contains members, try to match by extracted ID.
-           If not able to match, return the first mention from ctx.mentions.
-        2. Use MemberConverter (guilded) to attempt to convert the provided string.
-        3. Extract user id and fetch member via guild.fetch_member(user_id).
-        4. Fallback: attempt to find member by name or display_name in ctx.guild.members.
-        Returns None if not found.
         """
         if mention is None:
             return None
@@ -157,8 +164,7 @@ class MilitaryCommands(commands.Cog):
                 # Otherwise return the first mentioned member
                 return mentions[0]
         except Exception:
-            # Don't fail hard — continue fallback resolution
-            logger.debug("ctx.mentions handling failed in _get_member_from_mention", exc_info=True)
+            pass
 
         # 2) Try Guilded's MemberConverter (handles many common formats)
         try:
@@ -167,7 +173,6 @@ class MilitaryCommands(commands.Cog):
             if member:
                 return member
         except Exception:
-            # conversion failed; continue
             pass
 
         # 3) Try extracting an ID and fetching by it
@@ -178,7 +183,6 @@ class MilitaryCommands(commands.Cog):
                 if member:
                     return member
             except Exception:
-                # Couldn't fetch by id
                 pass
 
         # 4) Fallback: search guild members by name/display_name (case-insensitive)
@@ -197,74 +201,6 @@ class MilitaryCommands(commands.Cog):
 
         return None
 
-    async def _try_unlock_card(self, user_id: str):
-        """Try to unlock a card with 20% chance after military commands"""
-        try:
-            if random.random() < self.card_unlock_chance:
-                available_cards = [
-                    {
-                        "name": "Gamble Card",
-                        "description": "Lose 50% of your population for a 0.1% chance of destroying a nation of a selected user.",
-                        "effect": "gamble"
-                    },
-                    {
-                        "name": "Resource Heist",
-                        "description": "Steal 25% of a target's resources, but 10% chance they steal yours instead!",
-                        "effect": "resource_heist"
-                    },
-                    {
-                        "name": "Population Swap",
-                        "description": "Swap populations with another civilization. Could be good or bad!",
-                        "effect": "population_swap"
-                    },
-                    {
-                        "name": "Military Coup",
-                        "description": "50% chance to double your military, 50% chance to lose it all!",
-                        "effect": "military_coup"
-                    },
-                    {
-                        "name": "Territory Gambit",
-                        "description": "Bet your territory in a high-risk high-reward expansion gamble.",
-                        "effect": "territory_gambit"
-                    },
-                    {
-                        "name": "Spy Infiltration",
-                        "description": "Your spies have a 30% chance to instantly win a war, or be discovered and executed.",
-                        "effect": "spy_infiltration"
-                    },
-                    {
-                        "name": "Economic Collapse",
-                        "description": "Cause your economy to collapse but get massive military bonuses as a distraction.",
-                        "effect": "economic_collapse"
-                    },
-                    {
-                        "name": "Alliance Roulette",
-                        "description": "Randomly make peace with one enemy and declare war on one ally.",
-                        "effect": "alliance_roulette"
-                    }
-                ]
-                
-                # Get a random card that user doesn't have yet
-                with self.db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT card_name FROM unlocked_cards WHERE user_id = ?', (user_id,))
-                    existing_cards = [row[0] for row in cursor.fetchall()]
-                    
-                    available_new_cards = [card for card in available_cards if card['name'] not in existing_cards]
-                    
-                    if available_new_cards:
-                        new_card = random.choice(available_new_cards)
-                        cursor.execute(
-                            'INSERT OR IGNORE INTO unlocked_cards (user_id, card_name) VALUES (?, ?)',
-                            (user_id, new_card['name'])
-                        )
-                        conn.commit()
-                        return new_card
-            return None
-        except Exception as e:
-            logger.error(f"Error in _try_unlock_card: {e}", exc_info=True)
-            return None
-
     @check_cooldown_decorator(minutes=2)
     @commands.command(name='train')
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
@@ -281,6 +217,18 @@ class MilitaryCommands(commands.Cog):
                 await ctx.send(embed=embed)
                 return
 
+            user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
+            civ = self.civ_manager.get_civilization(user_id)
+
+            if not civ:
+                await ctx.send("❌ You need to start a civilization first! Use `.start`")
+                return
+
             unit_type = unit_type.lower()
             if unit_type not in ['soldiers', 'spies']:
                 await ctx.send("❌ Invalid unit type! Choose 'soldiers' or 'spies'.")
@@ -288,13 +236,6 @@ class MilitaryCommands(commands.Cog):
 
             if amount is None or amount < 1:
                 await ctx.send("❌ Please specify a valid amount to train!")
-                return
-
-            user_id = str(ctx.author.id)
-            civ = self.civ_manager.get_civilization(user_id)
-
-            if not civ:
-                await ctx.send("❌ You need to start a civilization first! Use `.start`")
                 return
 
             # Calculate costs
@@ -352,13 +293,6 @@ class MilitaryCommands(commands.Cog):
             if penalty_units > 0:
                 embed.add_field(name="Training Issues", value=f"⚠️ Ideology penalty lost {penalty_units} units during training", inline=True)
 
-            # Try to unlock a card
-            unlocked_card = await self._try_unlock_card(user_id)
-            if unlocked_card:
-                embed.add_field(name="🎴 New Card Unlocked!", 
-                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
-                              inline=False)
-
             await ctx.send(embed=embed)
 
         except Exception as e:
@@ -373,6 +307,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -428,13 +367,6 @@ class MilitaryCommands(commands.Cog):
             )
             embed.add_field(name="Next Steps", value="You can now use `.attack`, `.siege`, `.stealthbattle`, or `.cards` to gain advantages.", inline=False)
 
-            # Try to unlock a card
-            unlocked_card = await self._try_unlock_card(user_id)
-            if unlocked_card:
-                embed.add_field(name="🎴 New Card Unlocked!", 
-                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
-                              inline=False)
-
             await ctx.send(embed=embed)
             # safe mention
             try:
@@ -455,6 +387,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -540,11 +477,6 @@ class MilitaryCommands(commands.Cog):
                 defeat_margin = final_defender_strength / max(1, final_attacker_strength)
                 await self._process_attack_defeat(ctx, user_id, target_id, civ, target_civ, defeat_margin)
 
-            # Try to unlock a card
-            unlocked_card = await self._try_unlock_card(user_id)
-            if unlocked_card:
-                await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
-
         except Exception as e:
             logger.error(f"Error in attack command: {e}", exc_info=True)
 
@@ -608,12 +540,10 @@ class MilitaryCommands(commands.Cog):
 
             # Try to mention the defender
             try:
-                # guilded mention should work via member mention; try to fetch member first
                 member = None
                 try:
                     member = await ctx.guild.fetch_member(defender_id)
                 except Exception:
-                    # ignore
                     pass
                 if member:
                     await ctx.send(f"{member.mention} ⚔️ Your civilization **{defender_civ['name']}** was defeated by **{attacker_civ['name']}** in battle!")
@@ -702,6 +632,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -799,11 +734,6 @@ class MilitaryCommands(commands.Cog):
 
                 await ctx.send(embed=embed)
 
-                # Try to unlock a card
-                unlocked_card = await self._try_unlock_card(user_id)
-                if unlocked_card:
-                    await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
-
                 # Try to mention the target
                 try:
                     await ctx.send(f"{target.mention} 🕵️ Your civilization **{target_civ['name']}** was hit by a successful stealth operation from **{civ['name']}**!")
@@ -822,11 +752,6 @@ class MilitaryCommands(commands.Cog):
                 )
 
                 await ctx.send(embed=embed)
-
-                # Try to unlock a card
-                unlocked_card = await self._try_unlock_card(user_id)
-                if unlocked_card:
-                    await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
 
                 # Try to mention the target
                 try:
@@ -847,6 +772,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -951,11 +881,6 @@ class MilitaryCommands(commands.Cog):
 
             await ctx.send(embed=embed)
 
-            # Try to unlock a card
-            unlocked_card = await self._try_unlock_card(user_id)
-            if unlocked_card:
-                await ctx.send(f"🎴 **New Card Unlocked!** **{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!")
-
             # Log the siege
             self.db.log_event(user_id, "siege", "Siege Initiated", f"Laying siege to {target_civ['name']}")
             self.db.log_event(target_id, "besieged", "Under Siege", f"Being sieged by {civ['name']}")
@@ -975,6 +900,11 @@ class MilitaryCommands(commands.Cog):
         """Search for wandering soldiers to recruit (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1033,13 +963,6 @@ class MilitaryCommands(commands.Cog):
                                   value="Your reputation scared away potential recruits.",
                                   inline=False)
 
-            # Try to unlock a card
-            unlocked_card = await self._try_unlock_card(user_id)
-            if unlocked_card:
-                embed.add_field(name="🎴 New Card Unlocked!", 
-                              value=f"**{unlocked_card['name']}**: {unlocked_card['description']}\nUse `.cards` to view your cards!", 
-                              inline=False)
-
             await ctx.send(embed=embed)
 
         except Exception as e:
@@ -1054,6 +977,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1138,6 +1066,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1239,6 +1172,11 @@ class MilitaryCommands(commands.Cog):
         """View or use your unlocked cards"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1260,7 +1198,7 @@ class MilitaryCommands(commands.Cog):
                     if not cards:
                         embed = create_embed(
                             "🎴 Your Cards",
-                            "You haven't unlocked any cards yet! Use military commands to unlock cards with a 20% chance.",
+                            "You haven't unlocked any cards yet! Cards are unlocked when you reach new tech levels.",
                             guilded.Color.blue()
                         )
                     else:
@@ -1478,6 +1416,11 @@ class MilitaryCommands(commands.Cog):
         """Add a defensive border to your territory (5min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1534,6 +1477,11 @@ class MilitaryCommands(commands.Cog):
         """Remove your defensive border and retrieve all soldiers (2min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1582,6 +1530,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1650,6 +1603,11 @@ class MilitaryCommands(commands.Cog):
                 return
 
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
@@ -1713,6 +1671,11 @@ class MilitaryCommands(commands.Cog):
         """Check your border status (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check for civil war first
+            if not await self.check_civil_war_and_proceed(ctx, user_id):
+                return
+                
             civ = self.civ_manager.get_civilization(user_id)
 
             if not civ:
