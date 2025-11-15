@@ -265,9 +265,10 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error in _try_unlock_card: {e}", exc_info=True)
             return None
 
+    @check_cooldown_decorator(minutes=2)
     @commands.command(name='train')
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
-        """Train military units"""
+        """Train military units (2min cooldown)"""
         try:
             if not unit_type:
                 embed = create_embed(
@@ -365,7 +366,7 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='declare')
     async def declare_war(self, ctx, target_mention: str = None):
-        """Declare war on another civilization"""
+        """Declare war on another civilization (No cooldown - diplomacy)"""
         try:
             if not target_mention:
                 await ctx.send("⚔️ **Declaration of War**\nUsage: `.declare @user`\nNote: War must be declared before attacking!")
@@ -444,9 +445,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error declaring war: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=3)
     @commands.command(name='attack')
     async def attack_civilization(self, ctx, target_mention: str = None):
-        """Launch a direct attack on another civilization"""
+        """Launch a direct attack on another civilization (3min cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first!")
@@ -514,6 +516,18 @@ class MilitaryCommands(commands.Cog):
                 defender_roll *= 0.9   # Less defensive
             if target_civ.get('ideology') == 'pacifist':
                 defender_roll *= 0.85  # Pacifists are worse at defense
+
+            # UNDERDOG VICTORY SYSTEM
+            # If defender is significantly weaker, give them a chance for an upset victory
+            strength_ratio = defender_strength / max(1, attacker_strength)
+            if strength_ratio < 0.5:  # Defender is less than half as strong
+                underdog_bonus = (0.5 - strength_ratio) * 0.8  # Up to 40% bonus for extreme underdogs
+                defender_roll *= (1 + underdog_bonus)
+                
+                # Small chance for dramatic underdog victory
+                if strength_ratio < 0.25 and random.random() < 0.15:  # Very weak defender has 15% chance
+                    defender_roll *= 1.5  # Massive bonus
+                    await ctx.send("🎯 **UNDERDOG SPIRIT!** The defenders fight with incredible determination against overwhelming odds!")
 
             final_attacker_strength = attacker_strength * attacker_roll
             final_defender_strength = defender_strength * defender_roll
@@ -621,6 +635,18 @@ class MilitaryCommands(commands.Cog):
             self.civ_manager.update_military(attacker_id, {"soldiers": -attacker_losses})
             self.civ_manager.update_military(defender_id, {"soldiers": -defender_losses})
 
+            # UNDERDOG VICTORY BONUSES FOR DEFENDER
+            strength_ratio = defender_civ['military']['soldiers'] / max(1, attacker_civ['military']['soldiers'])
+            if strength_ratio < 0.5:
+                # Underdog gets bonus rewards
+                bonus_gold = min(int(attacker_civ['resources']['gold'] * 0.1), attacker_civ['resources']['gold'])
+                bonus_morale = 20
+                
+                self.civ_manager.update_resources(defender_id, {"gold": bonus_gold})
+                self.civ_manager.update_population(defender_id, {"happiness": bonus_morale})
+                
+                await ctx.send(f"🏆 **UNDERDOG VICTORY!** {defender_civ['name']} gains {format_number(bonus_gold)} gold and +{bonus_morale} happiness for their heroic defense!")
+
             # Happiness penalty for failed attack
             self.civ_manager.update_population(attacker_id, {"happiness": -10})
 
@@ -666,9 +692,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=4)
     @commands.command(name='stealthbattle')
     async def stealth_battle(self, ctx, target_mention: str = None):
-        """Conduct a spy-based stealth attack"""
+        """Conduct a spy-based stealth attack (4min cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("🕵️ **Stealth Battle**\nUsage: `.stealthbattle @user`\nUses spies instead of soldiers for covert operations.")
@@ -810,9 +837,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in stealthbattle command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=10)
     @commands.command(name='siege')
     async def siege_city(self, ctx, target_mention: str = None):
-        """Lay siege to an enemy civilization"""
+        """Lay siege to an enemy civilization (10min cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("🏰 **Siege Warfare**\nUsage: `.siege @user`\nDrains enemy resources over time but requires large army.")
@@ -861,6 +889,14 @@ class MilitaryCommands(commands.Cog):
             defender_resistance = target_civ['military']['soldiers'] + target_civ['territory']['land_size'] / 100
 
             siege_effectiveness = siege_power / (siege_power + defender_resistance)
+
+            # UNDERDOG SIEGE DEFENSE - Weaker defenders get better resistance
+            strength_ratio = target_civ['military']['soldiers'] / max(1, civ['military']['soldiers'])
+            if strength_ratio < 0.5:
+                # Underdog defenders resist sieges better
+                underdog_resistance = (0.5 - strength_ratio) * 0.3  # Up to 15% better resistance
+                siege_effectiveness *= (1 - underdog_resistance)
+                await ctx.send("🛡️ **UNDERDOG DEFENSE!** The defenders use clever tactics to resist the siege more effectively!")
 
             # Resource drain on defender
             resource_drain = {
@@ -933,9 +969,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in siege command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=1)
     @commands.command(name='find')
     async def find_soldiers(self, ctx):
-        """Search for wandering soldiers to recruit"""
+        """Search for wandering soldiers to recruit (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
@@ -1198,7 +1235,7 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error in accept_peace command: {e}", exc_info=True)
 
     @commands.command(name='cards')
-    async def manage_cards(self, ctx, action: str = None, card_name: str = None, target_mention: str = None):
+    async def manage_cards(self, ctx, action: str = None, *args):
         """View or use your unlocked cards"""
         try:
             user_id = str(ctx.author.id)
@@ -1239,26 +1276,47 @@ class MilitaryCommands(commands.Cog):
                         
                         embed.add_field(
                             name="How to Use", 
-                            value="Use `.cards use <card_name> [@target]` to use a card. Some cards require targets.", 
+                            value="Use `.cards use \"Card Name\" [@target]` to use a card. Some cards require targets.", 
                             inline=False
                         )
                     
                     await ctx.send(embed=embed)
                     return
                 
-                elif action.lower() == 'use' and card_name:
-                    # Use a specific card
-                    card_name = card_name.lower()
+                elif action.lower() == 'use':
+                    if not args:
+                        await ctx.send("❌ Please specify a card name! Usage: `.cards use \"Card Name\" [@target]`")
+                        return
                     
+                    # Parse card name and target from args
+                    card_name = args[0]
+                    target_mention = None
+                    
+                    # Handle quoted card names with spaces
+                    if card_name.startswith('"') and len(args) > 1:
+                        # Find the closing quote
+                        card_parts = []
+                        for arg in args:
+                            card_parts.append(arg)
+                            if arg.endswith('"'):
+                                break
+                        card_name = ' '.join(card_parts).strip('"')
+                        # The rest are target mentions
+                        if len(args) > len(card_parts):
+                            target_mention = args[len(card_parts)]
+                    elif len(args) > 1:
+                        target_mention = args[1]
+                    
+                    # Use a specific card
                     cursor.execute('''
                         SELECT card_name, used FROM unlocked_cards 
-                        WHERE user_id = ? AND LOWER(card_name) = ?
+                        WHERE user_id = ? AND card_name = ?
                     ''', (user_id, card_name))
                     
                     card_data = cursor.fetchone()
                     
                     if not card_data:
-                        await ctx.send("❌ You don't have that card or it doesn't exist!")
+                        await ctx.send(f"❌ You don't have the card '{card_name}' or it doesn't exist!")
                         return
                     
                     if card_data[1]:  # If card is already used
@@ -1266,134 +1324,158 @@ class MilitaryCommands(commands.Cog):
                         return
                     
                     # Process card effects
-                    if card_name == "gamble card":
-                        if not target_mention:
-                            await ctx.send("❌ Gamble Card requires a target! Usage: `.cards use gamble @user`")
-                            return
-                        
-                        target = await self._get_member_from_mention(ctx, target_mention)
-                        if not target:
-                            await ctx.send("❌ Could not find that user.")
-                            return
-                            
-                        target_id = str(target.id)
-                        target_civ = self.civ_manager.get_civilization(target_id)
-                        
-                        if not target_civ:
-                            await ctx.send("❌ Target doesn't have a civilization!")
-                            return
-                        
-                        # Gamble effect
-                        population_loss = civ['population']['total'] // 2
-                        self.civ_manager.update_population(user_id, {"total": -population_loss})
-                        
-                        if random.random() < 0.001:  # 0.1% chance
-                            # Destroy target civilization
-                            self.civ_manager.reset_civilization(target_id)
-                            result = f"🎰 **JACKPOT!** You sacrificed {format_number(population_loss)} people and **COMPLETELY DESTROYED {target_civ['name'].upper()}!** 🎰"
-                        else:
-                            result = f"💀 You sacrificed {format_number(population_loss)} people for nothing... The gamble failed."
-                        
-                        await ctx.send(result)
-                        
-                    elif card_name == "resource heist":
-                        if not target_mention:
-                            await ctx.send("❌ Resource Heist requires a target! Usage: `.cards use resourceheist @user`")
-                            return
-                        
-                        target = await self._get_member_from_mention(ctx, target_mention)
-                        if not target:
-                            await ctx.send("❌ Could not find that user.")
-                            return
-                            
-                        target_id = str(target.id)
-                        target_civ = self.civ_manager.get_civilization(target_id)
-                        
-                        if not target_civ:
-                            await ctx.send("❌ Target doesn't have a civilization!")
-                            return
-                        
-                        if random.random() < 0.1:  # 10% chance of backfire
-                            # Backfire - you lose resources instead
-                            stolen = {
-                                "gold": civ['resources']['gold'] // 4,
-                                "food": civ['resources']['food'] // 4,
-                                "stone": civ['resources']['stone'] // 4,
-                                "wood": civ['resources']['wood'] // 4
-                            }
-                            self.civ_manager.update_resources(user_id, {k: -v for k, v in stolen.items()})
-                            self.civ_manager.update_resources(target_id, stolen)
-                            result = f"😱 **HEIST BACKFIRED!** {target_civ['name']} stole your resources instead!"
-                        else:
-                            # Successful heist
-                            stolen = {
-                                "gold": target_civ['resources']['gold'] // 4,
-                                "food": target_civ['resources']['food'] // 4,
-                                "stone": target_civ['resources']['stone'] // 4,
-                                "wood": target_civ['resources']['wood'] // 4
-                            }
-                            self.civ_manager.update_resources(user_id, stolen)
-                            self.civ_manager.update_resources(target_id, {k: -v for k, v in stolen.items()})
-                            result = f"💰 **Successful Heist!** Stole 25% of {target_civ['name']}'s resources!"
-                        
-                        await ctx.send(result)
+                    result = await self._process_card_effect(ctx, user_id, card_name, target_mention)
                     
-                    elif card_name == "military coup":
-                        if random.random() < 0.5:  # 50% chance
-                            # Double military
-                            self.civ_manager.update_military(user_id, {
-                                "soldiers": civ['military']['soldiers'],
-                                "spies": civ['military']['spies']
-                            })
-                            result = "🎖️ **Successful Coup!** Your military has doubled in size!"
-                        else:
-                            # Lose all military
-                            self.civ_manager.update_military(user_id, {
-                                "soldiers": -civ['military']['soldiers'],
-                                "spies": -civ['military']['spies']
-                            })
-                            result = "💥 **Coup Failed!** Your military has been disbanded!"
+                    if result:
+                        # Mark card as used
+                        cursor.execute('''
+                            UPDATE unlocked_cards SET used = 1 
+                            WHERE user_id = ? AND card_name = ?
+                        ''', (user_id, card_name))
+                        conn.commit()
                         
+                        # Log card usage
+                        self.db.log_event(user_id, "card_used", f"Card Used: {card_name}", result)
                         await ctx.send(result)
-                    
-                    elif card_name == "territory gambit":
-                        current_territory = civ['territory']['land_size']
-                        if random.random() < 0.3:  # 30% chance
-                            # Win big
-                            new_territory = current_territory * 3
-                            self.civ_manager.update_territory(user_id, {"land_size": new_territory - current_territory})
-                            result = f"🎯 **Gambit Success!** Your territory tripled from {format_number(current_territory)} to {format_number(new_territory)} km²!"
-                        else:
-                            # Lose territory
-                            lost_territory = current_territory // 2
-                            self.civ_manager.update_territory(user_id, {"land_size": -lost_territory})
-                            result = f"💸 **Gambit Failed!** You lost half your territory, now at {format_number(current_territory - lost_territory)} km²."
-                        
-                        await ctx.send(result)
-                    
                     else:
-                        await ctx.send("❌ That card hasn't been implemented yet!")
-                        return
-                    
-                    # Mark card as used
-                    cursor.execute('''
-                        UPDATE unlocked_cards SET used = 1 
-                        WHERE user_id = ? AND LOWER(card_name) = ?
-                    ''', (user_id, card_name))
-                    conn.commit()
-                    
-                    # Log card usage
-                    self.db.log_event(user_id, "card_used", f"Card Used: {card_name}", result)
+                        await ctx.send("❌ Failed to process card effect!")
                     
                 else:
-                    await ctx.send("❌ Invalid action! Use `.cards` to view your cards or `.cards use <card_name> [@target]` to use a card.")
+                    await ctx.send("❌ Invalid action! Use `.cards` to view your cards or `.cards use \"Card Name\" [@target]` to use a card.")
 
         except Exception as e:
             logger.error(f"Error in cards command: {e}", exc_info=True)
 
+    async def _process_card_effect(self, ctx, user_id, card_name, target_mention):
+        """Process card effects"""
+        try:
+            civ = self.civ_manager.get_civilization(user_id)
+            
+            if card_name == "Gamble Card":
+                if not target_mention:
+                    return "❌ Gamble Card requires a target! Usage: `.cards use \"Gamble Card\" @user`"
+                
+                target = await self._get_member_from_mention(ctx, target_mention)
+                if not target:
+                    return "❌ Could not find that user."
+                    
+                target_id = str(target.id)
+                target_civ = self.civ_manager.get_civilization(target_id)
+                
+                if not target_civ:
+                    return "❌ Target doesn't have a civilization!"
+                
+                # Gamble effect
+                population_loss = civ['population']['total'] // 2
+                self.civ_manager.update_population(user_id, {"total": -population_loss})
+                
+                if random.random() < 0.001:  # 0.1% chance
+                    # Destroy target civilization
+                    self.civ_manager.reset_civilization(target_id)
+                    return f"🎰 **JACKPOT!** You sacrificed {format_number(population_loss)} people and **COMPLETELY DESTROYED {target_civ['name'].upper()}!** 🎰"
+                else:
+                    return f"💀 You sacrificed {format_number(population_loss)} people for nothing... The gamble failed."
+                
+            elif card_name == "Resource Heist":
+                if not target_mention:
+                    return "❌ Resource Heist requires a target! Usage: `.cards use \"Resource Heist\" @user`"
+                
+                target = await self._get_member_from_mention(ctx, target_mention)
+                if not target:
+                    return "❌ Could not find that user."
+                    
+                target_id = str(target.id)
+                target_civ = self.civ_manager.get_civilization(target_id)
+                
+                if not target_civ:
+                    return "❌ Target doesn't have a civilization!"
+                
+                if random.random() < 0.1:  # 10% chance of backfire
+                    # Backfire - you lose resources instead
+                    stolen = {
+                        "gold": max(1, civ['resources']['gold'] // 4),
+                        "food": max(1, civ['resources']['food'] // 4),
+                        "stone": max(1, civ['resources']['stone'] // 4),
+                        "wood": max(1, civ['resources']['wood'] // 4)
+                    }
+                    self.civ_manager.update_resources(user_id, {k: -v for k, v in stolen.items()})
+                    self.civ_manager.update_resources(target_id, stolen)
+                    return f"😱 **HEIST BACKFIRED!** {target_civ['name']} stole your resources instead!"
+                else:
+                    # Successful heist
+                    stolen = {
+                        "gold": max(1, target_civ['resources']['gold'] // 4),
+                        "food": max(1, target_civ['resources']['food'] // 4),
+                        "stone": max(1, target_civ['resources']['stone'] // 4),
+                        "wood": max(1, target_civ['resources']['wood'] // 4)
+                    }
+                    self.civ_manager.update_resources(user_id, stolen)
+                    self.civ_manager.update_resources(target_id, {k: -v for k, v in stolen.items()})
+                    return f"💰 **Successful Heist!** Stole 25% of {target_civ['name']}'s resources!"
+            
+            elif card_name == "Military Coup":
+                if random.random() < 0.5:  # 50% chance
+                    # Double military
+                    self.civ_manager.update_military(user_id, {
+                        "soldiers": civ['military']['soldiers'],
+                        "spies": civ['military']['spies']
+                    })
+                    return "🎖️ **Successful Coup!** Your military has doubled in size!"
+                else:
+                    # Lose all military
+                    self.civ_manager.update_military(user_id, {
+                        "soldiers": -civ['military']['soldiers'],
+                        "spies": -civ['military']['spies']
+                    })
+                    return "💥 **Coup Failed!** Your military has been disbanded!"
+            
+            elif card_name == "Territory Gambit":
+                current_territory = civ['territory']['land_size']
+                if random.random() < 0.3:  # 30% chance
+                    # Win big
+                    new_territory = current_territory * 3
+                    self.civ_manager.update_territory(user_id, {"land_size": new_territory - current_territory})
+                    return f"🎯 **Gambit Success!** Your territory tripled from {format_number(current_territory)} to {format_number(new_territory)} km²!"
+                else:
+                    # Lose territory
+                    lost_territory = max(1, current_territory // 2)
+                    self.civ_manager.update_territory(user_id, {"land_size": -lost_territory})
+                    return f"💸 **Gambit Failed!** You lost half your territory, now at {format_number(current_territory - lost_territory)} km²."
+            
+            elif card_name == "Population Swap":
+                if not target_mention:
+                    return "❌ Population Swap requires a target! Usage: `.cards use \"Population Swap\" @user`"
+                
+                target = await self._get_member_from_mention(ctx, target_mention)
+                if not target:
+                    return "❌ Could not find that user."
+                    
+                target_id = str(target.id)
+                target_civ = self.civ_manager.get_civilization(target_id)
+                
+                if not target_civ:
+                    return "❌ Target doesn't have a civilization!"
+                
+                # Swap populations
+                your_pop = civ['population']['total']
+                their_pop = target_civ['population']['total']
+                
+                self.civ_manager.update_population(user_id, {"total": their_pop - your_pop})
+                self.civ_manager.update_population(target_id, {"total": your_pop - their_pop})
+                
+                return f"🔄 **Population Swap!** You now have {format_number(their_pop)} people, they have {format_number(your_pop)}!"
+            
+            else:
+                return f"❌ Card '{card_name}' effect not implemented yet!"
+                
+        except Exception as e:
+            logger.error(f"Error processing card effect: {e}", exc_info=True)
+            return f"❌ Error processing card effect: {str(e)}"
+
+    @check_cooldown_decorator(minutes=5)
     @commands.command(name='addborder')
     async def add_border(self, ctx):
-        """Add a defensive border to your territory"""
+        """Add a defensive border to your territory (5min cooldown)"""
         try:
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
@@ -1446,9 +1528,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in addborder command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=2)
     @commands.command(name='removeborder')
     async def remove_border(self, ctx):
-        """Remove your defensive border and retrieve all soldiers"""
+        """Remove your defensive border and retrieve all soldiers (2min cooldown)"""
         try:
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
@@ -1489,9 +1572,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in removeborder command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=1)
     @commands.command(name='rectract')
     async def rectract_soldiers(self, ctx, percentage: int = None):
-        """Assign a percentage of your soldiers to the border"""
+        """Assign a percentage of your soldiers to the border (1min cooldown)"""
         try:
             if percentage is None or percentage < 1 or percentage > 100:
                 await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.rectract <percentage>`")
@@ -1556,9 +1640,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in rectract command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=1)
     @commands.command(name='retrieve')
     async def retrieve_soldiers(self, ctx, percentage: int = None):
-        """Retrieve a percentage of soldiers from the border"""
+        """Retrieve a percentage of soldiers from the border (1min cooldown)"""
         try:
             if percentage is None or percentage < 1 or percentage > 100:
                 await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.retrieve <percentage>`")
@@ -1622,9 +1707,10 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in retrieve command: {e}", exc_info=True)
 
+    @check_cooldown_decorator(minutes=1)
     @commands.command(name='borderinfo')
     async def border_info(self, ctx):
-        """Check your border status"""
+        """Check your border status (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
             civ = self.civ_manager.get_civilization(user_id)
@@ -1667,54 +1753,6 @@ class MilitaryCommands(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in borderinfo command: {e}", exc_info=True)
-
-    @commands.command(name='debug_military')
-    async def debug_military(self, ctx, target_mention: str = None):
-        """Debug command to check military and user data"""
-        try:
-            user_id = str(ctx.author.id)
-
-            if target_mention:
-                # Try to get the member from the mention
-                target = await self._get_member_from_mention(ctx, target_mention)
-                if not target:
-                    await ctx.send("❌ Could not find that user. Make sure you're mentioning a valid user in this server.")
-                    return
-
-                target_id = str(target.id)
-                await ctx.send(f"🔍 Debug Info:\n- Author ID: {user_id}\n- Target ID: {target_id}\n- Target Mention: {getattr(target, 'mention', str(target))}")
-
-                # Check if target has a civilization
-                target_civ = self.civ_manager.get_civilization(target_id)
-                if target_civ:
-                    await ctx.send(f"✅ Target civilization found: {target_civ['name']}")
-                else:
-                    await ctx.send("❌ Target does not have a civilization")
-
-                # Check if war exists between users
-                with self.db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        SELECT * FROM wars 
-                        WHERE ((attacker_id = ? AND defender_id = ?) OR (attacker_id = ? AND defender_id = ?))
-                        AND result = 'ongoing'
-                    ''', (user_id, target_id, target_id, user_id))
-
-                    war = cursor.fetchone()
-                    if war:
-                        await ctx.send(f"⚔️ War exists between users: {war}")
-                    else:
-                        await ctx.send("❌ No ongoing war between these users")
-            else:
-                # Just show own data
-                civ = self.civ_manager.get_civilization(user_id)
-                if civ:
-                    await ctx.send(f"✅ Your civilization: {civ['name']}\n- Soldiers: {civ['military']['soldiers']}\n- Spies: {civ['military']['spies']}")
-                else:
-                    await ctx.send("❌ You don't have a civilization")
-
-        except Exception as e:
-            logger.error(f"Error in debug command: {e}", exc_info=True)
 
     def _calculate_military_strength(self, civ):
         """Calculate total military strength of a civilization"""
