@@ -329,6 +329,54 @@ class Database:
             logger.error(f"Error creating civilization: {e}")
             return False
 
+    def delete_civilization(self, user_id: str) -> bool:
+        """Completely delete a civilization and all related data"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Delete from all related tables
+            tables_to_clean = [
+                'civilizations',
+                'cooldowns', 
+                'cards',
+                'events',
+                'trade_requests',
+                'alliance_invitations',
+                'messages',
+                'peace_offers'
+            ]
+            
+            for table in tables_to_clean:
+                if table == 'civilizations':
+                    cursor.execute('DELETE FROM civilizations WHERE user_id = ?', (user_id,))
+                else:
+                    # For other tables, check if they have user_id column
+                    cursor.execute(f'DELETE FROM {table} WHERE user_id = ?', (user_id,))
+            
+            # Also clean from wars (both as attacker and defender)
+            cursor.execute('DELETE FROM wars WHERE attacker_id = ? OR defender_id = ?', (user_id, user_id))
+            
+            # Handle alliance memberships
+            cursor.execute('SELECT id, members FROM alliances')
+            alliances = cursor.fetchall()
+            for alliance in alliances:
+                alliance_id = alliance['id']
+                members = json.loads(alliance['members'])
+                if user_id in members:
+                    members.remove(user_id)
+                    cursor.execute('UPDATE alliances SET members = ? WHERE id = ?', 
+                                 (json.dumps(members), alliance_id))
+            
+            conn.commit()
+            self.upload_database()
+            logger.info(f"Completely deleted civilization for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting civilization for user {user_id}: {e}")
+            return False
+
     def get_civilization(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get civilization data for a user"""
         try:
