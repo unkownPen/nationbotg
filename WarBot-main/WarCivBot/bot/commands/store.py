@@ -242,9 +242,8 @@ class StoreCommands(commands.Cog):
         self.db.log_event(user_id, "store_purchase", "Store Purchase", f"Purchased {item_data['name']}")
 
     @commands.command(name='blackmarket')
-    @check_cooldown_decorator(minutes=1)  # 3 hour cooldown
     async def black_market(self, ctx):
-        """Enter the black market to purchase random HyperItems"""
+        """Enter the black market to purchase random HyperItems (No cooldown)"""
         user_id = str(ctx.author.id)
         civ = self.civ_manager.get_civilization(user_id)
         
@@ -262,14 +261,60 @@ class StoreCommands(commands.Cog):
         # Pay entry fee
         self.civ_manager.spend_resources(user_id, entry_fee)
         
-        # Roll for HyperItem
-        hyper_item = self._roll_hyperitem()
+        # Get user's black market history
+        black_market_history = civ.get('black_market_history', {
+            'total_purchases': 0,
+            'since_uncommon': 0,
+            'since_rare': 0,
+            'since_legendary': 0
+        })
+        
+        # Update purchase counts
+        black_market_history['total_purchases'] += 1
+        black_market_history['since_uncommon'] += 1
+        black_market_history['since_rare'] += 1
+        black_market_history['since_legendary'] += 1
+        
+        # Check pity system
+        forced_rarity = None
+        pity_message = ""
+        
+        if black_market_history['since_legendary'] >= 10:
+            forced_rarity = "legendary"
+            pity_message = "🎉 **PITY SYSTEM ACTIVATED!** After 10 purchases, you're guaranteed a LEGENDARY item!"
+            black_market_history['since_legendary'] = 0
+        elif black_market_history['since_rare'] >= 6:
+            forced_rarity = "rare"
+            pity_message = "💎 **PITY SYSTEM!** After 6 purchases, you're guaranteed a RARE item!"
+            black_market_history['since_rare'] = 0
+        elif black_market_history['since_uncommon'] >= 3:
+            forced_rarity = "uncommon"
+            pity_message = "🔵 **PITY SYSTEM!** After 3 purchases, you're guaranteed an UNCOMMON item!"
+            black_market_history['since_uncommon'] = 0
+        
+        # Roll for HyperItem (with pity system if applicable)
+        if forced_rarity:
+            hyper_item = self._roll_hyperitem_with_pity(forced_rarity)
+        else:
+            hyper_item = self._roll_hyperitem()
+        
+        # Update pity counters based on actual rarity obtained
+        item_data = self.hyperitem_pool[hyper_item]
+        actual_rarity = item_data['rarity']
+        
+        # Reset appropriate counters based on actual rarity
+        if actual_rarity in ['uncommon', 'rare', 'legendary']:
+            black_market_history['since_uncommon'] = 0
+        if actual_rarity in ['rare', 'legendary']:
+            black_market_history['since_rare'] = 0
+        if actual_rarity == 'legendary':
+            black_market_history['since_legendary'] = 0
         
         # Add to user's collection
         self.civ_manager.add_hyper_item(user_id, hyper_item)
         
-        # Get item details
-        item_data = self.hyperitem_pool[hyper_item]
+        # Update black market history in database
+        self.civ_manager.db.update_civilization(user_id, {'black_market_history': black_market_history})
         
         # Create dramatic reveal embed
         rarity_colors = {
@@ -292,10 +337,21 @@ class StoreCommands(commands.Cog):
             rarity_colors[item_data['rarity']]
         )
         
+        # Add pity message if applicable
+        if pity_message:
+            embed.add_field(name="Pity System", value=pity_message, inline=False)
+        
         embed.add_field(
             name=f"{rarity_emojis[item_data['rarity']]} {hyper_item}",
             value=f"**Rarity**: {item_data['rarity'].capitalize()}\n**Description**: {item_data['description']}\n**Command**: `.{item_data['command']}`",
             inline=False
+        )
+        
+        # Add purchase stats
+        embed.add_field(
+            name="Purchase Stats", 
+            value=f"Total Purchases: {black_market_history['total_purchases']}\nSince Uncommon: {black_market_history['since_uncommon']}/3\nSince Rare: {black_market_history['since_rare']}/6\nSince Legendary: {black_market_history['since_legendary']}/10",
+            inline=True
         )
         
         if item_data['rarity'] == 'legendary':
@@ -324,7 +380,7 @@ class StoreCommands(commands.Cog):
                 
         # Log the transaction
         self.db.log_event(user_id, "black_market", "Black Market Purchase", 
-                         f"Obtained {hyper_item} ({item_data['rarity']})")
+                         f"Obtained {hyper_item} ({item_data['rarity']}) - Total: {black_market_history['total_purchases']}")
 
     def _roll_hyperitem(self) -> str:
         """Roll for a random HyperItem based on drop rates"""
@@ -334,6 +390,17 @@ class StoreCommands(commands.Cog):
             weighted_items.extend([item_name] * item_data['weight'])
             
         return random.choice(weighted_items)
+
+    def _roll_hyperitem_with_pity(self, forced_rarity: str) -> str:
+        """Roll for a HyperItem with forced rarity (pity system)"""
+        # Get all items of the forced rarity
+        items_of_rarity = [item for item, data in self.hyperitem_pool.items() if data['rarity'] == forced_rarity]
+        
+        if not items_of_rarity:
+            # Fallback to normal roll if no items of that rarity exist
+            return self._roll_hyperitem()
+            
+        return random.choice(items_of_rarity)
 
     @commands.command(name='inventory')
     async def view_inventory(self, ctx):
@@ -347,6 +414,7 @@ class StoreCommands(commands.Cog):
             
         hyper_items = civ.get('hyper_items', [])
         bonuses = civ.get('bonuses', {})
+        black_market_history = civ.get('black_market_history', {})
         
         embed = create_embed(
             f"🎒 {civ['name']} Inventory",
@@ -390,6 +458,14 @@ class StoreCommands(commands.Cog):
             if upgrades:
                 embed.add_field(name="🏪 Store Upgrades", value="\n".join(upgrades), inline=False)
         
+        # Black Market stats
+        if black_market_history:
+            embed.add_field(
+                name="🕴️ Black Market Stats",
+                value=f"Total Purchases: {black_market_history.get('total_purchases', 0)}\nUntil Uncommon: {3 - black_market_history.get('since_uncommon', 0)}/3\nUntil Rare: {6 - black_market_history.get('since_rare', 0)}/6\nUntil Legendary: {10 - black_market_history.get('since_legendary', 0)}/10",
+                inline=False
+            )
+        
         if not hyper_items and not bonuses:
             embed.add_field(
                 name="Empty Inventory", 
@@ -416,13 +492,19 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="⏰ Cooldown",
-            value="3 hours between visits",
+            value="No cooldown! Purchase as often as you can afford!",
             inline=True
         )
         
         embed.add_field(
             name="🎲 Drop Rates",
             value="🟢 Common: 30-40%\n🔵 Uncommon: 20%\n🟣 Rare: 8%\n🟡 Legendary: 1-2%",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🎁 Pity System",
+            value="**Guaranteed drops after certain purchases:**\n• 🔵 Uncommon: Every 3 purchases\n• 🟣 Rare: Every 6 purchases\n• 🟡 Legendary: Every 10 purchases\n*Counters reset when you get that rarity*",
             inline=False
         )
         
@@ -440,8 +522,12 @@ class StoreCommands(commands.Cog):
         
         embed.add_field(
             name="Usage",
-            value="Use `.blackmarket` to make a purchase",
+            value="Use `.blackmarket` to make a purchase\nUse `.inventory` to check your pity progress",
             inline=False
         )
         
         await ctx.send(embed=embed)
+
+
+async def setup(bot):
+    await bot.add_cog(StoreCommands(bot))
