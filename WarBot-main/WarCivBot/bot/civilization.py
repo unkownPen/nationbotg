@@ -117,6 +117,24 @@ class CivilizationManager:
             logger.error(f"Error getting civilization for {user_id}: {e}")
             return None
 
+    def reset_civilization(self, user_id: str) -> bool:
+        """Completely reset a user's civilization"""
+        try:
+            civ = self.get_civilization(user_id)
+            if not civ:
+                return False
+                
+            if self.db.delete_civilization(user_id):
+                logger.info(f"Civilization reset for user {user_id}")
+                return True
+            else:
+                logger.error(f"Failed to reset civilization for user {user_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error resetting civilization for {user_id}: {e}")
+            return False
+
     def _update_employment_only(self, user_id: str, employed: int) -> bool:
         """Update only the employment field without recursion"""
         try:
