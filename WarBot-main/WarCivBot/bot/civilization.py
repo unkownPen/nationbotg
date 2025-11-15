@@ -131,6 +131,78 @@ class CivilizationManager:
             logger.error(f"Error updating employment for {user_id}: {e}")
             return False
 
+    def check_civil_war_risk(self, user_id: str) -> bool:
+        """Check if a civil war occurs based on happiness level"""
+        try:
+            civ = self.get_civilization(user_id)
+            if not civ:
+                return False
+            
+            happiness = civ['population']['happiness']
+            
+            # Only check if happiness is below 50%
+            if happiness >= 50:
+                return False
+            
+            # Calculate civil war chance: higher risk the lower the happiness
+            # At 0 happiness: 40% chance, at 49 happiness: 1% chance
+            civil_war_chance = (50 - happiness) * 0.8  # 0.8% per happiness point below 50
+            
+            # Add additional risk factors
+            if civ.get('ideology') == 'terrorism':
+                civil_war_chance *= 1.5  # Terrorism has higher unrest
+            elif civ.get('ideology') == 'anarchy':
+                civil_war_chance *= 1.3  # Anarchy is unstable
+            
+            # Check if civil war occurs
+            if random.random() * 100 < civil_war_chance:
+                self.trigger_civil_war(user_id)
+                return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking civil war risk for {user_id}: {e}")
+            return False
+
+    def trigger_civil_war(self, user_id: str):
+        """Trigger a civil war event"""
+        try:
+            civ = self.get_civilization(user_id)
+            if not civ:
+                return
+            
+            # Calculate losses: 50% of resources
+            resources = civ['resources']
+            resource_losses = {}
+            for resource, amount in resources.items():
+                if amount > 0:
+                    loss = amount // 2  # 50% loss
+                    resource_losses[resource] = -loss
+            
+            # Apply resource losses
+            if resource_losses:
+                self.update_resources(user_id, resource_losses)
+            
+            # Additional population and military losses
+            population_loss = max(1, civ['population']['citizens'] // 20)  # 5% population loss
+            soldier_loss = max(1, civ['military']['soldiers'] // 10)  # 10% soldier loss
+            
+            self.update_population(user_id, {"citizens": -population_loss, "happiness": -15})
+            self.update_military(user_id, {"soldiers": -soldier_loss})
+            
+            # Log the civil war event
+            self.db.log_event(
+                user_id, 
+                "civil_war", 
+                "Civil War Erupts!", 
+                f"A devastating civil war has broken out! Lost 50% of resources, {population_loss} citizens, and {soldier_loss} soldiers due to internal conflict."
+            )
+            
+            logger.info(f"Civil war triggered for {user_id}. Lost 50% of resources.")
+            
+        except Exception as e:
+            logger.error(f"Error triggering civil war for {user_id}: {e}")
+
     def set_ideology(self, user_id: str, ideology: str) -> bool:
         """Set civilization ideology"""
         try:
@@ -334,7 +406,7 @@ class CivilizationManager:
             return False
 
     def calculate_resource_income(self, user_id: str) -> Dict[str, int]:
-        """Calculate passive resource income with region modifiers"""
+        """Calculate passive resource income with region modifiers and tech level gold multiplier"""
         try:
             civ = self.get_civilization(user_id)
             if not civ:
@@ -342,6 +414,7 @@ class CivilizationManager:
                 
             population = civ['population']
             territory = civ['territory']
+            military = civ['military']
             ideology = civ.get('ideology', '')
             bonuses = civ['bonuses']
             employment_rate = self.get_employment_rate(user_id)
@@ -363,6 +436,11 @@ class CivilizationManager:
 
             base_gold = int(population['citizens'] * 0.1 * (territory['land_size'] / 1000) * employment_modifier)
             base_food = int(population['citizens'] * 0.2 * employment_modifier)
+            
+            # Apply tech level gold multiplier: 0.5x per tech level
+            tech_level = military['tech_level']
+            tech_gold_multiplier = 0.5 * tech_level
+            base_gold = int(base_gold * (1 + tech_gold_multiplier))
             
             resource_modifier = 1.0
             # Existing ideology adjustments
