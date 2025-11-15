@@ -10,28 +10,31 @@ from bot.utils import format_number, create_embed
 
 logger = logging.getLogger(__name__)
 
-# Fixed cooldown decorator using database
-def check_cooldown_decorator(minutes=1):
+# Simple in-memory cooldown decorator
+def cooldown(seconds=60):
     def decorator(func):
+        cooldowns = {}
+        
         async def wrapper(self, ctx, *args, **kwargs):
             user_id = str(ctx.author.id)
-            command_name = func.__name__
+            now = datetime.utcnow()
             
-            # Get last used time from database
-            last_used = self.db.get_command_cooldown(user_id, command_name)
-            
-            if last_used:
-                cooldown_end = last_used + timedelta(minutes=minutes)
-                if datetime.utcnow() < cooldown_end:
-                    remaining = cooldown_end - datetime.utcnow()
+            # Check if user is on cooldown
+            if user_id in cooldowns:
+                remaining = cooldowns[user_id] - now
+                if remaining.total_seconds() > 0:
                     mins = int(remaining.total_seconds() // 60)
                     secs = int(remaining.total_seconds() % 60)
                     await ctx.send(f"⏳ Please wait {mins}m {secs}s before using this command again!")
                     return
             
-            # Update cooldown in database
-            self.db.set_command_cooldown(user_id, command_name, datetime.utcnow())
-            return await func(self, ctx, *args, **kwargs)
+            # Execute command
+            result = await func(self, ctx, *args, **kwargs)
+            
+            # Set cooldown
+            cooldowns[user_id] = now + timedelta(seconds=seconds)
+            return result
+            
         return wrapper
     return decorator
 
@@ -41,6 +44,9 @@ class MilitaryCommands(commands.Cog):
         self.db = bot.db
         self.civ_manager = bot.civ_manager
         self.create_tables()
+        
+        # Track cooldowns for commands that need them
+        self.cooldowns = {}
 
     def create_tables(self):
         """Create necessary database tables"""
@@ -201,11 +207,43 @@ class MilitaryCommands(commands.Cog):
 
         return None
 
-    @check_cooldown_decorator(minutes=2)
+    def _check_cooldown(self, user_id: str, command: str, seconds: int) -> bool:
+        """Check if user is on cooldown for a command"""
+        key = f"{user_id}_{command}"
+        now = datetime.utcnow()
+        
+        if key in self.cooldowns:
+            if now < self.cooldowns[key]:
+                return False
+                
+        # Set new cooldown
+        self.cooldowns[key] = now + timedelta(seconds=seconds)
+        return True
+
+    def _get_cooldown_remaining(self, user_id: str, command: str) -> int:
+        """Get remaining cooldown seconds"""
+        key = f"{user_id}_{command}"
+        now = datetime.utcnow()
+        
+        if key in self.cooldowns and now < self.cooldowns[key]:
+            remaining = self.cooldowns[key] - now
+            return int(remaining.total_seconds())
+        return 0
+
     @commands.command(name='train')
     async def train_soldiers(self, ctx, unit_type: str = None, amount: int = None):
         """Train military units (2min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'train', 120):  # 2 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'train')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before training again!")
+                return
+            
             if not unit_type:
                 embed = create_embed(
                     "⚔️ Military Training",
@@ -216,8 +254,6 @@ class MilitaryCommands(commands.Cog):
                 embed.add_field(name="Usage", value="`.train <unit_type> <amount>`", inline=False)
                 await ctx.send(embed=embed)
                 return
-
-            user_id = str(ctx.author.id)
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -300,7 +336,7 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='declare')
     async def declare_war(self, ctx, target_mention: str = None):
-        """Declare war on another civilization (No cooldown - diplomacy)"""
+        """Declare war on another civilization (No cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("⚔️ **Declaration of War**\nUsage: `.declare @user`\nNote: War must be declared before attacking!")
@@ -377,16 +413,23 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error declaring war: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=3)
     @commands.command(name='attack')
     async def attack_civilization(self, ctx, target_mention: str = None):
         """Launch a direct attack on another civilization (3min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'attack', 180):  # 3 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'attack')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before attacking again!")
+                return
+            
             if not target_mention:
                 await ctx.send("⚔️ **Direct Attack**\nUsage: `.attack @user`\nNote: War must be declared first!")
                 return
-
-            user_id = str(ctx.author.id)
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -622,17 +665,24 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error processing attack defeat: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=4)
     @commands.command(name='stealthbattle')
     async def stealth_battle(self, ctx, target_mention: str = None):
         """Conduct a spy-based stealth attack (4min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'stealthbattle', 240):  # 4 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'stealthbattle')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before using stealth battle again!")
+                return
+            
             if not target_mention:
                 await ctx.send("🕵️ **Stealth Battle**\nUsage: `.stealthbattle @user`\nUses spies instead of soldiers for covert operations.")
                 return
 
-            user_id = str(ctx.author.id)
-            
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
                 return
@@ -762,17 +812,24 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in stealthbattle command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=10)
     @commands.command(name='siege')
     async def siege_city(self, ctx, target_mention: str = None):
         """Lay siege to an enemy civilization (10min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'siege', 600):  # 10 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'siege')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before sieging again!")
+                return
+            
             if not target_mention:
                 await ctx.send("🏰 **Siege Warfare**\nUsage: `.siege @user`\nDrains enemy resources over time but requires large army.")
                 return
 
-            user_id = str(ctx.author.id)
-            
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
                 return
@@ -894,12 +951,19 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in siege command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=1)
     @commands.command(name='find')
     async def find_soldiers(self, ctx):
         """Search for wandering soldiers to recruit (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'find', 60):  # 1 minute
+                remaining = self._get_cooldown_remaining(user_id, 'find')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before searching for soldiers again!")
+                return
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -970,7 +1034,7 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='peace')
     async def make_peace(self, ctx, target_mention: str = None):
-        """Offer peace to an enemy civilization"""
+        """Offer peace to an enemy civilization (No cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("🕊️ **Peace Offering**\nUsage: `.peace @user`\nSend a peace offer to end a war. They can accept with `.accept_peace @you`.")
@@ -1059,7 +1123,7 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='accept_peace')
     async def accept_peace(self, ctx, target_mention: str = None):
-        """Accept a peace offer from another civilization"""
+        """Accept a peace offer from another civilization (No cooldown)"""
         try:
             if not target_mention:
                 await ctx.send("🕊️ **Accept Peace**\nUsage: `.accept_peace @user`\nAccept a pending peace offer to end the war.")
@@ -1169,7 +1233,7 @@ class MilitaryCommands(commands.Cog):
 
     @commands.command(name='cards')
     async def manage_cards(self, ctx, action: str = None, *args):
-        """View or use your unlocked cards"""
+        """View or use your unlocked cards (No cooldown)"""
         try:
             user_id = str(ctx.author.id)
             
@@ -1410,12 +1474,19 @@ class MilitaryCommands(commands.Cog):
             logger.error(f"Error processing card effect: {e}", exc_info=True)
             return f"❌ Error processing card effect: {str(e)}"
 
-    @check_cooldown_decorator(minutes=5)
     @commands.command(name='addborder')
     async def add_border(self, ctx):
         """Add a defensive border to your territory (5min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'addborder', 300):  # 5 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'addborder')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before adding another border!")
+                return
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1471,12 +1542,19 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in addborder command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=2)
     @commands.command(name='removeborder')
     async def remove_border(self, ctx):
         """Remove your defensive border and retrieve all soldiers (2min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'removeborder', 120):  # 2 minutes
+                remaining = self._get_cooldown_remaining(user_id, 'removeborder')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before removing border again!")
+                return
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
@@ -1520,17 +1598,24 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in removeborder command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=1)
     @commands.command(name='rectract')
     async def rectract_soldiers(self, ctx, percentage: int = None):
         """Assign a percentage of your soldiers to the border (1min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'rectract', 60):  # 1 minute
+                remaining = self._get_cooldown_remaining(user_id, 'rectract')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before rectracting soldiers again!")
+                return
+            
             if percentage is None or percentage < 1 or percentage > 100:
                 await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.rectract <percentage>`")
                 return
 
-            user_id = str(ctx.author.id)
-            
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
                 return
@@ -1593,17 +1678,24 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in rectract command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=1)
     @commands.command(name='retrieve')
     async def retrieve_soldiers(self, ctx, percentage: int = None):
         """Retrieve a percentage of soldiers from the border (1min cooldown)"""
         try:
+            user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'retrieve', 60):  # 1 minute
+                remaining = self._get_cooldown_remaining(user_id, 'retrieve')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before retrieving soldiers again!")
+                return
+            
             if percentage is None or percentage < 1 or percentage > 100:
                 await ctx.send("❌ Please specify a percentage between 1-100! Usage: `.retrieve <percentage>`")
                 return
 
-            user_id = str(ctx.author.id)
-            
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
                 return
@@ -1665,12 +1757,19 @@ class MilitaryCommands(commands.Cog):
         except Exception as e:
             logger.error(f"Error in retrieve command: {e}", exc_info=True)
 
-    @check_cooldown_decorator(minutes=1)
     @commands.command(name='borderinfo')
     async def border_info(self, ctx):
         """Check your border status (1min cooldown)"""
         try:
             user_id = str(ctx.author.id)
+            
+            # Check cooldown
+            if not self._check_cooldown(user_id, 'borderinfo', 60):  # 1 minute
+                remaining = self._get_cooldown_remaining(user_id, 'borderinfo')
+                mins = remaining // 60
+                secs = remaining % 60
+                await ctx.send(f"⏳ Please wait {mins}m {secs}s before checking border info again!")
+                return
             
             # Check for civil war first
             if not await self.check_civil_war_and_proceed(ctx, user_id):
